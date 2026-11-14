@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ORBITAL KITCHEN — 4P 2.5D Lunar Sample Return</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+
+<div id="hud-top">
+  <div id="tickets-bar"></div>
+  <div id="stage-banner">
+    <span class="badge" id="sb-badge">STAGE 1B</span>
+    <div>
+      <h2 id="sb-title">Rocket Liftoff &amp; Ascent</h2>
+      <p id="sb-desc">Control vertical thrust &amp; horizontal pitch stabilizer, then decouple!</p>
+    </div>
+  </div>
+  <div id="hud-right">
+    <div class="squad-bar" id="squad-bar" title="Press 1-4 or click to switch active crewmate">
+      <div class="p-chip active" id="pchip-0" data-slot="0">
+        <div class="dot" style="background:#3b82f6"></div>
+        <span>P1</span><small>Launch</small>
+      </div>
+      <div class="p-chip" id="pchip-1" data-slot="1">
+        <div class="dot" style="background:#f97316"></div>
+        <span>P2</span><small>Space</small>
+      </div>
+      <div class="p-chip" id="pchip-2" data-slot="2">
+        <div class="dot" style="background:#a855f7"></div>
+        <span>P3</span><small>Science</small>
+      </div>
+      <div class="p-chip" id="pchip-3" data-slot="3">
+        <div class="dot" style="background:#10b981"></div>
+        <span>P4</span><small>Ground</small>
+      </div>
+    </div>
+    <button id="btn-coop" class="btn-hud btn-bot" type="button">👥 4P Squad (AI)</button>
+    <button id="btn-guide" class="btn-hud btn-guide" type="button" title="NASA Systems Engineering Field Guide">📘 Guide</button>
+    <button id="btn-mute" class="btn-hud btn-guide" type="button" title="Toggle Audio">🔊</button>
+    <button id="btn-skip" class="btn-hud btn-launch" type="button" title="Launch whenever your spacecraft build is ready!">🚀 LAUNCH MISSION</button>
+    <button id="btn-next" class="btn-hud btn-next" type="button">⏭️ NEXT STAGE</button>
+    <div class="pill-box">
+      <span style="font-size:18px">⭐</span>
+      <span id="score-display" class="star-val">0</span>
+    </div>
+    <div id="clock-pill" class="pill-box clock-free">
+      <span style="font-size:16px">🛠️</span>
+      <span id="clock-display" class="clock-val">FREE BUILD</span>
+    </div>
+  </div>
+</div>
+
+<div id="game-wrap">
+  <canvas id="game" width="1120" height="620"></canvas>
+  <div id="mission-toast" class="mission-toast hidden"></div>
+</div>
+
+<div id="hud-bottom">
+  <div class="telemetry-strip" id="telemetry-strip">
+    <div class="t-stat">📦 Shipped: <b id="stat-shipped">0</b></div>
+    <div class="t-stat">⚖️ Mass: <b id="stat-mass">420 / 900 kg</b></div>
+    <div class="t-stat">💰 Budget: <b id="stat-budget">$180M</b></div>
+    <div class="t-stat">⚡ Power: <b id="stat-power">+50W</b></div>
+    <div class="t-stat">📡 Comms: <b id="stat-comms">40 Mb/d</b></div>
+    <div class="t-stat">🔬 Science: <b id="stat-science">0 pts</b></div>
+    <div class="t-stat">⛽ Fuel: <b id="stat-fuel">75%</b></div>
+  </div>
+  <div class="controls-hint" id="controls-hint">
+    <kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Interact &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Switch Crew
+  </div>
+</div>
+
+<!-- MAIN BRIEFING / STAGE 5 DEBRIEF MODAL -->
+<div id="modal" class="modal-backdrop">
+  <div class="modal-card" id="modal-content"></div>
+</div>
+
+<!-- EDUCATIONAL FIELD GUIDE MODAL -->
+<div id="guide-modal" class="modal-backdrop hidden">
+  <div class="modal-card">
+    <h1>Systems Engineering Field Guide</h1>
+    <p class="sub">Balance mass, bus power, and Ka-band downlink across all four NASA crew segments.</p>
+    <div class="guide-grid">
+      <div class="guide-card">
+        <b>Mass vs. Vehicle Capacity</b>
+        Hardware builds add dry mass (kg). Staying under vehicle capacity keeps Stage 1B ascent and Stage 3 lunar landing stable.
+      </div>
+      <div class="guide-card">
+        <b>Power &amp; Orbital Eclipses</b>
+        Solar-Battery units expand bus margin for Stage 2 eclipse shadows and extend Stage 3B lunar rover range.
+      </div>
+      <div class="guide-card">
+        <b>Ka-Band Downlink &amp; Reentry</b>
+        Ka-Relays drain onboard science data buffers during Ground Cones and widen the Stage 4 skip-reentry corridor.
+      </div>
+      <div class="guide-card">
+        <b>4P Crew &amp; Co-Op</b>
+        Switch crew roles with <kbd>1</kbd>-<kbd>4</kbd>, play Local 2P (<kbd>WASD</kbd> + <kbd>IJKL</kbd>), or open multiple tabs to sync via <code>BroadcastChannel</code>.
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-close-guide" class="btn-play" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,3540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ORBITAL KITCHEN — 4P 2.5D Lunar Sample Return</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=JetBrains+Mono:wght@600;700&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: #101522;
+    color: #fff;
+    font-family: 'Fredoka', sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* 3-ZONE NON-OVERLAPPING FLEX VIEWPORT */
+  #hud-top {
+    flex: 0 0 auto;
+    min-height: 102px;
+    padding: 8px 14px;
+    background: linear-gradient(180deg, #182032 0%, #121826 100%);
+    border-bottom: 3px solid #2b354d;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    z-index: 20;
+  }
+
+  #tickets-bar {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+
+  .ticket {
+    width: 162px;
+    background: #fff9eb;
+    color: #1e2433;
+    border-radius: 0 0 13px 13px;
+    border: 3px solid #2b3142;
+    border-top: none;
+    box-shadow: 0 5px 0 rgba(0,0,0,0.35);
+    overflow: hidden;
+    animation: dropTicket 0.3s cubic-bezier(.34,1.56,.64,1);
+  }
+  @keyframes dropTicket {
+    from { transform: translateY(-70px); }
+    to { transform: translateY(0); }
+  }
+  .ticket-header {
+    padding: 4px 8px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #fff;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+  }
+  .ticket-timer-bg {
+    height: 6px;
+    background: #d8d2c5;
+    width: 100%;
+  }
+  .ticket-timer-fill {
+    height: 100%;
+    background: #22c55e;
+    transition: width 0.15s linear, background-color 0.25s;
+  }
+  .ticket-body {
+    padding: 6px 7px 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .ticket-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: #0f172a;
+  }
+  .ticket-reqs {
+    display: flex;
+    gap: 5px;
+    justify-content: center;
+    background: #efe7d6;
+    padding: 4px;
+    border-radius: 8px;
+    border: 2px dashed #c8beaa;
+  }
+  .req-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #fff;
+    padding: 3px 4px;
+    border-radius: 7px;
+    border: 2px solid #cbd5e1;
+    min-width: 65px;
+  }
+  .req-chip svg { width: 21px; height: 21px; }
+  .req-chip span.pname { font-size: 9px; font-weight: 700; color: #334155; line-height: 1.1; }
+  .req-chip small { font-size: 8.5px; font-weight: 700; text-transform: uppercase; }
+
+  #stage-banner {
+    display: none;
+    align-items: center;
+    gap: 11px;
+    background: #1e293b;
+    border: 3px solid #38bdf8;
+    border-radius: 15px;
+    padding: 7px 14px;
+    box-shadow: 0 5px 0 rgba(0,0,0,0.35);
+    max-width: 540px;
+  }
+  #stage-banner .badge {
+    background: #0284c7;
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  #stage-banner h2 { font-size: 15px; color: #f8fafc; line-height: 1.15; }
+  #stage-banner p { font-size: 11.5px; color: #94a3b8; line-height: 1.2; }
+
+  #hud-right {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  /* 4-PLAYER SQUAD BAR */
+  .squad-bar {
+    display: flex;
+    gap: 4px;
+    background: #0f172a;
+    border: 2.5px solid #334155;
+    border-radius: 13px;
+    padding: 4px 6px;
+  }
+  .p-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3px 7px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.1s, border-color 0.15s;
+  }
+  .p-chip:hover { transform: translateY(-1px); }
+  .p-chip.active { border-color: #fde047; background: rgba(253, 224, 71, 0.14); }
+  .p-chip .dot { width: 8px; height: 8px; border-radius: 50%; margin-bottom: 1px; }
+  .p-chip span { color: #f8fafc; }
+  .p-chip small { font-size: 8.5px; color: #94a3b8; }
+
+  .pill-box {
+    background: #fff9eb;
+    color: #1e2433;
+    border: 3px solid #2b3142;
+    border-radius: 14px;
+    padding: 5px 11px;
+    box-shadow: 0 5px 0 rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .star-val { font-size: 20px; font-weight: 700; color: #d97706; }
+  .clock-val { font-family: 'JetBrains Mono', monospace; font-size: 19px; font-weight: 700; color: #1e2433; }
+  .clock-urgent {
+    animation: pulseRed 0.45s infinite alternate;
+    background: #fee2e2;
+    border-color: #dc2626;
+  }
+  @keyframes pulseRed { from { transform: scale(1); } to { transform: scale(1.06); } }
+
+  .btn-hud {
+    border: 3px solid #1e293b;
+    border-radius: 12px;
+    padding: 7px 10px;
+    font-family: 'Fredoka', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #fff;
+    box-shadow: 0 4px 0 rgba(0,0,0,0.35);
+  }
+  .btn-hud:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0,0,0,0.35); }
+  .btn-bot { background: #3b82f6; border-color: #1d4ed8; }
+  .btn-bot.local2p { background: #10b981; border-color: #047857; }
+  .btn-bot.off { background: #64748b; border-color: #475569; }
+  .btn-launch { background: #f97316; border-color: #c2410c; }
+  .btn-next { background: #8b5cf6; border-color: #6d28d9; display: none; }
+
+  /* MIDDLE CANVAS ZONE */
+  #game-wrap {
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 6px 12px;
+    min-height: 0;
+    position: relative;
+  }
+  canvas {
+    border-radius: 16px;
+    border: 4px solid #334155;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.65);
+    background: #1a2130;
+    display: block;
+  }
+
+  /* BOTTOM TELEMETRY BAR */
+  #hud-bottom {
+    flex: 0 0 auto;
+    padding: 7px 14px;
+    background: #121826;
+    border-top: 3px solid #2b354d;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    z-index: 20;
+  }
+  .telemetry-strip {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+  }
+  .t-stat {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: 9px;
+    background: #1e293b;
+    border: 2px solid #334155;
+    color: #e2e8f0;
+  }
+  .t-stat b { color: #38bdf8; font-family: 'JetBrains Mono', monospace; }
+
+  .controls-hint {
+    background: #fff9eb;
+    color: #1e2433;
+    border: 3px solid #2b3142;
+    padding: 5px 11px;
+    border-radius: 12px;
+    font-size: 11.5px;
+    font-weight: 700;
+  }
+  kbd {
+    background: #e2e8f0;
+    border: 2px solid #94a3b8;
+    border-radius: 5px;
+    padding: 0 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+  }
+
+  /* MODAL OVERLAY */
+  #modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 14, 24, 0.86);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 50;
+    padding: 16px;
+  }
+  .modal-card {
+    background: #fff9eb;
+    color: #1e2433;
+    border: 5px solid #2b3142;
+    border-radius: 24px;
+    width: 780px;
+    max-width: 95vw;
+    max-height: 92vh;
+    overflow-y: auto;
+    padding: 20px 24px;
+    box-shadow: 0 14px 0 #1e2433;
+    text-align: center;
+  }
+  .modal-card h1 { font-size: 26px; color: #ea580c; margin-bottom: 5px; }
+  .modal-card p.sub { font-size: 13.5px; color: #475569; margin-bottom: 12px; line-height: 1.4; }
+  .stage-pills {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 6px;
+    margin-bottom: 13px;
+    text-align: left;
+  }
+  .sp-card {
+    background: #e2e8f0;
+    border: 2px solid #94a3b8;
+    border-radius: 11px;
+    padding: 6px 7px;
+    font-size: 10.5px;
+  }
+  .sp-card b { display: block; color: #0f172a; font-size: 11.5px; margin-bottom: 2px; }
+  .recipe-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    text-align: left;
+    margin-bottom: 14px;
+  }
+  .recipe-box {
+    background: #efe7d6;
+    border: 2px solid #cbd5e1;
+    border-radius: 12px;
+    padding: 7px 10px;
+    font-size: 11.5px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .recipe-box .icons {
+    display: flex;
+    gap: 4px;
+    background: #fff;
+    padding: 4px 6px;
+    border-radius: 8px;
+    border: 2px solid #cbd5e1;
+    flex-shrink: 0;
+  }
+  .recipe-box b { display: block; color: #0f172a; font-size: 12.5px; }
+  .btn-play {
+    background: #22c55e;
+    color: #fff;
+    border: 4px solid #15803d;
+    border-radius: 16px;
+    padding: 11px 30px;
+    font-family: 'Fredoka', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 5px 0 #166534;
+  }
+  .btn-play:hover { background: #16a34a; }
+  .btn-play:active { transform: translateY(3px); box-shadow: 0 2px 0 #166534; }
+</style>
+</head>
+<body>
+
+<div id="hud-top">
+  <div id="tickets-bar"></div>
+  <div id="stage-banner">
+    <span class="badge" id="sb-badge">STAGE 1B</span>
+    <div>
+      <h2 id="sb-title">Rocket Liftoff & Ascent</h2>
+      <p id="sb-desc">Control vertical thrust & horizontal pitch stabilizer, then decouple!</p>
+    </div>
+  </div>
+  <div id="hud-right">
+    <div class="squad-bar" id="squad-bar" title="Press 1-4 or click to switch active crewmate">
+      <div class="p-chip active" id="pchip-0" onclick="selectActiveCrew(0)">
+        <div class="dot" style="background:#3b82f6"></div>
+        <span>P1</span><small>Launch</small>
+      </div>
+      <div class="p-chip" id="pchip-1" onclick="selectActiveCrew(1)">
+        <div class="dot" style="background:#f97316"></div>
+        <span>P2</span><small>Space</small>
+      </div>
+      <div class="p-chip" id="pchip-2" onclick="selectActiveCrew(2)">
+        <div class="dot" style="background:#a855f7"></div>
+        <span>P3</span><small>Science</small>
+      </div>
+      <div class="p-chip" id="pchip-3" onclick="selectActiveCrew(3)">
+        <div class="dot" style="background:#10b981"></div>
+        <span>P4</span><small>Ground</small>
+      </div>
+    </div>
+    <button id="btn-coop" class="btn-hud btn-bot" onclick="cycleCoopMode()">👥 4P Squad (AI)</button>
+    <button id="btn-skip" class="btn-hud btn-launch" onclick="advanceStageManual()">🚀 LAUNCH NOW</button>
+    <button id="btn-next" class="btn-hud btn-next" onclick="advanceStageManual()">⏭️ NEXT STAGE</button>
+    <div class="pill-box">
+      <span style="font-size:19px">⭐</span>
+      <span id="score-display" class="star-val">0</span>
+    </div>
+    <div id="clock-pill" class="pill-box">
+      <span style="font-size:18px">⏱️</span>
+      <span id="clock-display" class="clock-val">01:30</span>
+    </div>
+  </div>
+</div>
+
+<div id="game-wrap">
+  <canvas id="game" width="1120" height="620"></canvas>
+</div>
+
+<div id="hud-bottom">
+  <div class="telemetry-strip" id="telemetry-strip">
+    <div class="t-stat">📦 Shipped: <b id="stat-shipped">0</b></div>
+    <div class="t-stat">⚡ Power: <b id="stat-power">+50W</b></div>
+    <div class="t-stat">📡 Comms: <b id="stat-comms">40 Mb/d</b></div>
+    <div class="t-stat">🔬 Science: <b id="stat-science">0 pts</b></div>
+    <div class="t-stat">⛽ Descent Fuel: <b id="stat-fuel">75%</b></div>
+  </div>
+  <div class="controls-hint" id="controls-hint">
+    <kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Interact &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Switch Crew
+  </div>
+</div>
+
+<div id="modal">
+  <div class="modal-card" id="modal-content">
+    <h1>🚀 ORBITAL KITCHEN: 4P LUNAR SAMPLE RETURN</h1>
+    <p class="sub">Team up as a <b>4-Player NASA Crew</b> (P1 Launch, P2 Space, P3 Science, P4 Ground) from Overcooked assembly through 2.5D Lunar Landing, dual Moon Rover EVA, <b>Capsule Launch from the Moon</b>, and Earth Splashdown!</p>
+    <div class="stage-pills">
+      <div class="sp-card"><b>1A. Assembly</b>90s Overcooked hangar + Conveyor shipping.</div>
+      <div class="sp-card"><b>1B. Ascent</b>Vertical thrust + pitch trim & decouple.</div>
+      <div class="sp-card"><b>2. Orbital Ops</b>4 console tasks + wrench repairs.</div>
+      <div class="sp-card"><b>3A/B. Moon EVA</b>2.5D landing at Pt A + 2 Rovers to Pt B.</div>
+      <div class="sp-card"><b>3C. Moon Launch</b>Sample transfer + Capsule launch from Moon!</div>
+      <div class="sp-card"><b>4. Earth Return</b>Plasma corridor + 4P Carrier splashdown.</div>
+    </div>
+    <div class="recipe-grid" id="intro-recipes"></div>
+    <button class="btn-play" onclick="startGame()">START 4-PLAYER SHIFT!</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const LOGICAL_W = 1120;
+const LOGICAL_H = 620;
+
+// --- RESPONSIVE CRISP DPR SCALING ---
+function resizeCanvas() {
+  const wrap = document.getElementById('game-wrap');
+  const maxW = wrap.clientWidth - 16;
+  const maxH = wrap.clientHeight - 10;
+  const aspect = LOGICAL_W / LOGICAL_H;
+  let w = maxW;
+  let h = w / aspect;
+  if (h > maxH) {
+    h = maxH;
+    w = h * aspect;
+  }
+  w = Math.max(480, Math.floor(w));
+  h = Math.max(266, Math.floor(h));
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.width = Math.floor(LOGICAL_W * dpr);
+  canvas.height = Math.floor(LOGICAL_H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+new ResizeObserver(resizeCanvas).observe(document.getElementById('game-wrap'));
+window.addEventListener('resize', resizeCanvas);
+
+// --- WEB AUDIO SYNTH SFX ---
+let audioCtx = null;
+function playTone(freq, type='sine', dur=0.11, vol=0.1) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(); osc.stop(audioCtx.currentTime + dur);
+  } catch (e) {}
+}
+
+// --- MULTI-TAB / NETWORK 4P STATE SYNC CHANNEL ---
+const netChannel = ('BroadcastChannel' in window) ? new BroadcastChannel('orbital_kitchen_4p_sync') : null;
+if (netChannel) {
+  netChannel.onmessage = (ev) => {
+    const msg = ev.data;
+    if (!msg || msg.sender === CLIENT_ID) return;
+    if (msg.type === 'CREW_INPUT' && players[msg.slot]) {
+      players[msg.slot].x = msg.x;
+      players[msg.slot].y = msg.y;
+      players[msg.slot].angle = msg.angle;
+    } else if (msg.type === 'ROVER2_SYNC' && stage === 'STAGE3B' && rover2) {
+      rover2.x = msg.x; rover2.y = msg.y; rover2.z = msg.z;
+    } else if (msg.type === 'SHIP_SYNC' && stage === 'STAGE4' && reentry) {
+      reentry.shipX = msg.shipX;
+    }
+  };
+}
+const CLIENT_ID = Math.random().toString(36).slice(2);
+window.ORBITAL_NET = {
+  exportState: () => ({ stage, stageTimer, score, telemetry, shippedModules, activeCrewIndex, coopMode }),
+  broadcast: (payload) => { if (netChannel) netChannel.postMessage({ ...payload, sender: CLIENT_ID }); }
+};
+
+// --- UNIFIED VECTOR HARDWARE ICONS (SVG + CANVAS) ---
+function getHardwareSVG(shape, processed=false) {
+  const glow = processed ? '#4ade80' : '#94a3b8';
+  if (shape === 'optics') {
+    return `<svg viewBox="0 0 36 36"><rect x="7" y="10" width="16" height="16" rx="4" fill="#334155" stroke="#0f172a" stroke-width="2"/><polygon points="23,12 31,8 31,28 23,24" fill="${processed?'#38bdf8':'#64748b'}" stroke="#0f172a" stroke-width="2"/><circle cx="28" cy="18" r="4" fill="${processed?'#e0f2fe':'#cbd5e1'}"/></svg>`;
+  }
+  if (shape === 'circuit') {
+    return `<svg viewBox="0 0 36 36"><rect x="6" y="7" width="24" height="22" rx="4" fill="${processed?'#15803d':'#475569'}" stroke="#0f172a" stroke-width="2"/><rect x="12" y="13" width="12" height="10" rx="2" fill="#1e293b"/><circle cx="10" cy="11" r="2" fill="${processed?'#fde047':'#94a3b8'}"/><circle cx="26" cy="25" r="2" fill="${processed?'#38bdf8':'#94a3b8'}"/></svg>`;
+  }
+  if (shape === 'battery') {
+    return `<svg viewBox="0 0 36 36"><rect x="10" y="8" width="16" height="22" rx="3" fill="#334155" stroke="#0f172a" stroke-width="2"/><rect x="14" y="4" width="8" height="4" rx="1" fill="#94a3b8"/><rect x="13" y="${processed?'11':'22'}" width="10" height="${processed?'16':'5'}" rx="1" fill="${processed?'#4ade80':'#ef4444'}"/></svg>`;
+  }
+  if (shape === 'solar') {
+    return `<svg viewBox="0 0 36 36"><rect x="5" y="10" width="26" height="16" rx="2" fill="${processed?'#1d4ed8':'#475569'}" stroke="#0f172a" stroke-width="2"/><line x1="14" y1="10" x2="14" y2="26" stroke="${glow}" stroke-width="1.5"/><line x1="22" y1="10" x2="22" y2="26" stroke="${glow}" stroke-width="1.5"/><line x1="5" y1="18" x2="31" y2="18" stroke="${glow}" stroke-width="1.5"/></svg>`;
+  }
+  if (shape === 'dish') {
+    return `<svg viewBox="0 0 36 36"><path d="M8,12 Q18,28 28,12" fill="${processed?'#a78bfa':'#64748b'}" stroke="#0f172a" stroke-width="2"/><line x1="18" y1="20" x2="18" y2="9" stroke="#0f172a" stroke-width="2"/><circle cx="18" cy="8" r="3" fill="${processed?'#fde047':'#cbd5e1'}"/><rect x="13" y="25" width="10" height="5" rx="2" fill="#334155"/></svg>`;
+  }
+  return `<svg viewBox="0 0 36 36"><rect x="10" y="6" width="16" height="24" rx="7" fill="${processed?'#f97316':'#64748b'}" stroke="#0f172a" stroke-width="2"/><line x1="10" y1="14" x2="26" y2="14" stroke="#0f172a" stroke-width="2"/><line x1="10" y1="22" x2="26" y2="22" stroke="#0f172a" stroke-width="2"/><circle cx="18" cy="18" r="2.5" fill="${processed?'#fde047':'#cbd5e1'}"/></svg>`;
+}
+
+function drawHardwareCanvas(c, x, y, shape, processed=false, scale=1) {
+  c.save();
+  c.translate(x, y);
+  c.scale(scale, scale);
+  c.lineWidth = 2;
+  c.strokeStyle = '#0f172a';
+  if (shape === 'optics') {
+    c.fillStyle = '#334155';
+    c.beginPath(); c.roundRect(-11, -7, 13, 14, 3); c.fill(); c.stroke();
+    c.fillStyle = processed ? '#38bdf8' : '#64748b';
+    c.beginPath(); c.moveTo(2, -5); c.lineTo(11, -9); c.lineTo(11, 9); c.lineTo(2, 5); c.closePath(); c.fill(); c.stroke();
+  } else if (shape === 'circuit') {
+    c.fillStyle = processed ? '#16a34a' : '#475569';
+    c.beginPath(); c.roundRect(-11, -9, 22, 18, 3); c.fill(); c.stroke();
+    c.fillStyle = '#1e293b';
+    c.fillRect(-5, -4, 10, 8);
+    if (processed) {
+      c.fillStyle = '#fde047';
+      c.beginPath(); c.arc(-7, -5, 1.8, 0, Math.PI*2); c.arc(7, 5, 1.8, 0, Math.PI*2); c.fill();
+    }
+  } else if (shape === 'battery') {
+    c.fillStyle = '#334155';
+    c.beginPath(); c.roundRect(-8, -9, 16, 20, 3); c.fill(); c.stroke();
+    c.fillStyle = '#94a3b8';
+    c.fillRect(-4, -12, 8, 3);
+    c.fillStyle = processed ? '#4ade80' : '#ef4444';
+    c.fillRect(-5, processed ? -6 : 4, 10, processed ? 14 : 4);
+  } else if (shape === 'solar') {
+    c.fillStyle = processed ? '#2563eb' : '#475569';
+    c.beginPath(); c.roundRect(-12, -7, 24, 14, 2); c.fill(); c.stroke();
+    c.strokeStyle = processed ? '#93c5fd' : '#94a3b8';
+    c.lineWidth = 1.4;
+    c.beginPath(); c.moveTo(-4, -7); c.lineTo(-4, 7); c.moveTo(4, -7); c.lineTo(4, 7); c.moveTo(-12, 0); c.lineTo(12, 0); c.stroke();
+  } else if (shape === 'dish') {
+    c.fillStyle = processed ? '#a78bfa' : '#64748b';
+    c.beginPath(); c.arc(0, -6, 11, 0.15*Math.PI, 0.85*Math.PI); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(0, 4); c.lineTo(0, -8); c.stroke();
+    c.fillStyle = processed ? '#fde047' : '#cbd5e1';
+    c.beginPath(); c.arc(0, -9, 2.5, 0, Math.PI*2); c.fill();
+    c.fillStyle = '#334155'; c.fillRect(-5, 5, 10, 5);
+  } else {
+    c.fillStyle = processed ? '#f97316' : '#64748b';
+    c.beginPath(); c.roundRect(-8, -11, 16, 22, 6); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(-8, -4); c.lineTo(8, -4); c.moveTo(-8, 4); c.lineTo(8, 4); c.stroke();
+  }
+  c.restore();
+}
+
+// --- STAGE 1 CATALOG ---
+const RAW_ITEMS = {
+  optics:  { id: 'optics',  name: 'Optics',    shape: 'optics',  procType: 'calibrate', result: 'cal_optics' },
+  circuit: { id: 'circuit', name: 'Circuit',   shape: 'circuit', procType: 'weld',      result: 'weld_circuit' },
+  battery: { id: 'battery', name: 'Battery',   shape: 'battery', procType: 'charge',    result: 'chg_battery' },
+  solar:   { id: 'solar',   name: 'Solar',     shape: 'solar',   procType: 'weld',      result: 'weld_solar' },
+  dish:    { id: 'dish',    name: 'Dish',      shape: 'dish',    procType: 'calibrate', result: 'cal_dish' },
+  tank:    { id: 'tank',    name: 'Fuel Tank', shape: 'tank',    procType: 'charge',    result: 'chg_tank' }
+};
+
+const PROC_META = {
+  cal_optics:   { name: 'Cal. Optics',  shape: 'optics',  verb: 'Calibrate',  verbColor: '#7c3aed' },
+  weld_circuit: { name: 'Solder PCB',   shape: 'circuit', verb: 'Weld',       verbColor: '#0284c7' },
+  chg_battery:  { name: 'Li-Ion Cell',  shape: 'battery', verb: 'Charge',     verbColor: '#16a34a' },
+  weld_solar:   { name: 'Solar Wing',   shape: 'solar',   verb: 'Weld',       verbColor: '#0284c7' },
+  cal_dish:     { name: 'Ka-Band Dish', shape: 'dish',    verb: 'Calibrate',  verbColor: '#7c3aed' },
+  chg_tank:     { name: 'Cryo Core',    shape: 'tank',    verb: 'Pressurize', verbColor: '#16a34a' },
+  burned:       { name: 'Burned Scrap', shape: 'tank',    verb: 'Scrap',      verbColor: '#ef4444' }
+};
+
+const RECIPES = [
+  {
+    id: 'sensor_pod',
+    title: 'Lunar Spectrometer',
+    segment: 'USER SEGMENT',
+    segColor: '#0284c7',
+    reqs: ['cal_optics', 'weld_circuit'],
+    points: 120,
+    timeLimit: 50,
+    telemetry: { power: -35, comms: -15, science: 45, fuel: 0 }
+  },
+  {
+    id: 'power_pack',
+    title: 'Rover Solar-Battery',
+    segment: 'SPACE SEGMENT',
+    segColor: '#d97706',
+    reqs: ['chg_battery', 'weld_solar'],
+    points: 115,
+    timeLimit: 48,
+    telemetry: { power: 130, comms: 0, science: 0, fuel: 0 }
+  },
+  {
+    id: 'comms_relay',
+    title: 'Deep-Space Ka-Relay',
+    segment: 'GROUND SEGMENT',
+    segColor: '#7c3aed',
+    reqs: ['cal_dish', 'weld_circuit'],
+    points: 120,
+    timeLimit: 50,
+    telemetry: { power: -25, comms: 110, science: 10, fuel: 0 }
+  },
+  {
+    id: 'booster_core',
+    title: 'Descent Cryo-Stage',
+    segment: 'LAUNCH SEGMENT',
+    segColor: '#dc2626',
+    reqs: ['chg_tank', 'weld_solar'],
+    points: 130,
+    timeLimit: 55,
+    telemetry: { power: 0, comms: 0, science: 0, fuel: 25 }
+  }
+];
+
+document.getElementById('intro-recipes').innerHTML = RECIPES.map(r => {
+  const m1 = PROC_META[r.reqs[0]], m2 = PROC_META[r.reqs[1]];
+  return `
+    <div class="recipe-box">
+      <div class="icons">
+        ${getHardwareSVG(m1.shape, true)}
+        ${getHardwareSVG(m2.shape, true)}
+      </div>
+      <div>
+        <b>${r.title} (${r.segment})</b>
+        1. ${m1.name} (<span style="color:${m1.verbColor};font-weight:700">${m1.verb}</span>)<br/>
+        2. ${m2.name} (<span style="color:${m2.verbColor};font-weight:700">${m2.verb}</span>) &rarr; Tray &rarr; Conveyor
+      </div>
+    </div>
+  `;
+}).join('');
+
+// --- STAGE 1 GRID CONFIG ---
+const COLS = 14, ROWS = 8, TILE = 68;
+const GRID_X = (LOGICAL_W - COLS * TILE) / 2;
+const GRID_Y = 58;
+
+const MAP_LAYOUT = [
+  ['C:optics', 'C:circuit', '#', 'W', 'W', '#', 'A', 'A', '#', 'P', 'P', '#', 'T', '>'],
+  ['C:battery','.',         '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '>'],
+  ['C:solar',  '.',         '.', '#', '#', '#', '.', '#', '#', '#', '.', '.', '.', '>'],
+  ['C:dish',   '.',         '.', '#', '.', '.', '.', '.', '.', '#', '.', '.', '.', '#'],
+  ['C:tank',   '.',         '.', '#', '.', '.', '.', '.', '.', '#', '.', '.', '.', '#'],
+  ['#',        '.',         '.', '#', '#', '.', '.', '.', '#', '#', '.', '.', '.', 'X'],
+  ['#',        '.',         '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '#'],
+  ['#',        '#',         '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#']
+];
+
+// --- 4-PLAYER CREW DEFINITIONS ---
+const CREW_ROSTER = [
+  { id: 'P1', role: 'Launch',  color: '#3b82f6', visor: '#93c5fd' },
+  { id: 'P2', role: 'Space',   color: '#f97316', visor: '#fed7aa' },
+  { id: 'P3', role: 'Science', color: '#a855f7', visor: '#e9d5ff' },
+  { id: 'P4', role: 'Ground',  color: '#10b981', visor: '#a7f3d0' }
+];
+
+// --- GLOBAL GAME STATE ---
+let stage = 'MENU'; // MENU, STAGE1, STAGE1B, STAGE2, STAGE3A, STAGE3B, STAGE3C, STAGE4, STAGE5
+let stageTimer = 90;
+let score = 0;
+let shippedCount = 0;
+let shippedModules = { sensor_pod: 0, power_pack: 0, comms_relay: 0, booster_core: 0 };
+let telemetry = { power: 50, comms: 40, science: 0, fuel: 75 };
+let coopMode = '4P_AI'; // '4P_AI' | 'LOCAL_2P' | 'SOLO'
+let activeCrewIndex = 0;
+let lastTime = 0;
+
+// Stage 1 entities
+let stations = [];
+let orders = [];
+let players = [];
+let flyingDeliveries = [];
+let trayReturnQueue = [];
+let floatingTexts = [];
+let conveyorOffset = 0;
+let orderTimer = 0;
+
+// Stage 1B (Ascent: Vertical Thrust + Horizontal Stabilizer + Separation)
+let ascent = {
+  rocketY: 475,
+  thrust: 0.55,
+  targetThrust: 0.6,
+  tilt: 0,
+  velTilt: 0,
+  separated: false,
+  sepWindowOpen: false,
+  boosterDropY: 0
+};
+
+// Stage 2 (Interactive Among Us Orbital Mission Control)
+let ctrlPlayers = [];
+let consoles = [];
+let wrenchRack = { x: 560, y: 235, available: true };
+let activeMiniGame = null;
+let orbitState = {
+  progress: 0,
+  battery: 85,
+  dataBuffer: 25,
+  inEclipse: false,
+  inGroundCone: false,
+  inScanZone: false,
+  eventTimer: 0
+};
+
+// Stage 3A (2.5D Lunar Descent) & Stage 3B (4P 2.5D Dual Moon Rover EVA)
+let lander = {};
+let rover = {};
+let rover2 = {}; // P2 & P4 Companion Rover
+let lunarParticles = [];
+let lunarCraters = [];
+let lunarBoulders = [];
+let scienceNodes = [];
+let landingGrade = 'Nominal';
+let sampleCollected = false;
+
+// Stage 3C (Gradual Transition: Capsule Launch from the Moon & Translunar Injection)
+let moonLaunch = {};
+
+// Stage 4 (4P Earth Re-Entry & Ocean Splashdown)
+let reentry = {};
+
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code) && stage !== 'MENU' && stage !== 'STAGE5') {
+    e.preventDefault();
+  }
+
+  // Switch active controlled crewmate (1-4)
+  if (!e.repeat) {
+    if (e.code === 'Digit1' && !(stage === 'STAGE2' && activeMiniGame && activeMiniGame.type === 'SPACE')) selectActiveCrew(0);
+    if (e.code === 'Digit2' && !(stage === 'STAGE2' && activeMiniGame && activeMiniGame.type === 'SPACE')) selectActiveCrew(1);
+    if (e.code === 'Digit3' && !(stage === 'STAGE2' && activeMiniGame && activeMiniGame.type === 'SPACE')) selectActiveCrew(2);
+    if (e.code === 'Digit4') selectActiveCrew(3);
+  }
+
+  if ((e.code === 'Space' || e.code === 'KeyE') && !e.repeat) {
+    if (stage === 'STAGE1') {
+      handleStage1Interact(players[activeCrewIndex] || players[0]);
+    } else if (stage === 'STAGE1B') {
+      if (ascent.sepWindowOpen && !ascent.separated) {
+        ascent.separated = true;
+        score += 90;
+        telemetry.fuel = Math.min(125, telemetry.fuel + 15);
+        addFloatText(LOGICAL_W / 2, 260, 'STAGE SEPARATION NOMINAL! +90⭐', '#4ade80');
+        playTone(660, 'triangle', 0.2, 0.14);
+      }
+    } else if (stage === 'STAGE2') {
+      handleStage2Interact();
+    } else if (stage === 'STAGE3B') {
+      handleStage3BInteract(rover, true);
+    } else if (stage === 'STAGE3C') {
+      if (moonLaunch.phase === 'TEI_BURN' && !moonLaunch.teiBurnDone) {
+        moonLaunch.teiBurnDone = true;
+        score += 100;
+        addFloatText(LOGICAL_W / 2, 210, 'TRANSLUNAR INJECTION LOCKED! +100⭐', '#4ade80');
+        playTone(660, 'triangle', 0.22, 0.14);
+      }
+    } else if (stage === 'STAGE4') {
+      if (reentry.phase === 'CHUTES' && !reentry.chutesDeployed) {
+        reentry.chutesDeployed = true;
+        score += 80;
+        addFloatText(reentry.capsuleX, reentry.capsuleY - 50, 'MAIN PARACHUTES DEPLOYED! +80⭐', '#4ade80');
+        playTone(520, 'triangle', 0.18, 0.14);
+      }
+    }
+  }
+
+  // Local P2 Action key (Enter / Right Shift)
+  if ((e.code === 'Enter' || e.code === 'ShiftRight') && !e.repeat) {
+    if (stage === 'STAGE1') handleStage1Interact(players[1]);
+    else if (stage === 'STAGE3B') handleStage3BInteract(rover2, false);
+    else if (stage === 'STAGE4' && reentry.phase === 'PLASMA') {
+      reentry.heat = Math.max(10, reentry.heat - 14);
+      addFloatText(reentry.capsuleX, 210, 'P2 CRYO HEATSHIELD PURGE! ❄️', '#38bdf8');
+      playTone(560, 'sine', 0.1, 0.1);
+    }
+  }
+
+  if (stage === 'STAGE2' && activeMiniGame && activeMiniGame.type === 'SPACE' && !e.repeat) {
+    if (e.code === 'Digit1') toggleBreaker(0);
+    if (e.code === 'Digit2') toggleBreaker(1);
+    if (e.code === 'Digit3') toggleBreaker(2);
+  }
+
+  if (e.code === 'Escape' && stage === 'STAGE2' && activeMiniGame) {
+    activeMiniGame = null;
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function selectActiveCrew(idx) {
+  activeCrewIndex = idx;
+  for (let i = 0; i < 4; i++) {
+    const el = document.getElementById(`pchip-${i}`);
+    if (el) el.classList.toggle('active', i === idx);
+  }
+}
+
+function cycleCoopMode() {
+  const btn = document.getElementById('btn-coop');
+  if (coopMode === '4P_AI') {
+    coopMode = 'LOCAL_2P';
+    btn.textContent = '🎮 Local 2P + 2 Bots';
+    btn.className = 'btn-hud btn-bot local2p';
+  } else if (coopMode === 'LOCAL_2P') {
+    coopMode = 'SOLO';
+    btn.textContent = '👤 Solo (1P)';
+    btn.className = 'btn-hud btn-bot off';
+  } else {
+    coopMode = '4P_AI';
+    btn.textContent = '👥 4P Squad (AI)';
+    btn.className = 'btn-hud btn-bot';
+  }
+}
+
+function addFloatText(x, y, text, color='#fff') {
+  floatingTexts.push({ x, y, text, color, life: 1.2 });
+}
+
+function advanceStageManual() {
+  if (stage === 'STAGE1') startStage1B();
+  else if (stage === 'STAGE1B') startStage2();
+  else if (stage === 'STAGE2') startStage3A();
+  else if (stage === 'STAGE3A') startStage3B();
+  else if (stage === 'STAGE3B') startStage3CMoonLaunch();
+  else if (stage === 'STAGE3C') startStage4EarthReturn();
+  else if (stage === 'STAGE4') startStage5Debrief();
+}
+
+// ============================================================================
+// STAGE 1A: OVERCOOKED TIMED ASSEMBLY HANGAR (4-CREW SQUAD)
+// ============================================================================
+function buildStage1Map() {
+  stations = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const code = MAP_LAYOUT[r][c];
+      if (code === '.') continue;
+      const st = {
+        r, c,
+        x: GRID_X + c * TILE,
+        y: GRID_Y + r * TILE,
+        type: code.startsWith('C:') ? 'CRATE' : code,
+        crateItem: code.startsWith('C:') ? code.split(':')[1] : null,
+        item: null,
+        progress: 0,
+        traysCount: code === 'T' ? 4 : 0
+      };
+      if (r === 2 && (c === 4 || c === 8)) {
+        st.item = { kind: 'tray', parts: [] };
+      }
+      stations.push(st);
+    }
+  }
+}
+
+function spawnOrder() {
+  if (orders.length >= 4) return;
+  const rec = RECIPES[Math.floor(Math.random() * RECIPES.length)];
+  orders.push({
+    uid: Math.random().toString(36).slice(2),
+    recipe: rec,
+    remaining: rec.timeLimit,
+    maxTime: rec.timeLimit
+  });
+  renderTicketsHUD();
+  playTone(520, 'triangle', 0.12, 0.08);
+}
+
+function renderTicketsHUD() {
+  const bar = document.getElementById('tickets-bar');
+  bar.innerHTML = orders.map(o => {
+    const m1 = PROC_META[o.recipe.reqs[0]];
+    const m2 = PROC_META[o.recipe.reqs[1]];
+    const pct = Math.max(0, (o.remaining / o.maxTime) * 100);
+    return `
+      <div class="ticket" id="tk-${o.uid}">
+        <div class="ticket-header" style="background:${o.recipe.segColor}">
+          <span>${o.recipe.segment}</span>
+          <span>+${o.recipe.points}⭐</span>
+        </div>
+        <div class="ticket-timer-bg">
+          <div class="ticket-timer-fill" id="tk-bar-${o.uid}" style="width:${pct}%"></div>
+        </div>
+        <div class="ticket-body">
+          <div class="ticket-title">${o.recipe.title}</div>
+          <div class="ticket-reqs">
+            <div class="req-chip">
+              ${getHardwareSVG(m1.shape, true)}
+              <span class="pname">${m1.name}</span>
+              <small style="color:${m1.verbColor}">${m1.verb}</small>
+            </div>
+            <div class="req-chip">
+              ${getHardwareSVG(m2.shape, true)}
+              <span class="pname">${m2.name}</span>
+              <small style="color:${m2.verbColor}">${m2.verb}</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function updateTicketBarsOnly() {
+  for (const o of orders) {
+    const el = document.getElementById(`tk-bar-${o.uid}`);
+    if (el) {
+      const pct = Math.max(0, (o.remaining / o.maxTime) * 100);
+      el.style.width = pct + '%';
+      el.style.backgroundColor = pct > 50 ? '#22c55e' : pct > 25 ? '#f59e0b' : '#ef4444';
+    }
+  }
+}
+
+function getFacingStation(p) {
+  const reach = 42;
+  const fx = p.x + Math.cos(p.angle) * reach;
+  const fy = p.y + Math.sin(p.angle) * reach;
+  let best = null, bestScore = 999;
+  for (const st of stations) {
+    const cx = st.x + TILE / 2;
+    const cy = st.y + TILE / 2;
+    const dist = Math.hypot(fx - cx, fy - cy);
+    const pDist = Math.hypot(p.x - cx, p.y - cy);
+    if (dist < 52 && pDist < 84) {
+      const sc = dist + pDist * 0.25;
+      if (sc < bestScore) { bestScore = sc; best = st; }
+    }
+  }
+  return best;
+}
+
+function canAcceptPartOnTray(tray, procId) {
+  if (procId === 'burned' || tray.parts.includes(procId) || tray.parts.length >= 2) return false;
+  const cand = [...tray.parts, procId];
+  return RECIPES.some(r => cand.every(pt => r.reqs.includes(pt)));
+}
+
+function handleStage1Interact(p) {
+  if (!p) return;
+  const st = getFacingStation(p);
+  if (!st) return;
+
+  if (st.type === 'X') {
+    if (p.holding) {
+      if (p.holding.kind === 'tray') {
+        p.holding.parts = [];
+        addFloatText(st.x + 34, st.y, 'Tray Cleared!', '#94a3b8');
+      } else {
+        p.holding = null;
+        addFloatText(st.x + 34, st.y, 'Scrapped!', '#f87171');
+      }
+      playTone(180, 'sawtooth', 0.14, 0.09);
+    }
+    return;
+  }
+
+  if (st.type === '>') {
+    if (p.holding && p.holding.kind === 'tray' && p.holding.parts.length === 2) {
+      const matching = orders
+        .filter(o => o.recipe.reqs.every(req => p.holding.parts.includes(req)))
+        .sort((a, b) => a.remaining - b.remaining);
+      if (matching.length > 0) {
+        const matched = matching[0];
+        const tip = Math.round((matched.remaining / matched.maxTime) * 30);
+        const pts = matched.recipe.points + tip;
+        score += pts;
+        shippedCount++;
+        shippedModules[matched.recipe.id]++;
+        telemetry.power += matched.recipe.telemetry.power;
+        telemetry.comms += matched.recipe.telemetry.comms;
+        telemetry.science += matched.recipe.telemetry.science;
+        telemetry.fuel = Math.min(125, telemetry.fuel + matched.recipe.telemetry.fuel);
+
+        orders = orders.filter(o => o.uid !== matched.uid);
+        flyingDeliveries.push({ x: st.x + 20, y: st.y + 34, parts: [...p.holding.parts] });
+        p.holding = null;
+        trayReturnQueue.push(3.0);
+        renderTicketsHUD();
+        updateBottomHUD();
+        addFloatText(st.x, st.y, `SHIPPED! +${pts}⭐`, '#4ade80');
+        playTone(587, 'triangle', 0.11, 0.12);
+        setTimeout(() => playTone(880, 'triangle', 0.2, 0.12), 100);
+        if (orders.length < 2) spawnOrder();
+      } else {
+        addFloatText(st.x, st.y, 'No Matching Ticket!', '#f87171');
+        playTone(150, 'square', 0.18, 0.1);
+      }
+    } else {
+      addFloatText(st.x, st.y, 'Need Full Fairing Tray!', '#fbbf24');
+    }
+    return;
+  }
+
+  if (st.type === 'CRATE') {
+    if (!p.holding) {
+      p.holding = { kind: 'raw', id: st.crateItem };
+      playTone(440, 'sine', 0.07, 0.08);
+    }
+    return;
+  }
+
+  if (st.type === 'T') {
+    if (!p.holding && st.traysCount > 0) {
+      st.traysCount--;
+      p.holding = { kind: 'tray', parts: [] };
+      playTone(500, 'sine', 0.07, 0.08);
+    }
+    return;
+  }
+
+  const isProc = (st.type === 'W' || st.type === 'A' || st.type === 'P');
+
+  if (!p.holding && st.item) {
+    if ((st.type === 'A' || st.type === 'P') && st.item.kind === 'raw' && st.progress < 1) {
+      addFloatText(st.x + 34, st.y, 'Processing...', '#fbbf24');
+      return;
+    }
+    p.holding = st.item;
+    st.item = null;
+    st.progress = 0;
+    playTone(480, 'sine', 0.07, 0.08);
+    return;
+  }
+
+  if (p.holding && p.holding.kind === 'tray' && st.item && st.item.kind === 'proc') {
+    if (canAcceptPartOnTray(p.holding, st.item.id)) {
+      p.holding.parts.push(st.item.id);
+      st.item = null;
+      st.progress = 0;
+      addFloatText(p.x, p.y - 30, 'Plated!', '#38bdf8');
+      playTone(660, 'triangle', 0.09, 0.09);
+    } else {
+      addFloatText(p.x, p.y - 30, 'Wrong Combo!', '#f87171');
+    }
+    return;
+  }
+
+  if (p.holding && p.holding.kind === 'proc' && st.item && st.item.kind === 'tray') {
+    if (canAcceptPartOnTray(st.item, p.holding.id)) {
+      st.item.parts.push(p.holding.id);
+      p.holding = null;
+      addFloatText(st.x + 34, st.y, 'Plated!', '#38bdf8');
+      playTone(660, 'triangle', 0.09, 0.09);
+    } else {
+      addFloatText(st.x + 34, st.y, 'Wrong Combo!', '#f87171');
+    }
+    return;
+  }
+
+  if (p.holding && !st.item) {
+    if (isProc) {
+      if (p.holding.kind !== 'raw') {
+        addFloatText(st.x + 34, st.y, 'Raw Parts Only!', '#f87171');
+        return;
+      }
+      const rawMeta = RAW_ITEMS[p.holding.id];
+      const reqType = st.type === 'W' ? 'weld' : st.type === 'A' ? 'calibrate' : 'charge';
+      if (rawMeta.procType !== reqType) {
+        const names = { weld: 'Weld Bench', calibrate: 'Calibrate Rig', charge: 'Power Charger' };
+        addFloatText(st.x + 34, st.y, `Use ${names[rawMeta.procType]}!`, '#fbbf24');
+        playTone(180, 'sawtooth', 0.1, 0.09);
+        return;
+      }
+    }
+    st.item = p.holding;
+    st.progress = 0;
+    p.holding = null;
+    playTone(360, 'sine', 0.07, 0.08);
+  }
+}
+
+function updateStage1Bot(bot, orderIdx, dt) {
+  if (orders.length === 0) return;
+  const targetOrder = orders[Math.min(orderIdx, orders.length - 1)];
+  const needed = targetOrder.recipe.reqs;
+
+  let traySt = stations.find(s => s.item && s.item.kind === 'tray' &&
+    s.item.parts.every(pt => needed.includes(pt)) && s.item.parts.length < 2);
+  let fullTraySt = stations.find(s => s.item && s.item.kind === 'tray' &&
+    needed.every(req => s.item.parts.includes(req)));
+
+  let tx = null, ty = null, act = null;
+  if (bot.holding && bot.holding.kind === 'tray' && needed.every(req => bot.holding.parts.includes(req))) {
+    const conv = stations.find(s => s.type === '>');
+    tx = conv.x - 22; ty = conv.y + 34; act = 'interact';
+  } else if (!bot.holding && fullTraySt) {
+    tx = fullTraySt.x + 34; ty = fullTraySt.y + 88; act = 'interact';
+  } else if (bot.holding && bot.holding.kind === 'proc' && traySt) {
+    tx = traySt.x + 34; ty = traySt.y + 88; act = 'interact';
+  } else if (!bot.holding) {
+    const ready = stations.find(s => s.item && s.item.kind === 'proc' && needed.includes(s.item.id));
+    if (ready) {
+      tx = ready.x + 34; ty = ready.y + 88; act = 'interact';
+    } else {
+      const weld = stations.find(s => s.type === 'W' && s.item && s.item.kind === 'raw');
+      if (weld) {
+        tx = weld.x + 34; ty = weld.y + 88; act = 'weld';
+      } else {
+        const existing = traySt ? traySt.item.parts : [];
+        const miss = needed.find(req => !existing.includes(req));
+        const rawKey = Object.keys(RAW_ITEMS).find(k => RAW_ITEMS[k].result === miss);
+        if (rawKey) {
+          const crate = stations.find(s => s.type === 'CRATE' && s.crateItem === rawKey);
+          tx = crate.x + 88; ty = crate.y + 34; act = 'interact';
+        }
+      }
+    }
+  } else if (bot.holding && bot.holding.kind === 'raw') {
+    const rawMeta = RAW_ITEMS[bot.holding.id];
+    const bType = rawMeta.procType === 'weld' ? 'W' : rawMeta.procType === 'calibrate' ? 'A' : 'P';
+    const free = stations.find(s => s.type === bType && !s.item);
+    if (free) { tx = free.x + 34; ty = free.y + 88; act = 'interact'; }
+  }
+
+  if (tx !== null) {
+    const dx = tx - bot.x, dy = ty - bot.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 14) {
+      moveStage1Player(bot, (dx / d) * 175 * dt, (dy / d) * 175 * dt);
+    } else {
+      let near = null, nd = 999;
+      for (const s of stations) {
+        const sd = Math.hypot((s.x + 34) - bot.x, (s.y + 34) - bot.y);
+        if (sd < nd) { nd = sd; near = s; }
+      }
+      if (near) bot.angle = Math.atan2((near.y + 34) - bot.y, (near.x + 34) - bot.x);
+      if (act === 'interact') {
+        bot.cd = (bot.cd || 0) - dt;
+        if (bot.cd <= 0) { handleStage1Interact(bot); bot.cd = 0.4; }
+      } else if (act === 'weld' && near && near.type === 'W' && near.item) {
+        near.progress += dt * 0.55;
+        if (near.progress >= 1) {
+          near.item = { kind: 'proc', id: RAW_ITEMS[near.item.id].result };
+          near.progress = 1;
+        }
+      }
+    }
+  }
+}
+
+function moveStage1Player(p, vx, vy) {
+  if (vx !== 0 || vy !== 0) {
+    p.angle = Math.atan2(vy, vx);
+    p.walk += 0.22;
+  }
+  const r = 16;
+  const collides = (nx, ny) => {
+    if (nx < GRID_X + r || nx > GRID_X + COLS * TILE - r) return true;
+    if (ny < GRID_Y + r || ny > GRID_Y + ROWS * TILE - r) return true;
+    for (const s of stations) {
+      if (nx + r > s.x + 4 && nx - r < s.x + TILE - 4 &&
+          ny + r > s.y + 4 && ny - r < s.y + TILE - 4) return true;
+    }
+    return false;
+  };
+  if (!collides(p.x + vx, p.y)) p.x += vx;
+  if (!collides(p.x, p.y + vy)) p.y += vy;
+}
+
+// ============================================================================
+// STAGE 1B: ROCKET LIFTOFF (VERTICAL THRUST BAND + PITCH STABILIZER)
+// ============================================================================
+function startStage1B() {
+  stage = 'STAGE1B';
+  stageTimer = 14;
+  ascent = {
+    rocketY: 475,
+    thrust: 0.55,
+    targetThrust: 0.6,
+    tilt: 0,
+    velTilt: (Math.random() - 0.5) * 0.35,
+    separated: false,
+    sepWindowOpen: false,
+    boosterDropY: 0
+  };
+  floatingTexts = [];
+
+  document.getElementById('tickets-bar').style.display = 'none';
+  document.getElementById('btn-skip').style.display = 'none';
+  document.getElementById('btn-next').style.display = 'inline-block';
+
+  const sb = document.getElementById('stage-banner');
+  sb.style.display = 'flex';
+  document.getElementById('sb-badge').textContent = 'STAGE 1B — LIFTOFF';
+  document.getElementById('sb-title').textContent = '4P Rocket Liftoff & Stage Separation';
+  document.getElementById('sb-desc').textContent = 'P1 holds W/S Vertical Thrust & A/D Stabilizer; P2-P4 assist RCS trim & decouple at T+9s!';
+  document.getElementById('controls-hint').innerHTML = `<kbd>W</kbd>/<kbd>S</kbd> Vertical Thrust &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Stabilizer &nbsp;•&nbsp; <kbd>SPACE</kbd> Stage Separation`;
+  playTone(220, 'sawtooth', 0.4, 0.14);
+}
+
+// ============================================================================
+// STAGE 2: INTERACTIVE AMONG US-STYLE ORBITAL MISSION CONTROL (4P CREW)
+// ============================================================================
+function startStage2() {
+  stage = 'STAGE2';
+  stageTimer = 30;
+  activeMiniGame = null;
+  floatingTexts = [];
+
+  const startBatt = Math.max(45, Math.min(100, 60 + Math.round(telemetry.power * 0.25)));
+  orbitState = {
+    progress: 0,
+    battery: startBatt,
+    dataBuffer: 30,
+    inEclipse: false,
+    inGroundCone: false,
+    inScanZone: false,
+    eventTimer: 2.0
+  };
+
+  wrenchRack = { x: 560, y: 235, available: true };
+
+  ctrlPlayers = CREW_ROSTER.map((cr, i) => ({
+    name: cr.id,
+    role: cr.role,
+    x: 490 + i * 48,
+    y: 385 + (i % 2) * 26,
+    angle: 0,
+    color: cr.color,
+    visor: cr.visor,
+    walk: 0,
+    hasWrench: false
+  }));
+
+  consoles = [
+    { id: 'USER',   label: 'SPECTROMETER', sub: 'Target Tracking',  x: 250, y: 305, color: '#0284c7', alert: true,  needsWrench: false, botProg: 0 },
+    { id: 'SPACE',  label: 'POWER GRID',   sub: 'Eclipse Breakers', x: 870, y: 305, color: '#d97706', alert: false, needsWrench: false, botProg: 0 },
+    { id: 'GROUND', label: 'KA-BAND DISH', sub: 'Wave Downlink',    x: 250, y: 495, color: '#7c3aed', alert: false, needsWrench: false, botProg: 0 },
+    { id: 'LAUNCH', label: 'HULL & GYRO',  sub: 'Wrench Repair',    x: 870, y: 495, color: '#dc2626', alert: true,  needsWrench: true,  botProg: 0 }
+  ];
+
+  document.getElementById('sb-badge').textContent = 'STAGE 2 — 4P ORBITAL OPS';
+  document.getElementById('sb-title').textContent = 'Mission Control Deck (4-Player Co-Op)';
+  document.getElementById('sb-desc').textContent = '4-Player Crew runs flashing segment consoles, tracks targets, sheds eclipse loads & repairs hull!';
+  document.getElementById('controls-hint').innerHTML = `<kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Task / Wrench &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Switch Crew`;
+}
+
+function openConsoleMiniGame(c) {
+  const lead = ctrlPlayers[activeCrewIndex] || ctrlPlayers[0];
+  if (c.id === 'LAUNCH' && c.needsWrench && !lead.hasWrench) {
+    addFloatText(c.x, c.y - 45, 'Grab Wrench from Top Rack First! 🔧', '#fbbf24');
+    playTone(170, 'sawtooth', 0.16, 0.1);
+    return;
+  }
+
+  if (c.id === 'USER') {
+    activeMiniGame = {
+      type: 'USER',
+      console: c,
+      rx: 0, ry: 0,
+      tx: (Math.random() - 0.5) * 140,
+      ty: (Math.random() - 0.5) * 90,
+      vx: 55, vy: 42,
+      lockProgress: 0
+    };
+  } else if (c.id === 'SPACE') {
+    activeMiniGame = {
+      type: 'SPACE',
+      console: c,
+      breakers: [
+        { name: 'AUX HEATER', watts: 65, on: true },
+        { name: 'RADAR ALT',  watts: 55, on: true },
+        { name: 'CORE BUS',   watts: 45, on: true }
+      ],
+      limit: 115
+    };
+  } else if (c.id === 'GROUND') {
+    activeMiniGame = {
+      type: 'GROUND',
+      console: c,
+      targetFreq: 0.3 + Math.random() * 0.45,
+      playerFreq: 0.15,
+      holdTime: 0
+    };
+  } else if (c.id === 'LAUNCH') {
+    activeMiniGame = {
+      type: 'LAUNCH',
+      console: c,
+      boltsTightened: 0,
+      boltsNeeded: 5
+    };
+  }
+  playTone(480, 'sine', 0.08, 0.1);
+}
+
+function toggleBreaker(idx) {
+  if (!activeMiniGame || activeMiniGame.type !== 'SPACE') return;
+  const b = activeMiniGame.breakers[idx];
+  b.on = !b.on;
+  playTone(b.on ? 520 : 340, 'triangle', 0.08, 0.1);
+  const totalW = activeMiniGame.breakers.reduce((acc, item) => acc + (item.on ? item.watts : 0), 0);
+  if (totalW <= activeMiniGame.limit) {
+    completeConsoleTask(activeMiniGame.console, 'ECLIPSE LOAD BALANCED! +85⭐', 85);
+    orbitState.battery = Math.min(100, orbitState.battery + 18);
+  }
+}
+
+function completeConsoleTask(c, msg, pts) {
+  c.alert = false;
+  c.botProg = 0;
+  const lead = ctrlPlayers[activeCrewIndex] || ctrlPlayers[0];
+  if (c.id === 'LAUNCH' && lead.hasWrench) {
+    lead.hasWrench = false;
+    wrenchRack.available = true;
+  }
+  score += pts;
+  telemetry.science += 20;
+  addFloatText(c.x, c.y - 45, msg, '#4ade80');
+  playTone(587, 'triangle', 0.12, 0.14);
+  setTimeout(() => playTone(880, 'triangle', 0.22, 0.14), 110);
+  activeMiniGame = null;
+  updateBottomHUD();
+}
+
+function handleStage2Interact() {
+  const p = ctrlPlayers[activeCrewIndex] || ctrlPlayers[0];
+
+  if (activeMiniGame) {
+    if (activeMiniGame.type === 'SPACE') {
+      const idx = activeMiniGame.breakers.findIndex(b => b.on);
+      if (idx !== -1) toggleBreaker(idx);
+    } else if (activeMiniGame.type === 'LAUNCH') {
+      activeMiniGame.boltsTightened++;
+      playTone(300 + activeMiniGame.boltsTightened * 85, 'square', 0.08, 0.12);
+      if (activeMiniGame.boltsTightened >= activeMiniGame.boltsNeeded) {
+        completeConsoleTask(activeMiniGame.console, 'HULL & GYRO REPAIRED! +95⭐', 95);
+      }
+    }
+    return;
+  }
+
+  if (Math.hypot(p.x - wrenchRack.x, p.y - wrenchRack.y) < 62) {
+    if (!p.hasWrench && wrenchRack.available) {
+      p.hasWrench = true;
+      wrenchRack.available = false;
+      addFloatText(wrenchRack.x, wrenchRack.y - 30, `${p.name} Equipped Wrench 🔧`, '#fde047');
+      playTone(540, 'sine', 0.08, 0.1);
+      return;
+    } else if (p.hasWrench) {
+      p.hasWrench = false;
+      wrenchRack.available = true;
+      addFloatText(wrenchRack.x, wrenchRack.y - 30, 'Returned Wrench', '#94a3b8');
+      return;
+    }
+  }
+
+  for (const c of consoles) {
+    if (Math.hypot(p.x - c.x, p.y - c.y) < 78 && c.alert) {
+      openConsoleMiniGame(c);
+      return;
+    }
+  }
+}
+
+// ============================================================================
+// STAGE 3A (4P 2.5D LUNAR DESCENT) & STAGE 3B (4P 2.5D DUAL MOON ROVER EVA)
+// ============================================================================
+function startStage3A() {
+  stage = 'STAGE3A';
+  stageTimer = 45;
+  lunarParticles = [];
+  floatingTexts = [];
+  landingGrade = 'Nominal';
+  sampleCollected = false;
+
+  const startFuel = Math.max(60, Math.min(125, telemetry.fuel));
+  lander = {
+    x: 690,
+    y: 280,
+    z: 225,
+    vx: -28,
+    vy: 14,
+    vz: -16,
+    tiltX: 0,
+    fuel: startFuel,
+    maxFuel: startFuel,
+    thrusting: false,
+    hoverTrim: false,
+    p2AssistActive: false,
+    legAnim: 0,
+    padX: 235,
+    padY: 395,
+    landed: false
+  };
+
+  build25DLunarTerrain();
+
+  document.getElementById('sb-badge').textContent = 'STAGE 3A — 4P 2.5D DESCENT';
+  document.getElementById('sb-title').textContent = '4-Crew Powered Landing on POINT A';
+  document.getElementById('sb-desc').textContent = 'P1 Thrust & XY Steer • P2 Hover Trim • P3 Terrain Lidar • P4 Pad Beacon!';
+  document.getElementById('controls-hint').innerHTML = `<kbd>WASD</kbd> Steer XY &nbsp;•&nbsp; <kbd>SPACE</kbd> Main Thrust &nbsp;•&nbsp; <kbd>SHIFT</kbd> Hover Trim`;
+  playTone(300, 'triangle', 0.25, 0.12);
+}
+
+function build25DLunarTerrain() {
+  lunarCraters = [
+    { x: 420, y: 245, rx: 44, ry: 20, isTarget: false },
+    { x: 565, y: 495, rx: 52, ry: 24, isTarget: false },
+    { x: 715, y: 265, rx: 40, ry: 18, isTarget: false },
+    { x: 915, y: 390, rx: 72, ry: 34, isTarget: true }
+  ];
+
+  lunarBoulders = [
+    { x: 380, y: 375, r: 16 },
+    { x: 490, y: 315, r: 19 },
+    { x: 645, y: 385, r: 17 },
+    { x: 765, y: 465, r: 20 },
+    { x: 810, y: 295, r: 15 }
+  ];
+
+  scienceNodes = [
+    { id: 'basalt', name: 'Basalt Ridge', x: 515, y: 230, scanned: false, pts: 55 },
+    { id: 'ice',    name: 'Shadowed Ice Core', x: 655, y: 525, scanned: false, pts: 65 }
+  ];
+}
+
+function startStage3B() {
+  stage = 'STAGE3B';
+  stageTimer = 75;
+  lunarParticles = [];
+
+  const maxBatt = Math.max(85, Math.min(150, 90 + Math.round(telemetry.power * 0.25)));
+  // Primary Rover (Crew P1 Commander + P3 Science Lidar)
+  rover = {
+    id: 'LTV-1 (P1+P3)',
+    bodyColor: '#f59e0b',
+    x: 305,
+    y: 385,
+    z: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    facingX: 1,
+    facingY: 0,
+    wheelSpin: 0,
+    battery: maxBatt,
+    maxBattery: maxBatt,
+    hasSample: false,
+    drilling: false,
+    drillProgress: 0,
+    armAnim: 0,
+    rcsHopping: false
+  };
+
+  // Companion Rover (Crew P2 Space + P4 Ground Relay)
+  rover2 = {
+    id: 'LTV-2 (P2+P4)',
+    bodyColor: '#38bdf8',
+    x: 295,
+    y: 445,
+    z: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    facingX: 1,
+    facingY: 0,
+    wheelSpin: 0,
+    battery: maxBatt,
+    maxBattery: maxBatt,
+    hasSample: false,
+    drilling: false,
+    drillProgress: 0,
+    armAnim: 0,
+    rcsHopping: false,
+    botCd: 0
+  };
+
+  document.getElementById('sb-badge').textContent = 'STAGE 3B — 4P MOON ROVER EVA';
+  document.getElementById('sb-title').textContent = 'Dual 4-Player Rover Expedition: Pt A → Pt B → Pt A';
+  document.getElementById('sb-desc').textContent = 'P1+P3 drive LTV-1 & P2+P4 pilot LTV-2 to Point B Crater, drill samples, and return to Rocket!';
+  document.getElementById('controls-hint').innerHTML = `<kbd>WASD</kbd> LTV-1 &nbsp;•&nbsp; <kbd>IJKL</kbd> LTV-2 (2P) &nbsp;•&nbsp; <kbd>SHIFT</kbd> Hop &nbsp;•&nbsp; <kbd>SPACE</kbd> Drill / Stow`;
+}
+
+function handleStage3BInteract(rv, isPrimary) {
+  // Check science outcrops
+  for (const sn of scienceNodes) {
+    if (!sn.scanned && Math.hypot(rv.x - sn.x, rv.y - sn.y) < 66) {
+      sn.scanned = true;
+      score += sn.pts;
+      telemetry.science += 25;
+      addFloatText(sn.x, sn.y - 45, `${rv.id} SCANNED ${sn.name.toUpperCase()}! +${sn.pts}⭐`, '#38bdf8');
+      playTone(720, 'triangle', 0.16, 0.12);
+      updateBottomHUD();
+      return;
+    }
+  }
+
+  // Check return docking at Point A (Landed Rocket at 235, 395)
+  if ((rover.hasSample || rover2.hasSample) && Math.hypot(rv.x - lander.padX, rv.y - lander.padY) < 95) {
+    sampleCollected = true;
+    const dualBonus = (rover.hasSample && rover2.hasSample) ? 100 : 0;
+    const totalPts = 220 + dualBonus;
+    score += totalPts;
+    telemetry.science += 60;
+    addFloatText(lander.padX, lander.padY - 95, `SAMPLES BOARDED! PREPARING MOON LAUNCH! +${totalPts}⭐`, '#4ade80');
+    playTone(587, 'triangle', 0.14, 0.14);
+    setTimeout(() => playTone(880, 'triangle', 0.25, 0.14), 130);
+    setTimeout(startStage3CMoonLaunch, 1000);
+  }
+}
+
+// ============================================================================
+// STAGE 3C: GRADUAL TRANSITION — CAPSULE LAUNCH FROM THE MOON & TEI BURN
+// ============================================================================
+function startStage3CMoonLaunch() {
+  stage = 'STAGE3C';
+  stageTimer = 18;
+  lunarParticles = [];
+  floatingTexts = [];
+
+  moonLaunch = {
+    phase: 'LIFTOFF', // 'LIFTOFF' (Lunar surface ascent) -> 'TEI_BURN' (Cislunar Moon-to-Earth transfer)
+    capsuleY: lander.padY,
+    velocityY: 0,
+    thrusting: false,
+    tilt: 0,
+    velTilt: 0,
+    progress: 0,      // 0..1 across cislunar transfer
+    teiBurnDone: false
+  };
+
+  document.getElementById('sb-badge').textContent = 'STAGE 3C — MOON LAUNCH';
+  document.getElementById('sb-title').textContent = 'Lunar Ascent & Translunar Injection (Moon → Earth)';
+  document.getElementById('sb-desc').textContent = 'Hold W/SPACE to launch the Ascent Capsule off the Moon, stabilize with A/D, and fire TEI Burn toward Earth!';
+  document.getElementById('controls-hint').innerHTML = `<kbd>W</kbd>/<kbd>SPACE</kbd> Lunar Ascent Thrust &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Trajectory Trim &nbsp;•&nbsp; <kbd>SPACE</kbd> TEI Burn`;
+  playTone(240, 'sawtooth', 0.35, 0.13);
+}
+
+// ============================================================================
+// STAGE 4: 4P RETURN TO PLANET EARTH (PLASMA RE-ENTRY + CARRIER SPLASHDOWN)
+// ============================================================================
+function startStage4EarthReturn() {
+  stage = 'STAGE4';
+  stageTimer = 38;
+  lunarParticles = [];
+  floatingTexts = [];
+
+  const corridorBonus = Math.min(0.12, (shippedModules.comms_relay + shippedModules.power_pack) * 0.03);
+  reentry = {
+    phase: 'PLASMA', // 'PLASMA' -> 'CHUTES' -> 'SPLASHED'
+    altitude: 120,
+    pitchAngle: 0,
+    corridorHalfWidth: 0.24 + corridorBonus,
+    heat: 20,
+    p2CoolantCd: 0,
+    chutesDeployed: false,
+    chuteScale: 0,
+    capsuleX: 520,
+    capsuleY: 135,
+    shipX: 660,
+    shipDir: 1,
+    wavePhase: 0,
+    grade: 'Nominal'
+  };
+
+  document.getElementById('sb-badge').textContent = 'STAGE 4 — 4P EARTH RETURN';
+  document.getElementById('sb-title').textContent = '4-Crew Re-Entry Corridor & Carrier Splashdown';
+  document.getElementById('sb-desc').textContent = 'P1 Entry Pitch (W/S) & Chutes (A/D) • P2 Heatshield Purge • P3 Sample Vault • P4 Recovery Ship (J/L)!';
+  document.getElementById('controls-hint').innerHTML = `<kbd>W</kbd>/<kbd>S</kbd> Corridor &nbsp;•&nbsp; <kbd>SPACE</kbd> Chutes &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Capsule &nbsp;•&nbsp; <kbd>J</kbd>/<kbd>L</kbd> Recovery Ship (P4)`;
+  playTone(260, 'triangle', 0.3, 0.12);
+}
+
+// ============================================================================
+// STAGE 5: BLACK BOX DEBRIEF & NASA MISSION TWIN
+// ============================================================================
+function startStage5Debrief() {
+  stage = 'STAGE5';
+  document.getElementById('btn-next').style.display = 'none';
+  const stars = score >= 1200 ? '⭐⭐⭐' : score >= 750 ? '⭐⭐' : '⭐';
+  document.getElementById('modal-content').innerHTML = `
+    <h1>${stars} 4-PLAYER LUNAR SAMPLE RETURN COMPLETE!</h1>
+    <p class="sub">Final Squad Score: <b>${score} pts</b> • Lunar Touchdown: <b>${landingGrade}</b> • Earth Recovery: <b>${reentry.grade}</b></p>
+    <div class="recipe-grid">
+      <div class="recipe-box">
+        <div>
+          <b>🔗 End-to-End 4-Crew Causal Chain</b>
+          P1 Launch shipped <b>${shippedModules.booster_core}</b> Cryo-Stages (${Math.round(telemetry.fuel)}% landing fuel); P2 Space shipped <b>${shippedModules.power_pack}</b> Solar-Battery packs (${Math.round(rover.maxBattery)} Wh Dual Rover power); P3 Science & P4 Ground widened Earth re-entry & carrier recovery.
+        </div>
+      </div>
+      <div class="recipe-box">
+        <div>
+          <b>🛰️ Real NASA Mission Twin: Artemis Orion, LTV & Apollo 17</b>
+          Mirroring NASA's Artemis architecture—where dual Lunar Terrain Vehicles collect crater core samples, launch an Ascent Stage from the lunar surface into translunar trajectory, and splash down Orion beside a U.S. Navy recovery carrier.
+        </div>
+      </div>
+    </div>
+    <button class="btn-play" onclick="startGame()">FLY NEW 4P MISSION</button>
+  `;
+  document.getElementById('modal').style.display = 'flex';
+}
+
+// ============================================================================
+// MAIN GAME LOOP & UPDATES
+// ============================================================================
+function startGame() {
+  document.getElementById('modal').style.display = 'none';
+  document.getElementById('tickets-bar').style.display = 'flex';
+  document.getElementById('btn-skip').style.display = 'inline-block';
+  document.getElementById('btn-next').style.display = 'none';
+  document.getElementById('stage-banner').style.display = 'none';
+  document.getElementById('controls-hint').innerHTML = `<kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Interact &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Switch Crew`;
+
+  buildStage1Map();
+  orders = [];
+  flyingDeliveries = [];
+  trayReturnQueue = [];
+  floatingTexts = [];
+  score = 0;
+  shippedCount = 0;
+  shippedModules = { sensor_pod: 0, power_pack: 0, comms_relay: 0, booster_core: 0 };
+  telemetry = { power: 50, comms: 40, science: 0, fuel: 75 };
+  stageTimer = 90;
+  orderTimer = 0;
+
+  players = CREW_ROSTER.map((cr, i) => ({
+    name: cr.id,
+    role: cr.role,
+    x: GRID_X + (2.4 + (i % 2) * 8.2) * TILE,
+    y: GRID_Y + (2.2 + Math.floor(i / 2) * 3.0) * TILE,
+    angle: i % 2 === 0 ? 0 : Math.PI,
+    color: cr.color,
+    visor: cr.visor,
+    holding: null,
+    walk: 0,
+    cd: 0
+  }));
+
+  spawnOrder();
+  setTimeout(spawnOrder, 700);
+  updateBottomHUD();
+  stage = 'STAGE1';
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+}
+
+function updateBottomHUD() {
+  document.getElementById('score-display').textContent = score;
+  const strip = document.getElementById('telemetry-strip');
+
+  if (stage === 'STAGE1B') {
+    const inThrustBand = Math.abs(ascent.thrust - ascent.targetThrust) <= 0.14;
+    const inPitchBand = Math.abs(ascent.tilt) <= 0.2;
+    strip.innerHTML = `
+      <div class="t-stat">🔥 Vertical Thrust: <b style="color:${inThrustBand ? '#4ade80' : '#fbbf24'}">${Math.round(ascent.thrust*100)}%</b></div>
+      <div class="t-stat">🧭 Stabilizer Trim: <b style="color:${inPitchBand ? '#4ade80' : '#f87171'}">${inPitchBand ? 'LOCKED' : 'DRIFTING'}</b></div>
+      <div class="t-stat">🚀 Stage Sep: <b>${ascent.separated ? 'DECOUPLED ✅' : ascent.sepWindowOpen ? 'READY [SPACE]!' : 'ARMING...'}</b></div>
+    `;
+  } else if (stage === 'STAGE2') {
+    const activeAlerts = consoles.filter(c => c.alert).length;
+    strip.innerHTML = `
+      <div class="t-stat">🔋 Bus Battery: <b style="color:${orbitState.battery < 30 ? '#f87171' : '#4ade80'}">${Math.round(orbitState.battery)}%</b></div>
+      <div class="t-stat">💾 Data Buffer: <b style="color:${orbitState.dataBuffer > 80 ? '#f87171' : '#38bdf8'}">${Math.round(orbitState.dataBuffer)}%</b></div>
+      <div class="t-stat">⚠️ Active Alerts: <b style="color:${activeAlerts > 0 ? '#fbbf24' : '#4ade80'}">${activeAlerts}</b></div>
+      <div class="t-stat">🔬 Science: <b>${telemetry.science} pts</b></div>
+    `;
+  } else if (stage === 'STAGE3A') {
+    const vSpd = Math.abs(lander.vz * 0.24).toFixed(1);
+    const alt = Math.max(0, Math.round(lander.z * 0.45));
+    const padDist = Math.round(Math.hypot(lander.x - lander.padX, (lander.y - lander.padY) * 1.4));
+    strip.innerHTML = `
+      <div class="t-stat">📏 Altitude: <b>${alt} m</b></div>
+      <div class="t-stat">⬇️ Descent: <b style="color:${vSpd > 5.0 ? '#f87171' : '#4ade80'}">${vSpd} m/s</b></div>
+      <div class="t-stat">🎯 Pad Offset: <b style="color:${padDist <= 74 ? '#4ade80' : '#fbbf24'}">${padDist} m</b></div>
+      <div class="t-stat">👥 Crew Trim: <b style="color:#38bdf8">${lander.p2AssistActive ? 'P2 AUTO-TRIM' : '4P ACTIVE'}</b></div>
+    `;
+  } else if (stage === 'STAGE3B') {
+    const anySample = rover.hasSample || rover2.hasSample;
+    const obj = anySample ? 'Return Sample to Point A (Rocket)!' : 'Drive LTV-1 & LTV-2 to Point B Crater!';
+    strip.innerHTML = `
+      <div class="t-stat">🚙 4P Objective: <b style="color:#4ade80">${obj}</b></div>
+      <div class="t-stat">🔋 LTV-1: <b>${Math.round(rover.battery)}Wh</b> | LTV-2: <b>${Math.round(rover2.battery)}Wh</b></div>
+      <div class="t-stat">🧪 Samples: <b>${(rover.hasSample ? 1 : 0) + (rover2.hasSample ? 1 : 0)}/2</b></div>
+    `;
+  } else if (stage === 'STAGE3C') {
+    strip.innerHTML = `
+      <div class="t-stat">🌕 Phase: <b style="color:#38bdf8">${moonLaunch.phase === 'LIFTOFF' ? 'LUNAR ASCENT' : 'CISLUNAR TRANSFER'}</b></div>
+      <div class="t-stat">🧭 Trajectory: <b style="color:${Math.abs(moonLaunch.tilt) < 0.25 ? '#4ade80' : '#fbbf24'}">${Math.abs(moonLaunch.tilt) < 0.25 ? 'ON COURSE' : 'CORRECT [A/D]'}</b></div>
+      <div class="t-stat">🔥 TEI Burn: <b>${moonLaunch.teiBurnDone ? 'LOCKED ✅' : 'STANDBY'}</b></div>
+    `;
+  } else if (stage === 'STAGE4') {
+    const inCorr = Math.abs(reentry.pitchAngle) <= reentry.corridorHalfWidth;
+    const shipOffset = Math.round(reentry.capsuleX - reentry.shipX);
+    strip.innerHTML = `
+      <div class="t-stat">🌍 Alt: <b>${Math.max(0, reentry.altitude).toFixed(1)} km</b></div>
+      <div class="t-stat">🔥 Shield: <b style="color:${reentry.heat > 75 ? '#f87171' : '#38bdf8'}">${Math.round(reentry.heat)}%</b></div>
+      <div class="t-stat">🎯 ${reentry.phase === 'PLASMA' ? 'Corridor' : 'Carrier Offset'}: <b style="color:${(reentry.phase === 'PLASMA' ? inCorr : Math.abs(shipOffset) <= 80) ? '#4ade80' : '#fbbf24'}">${reentry.phase === 'PLASMA' ? (inCorr ? 'OPTIMAL' : 'OFF-ANGLE') : (shipOffset + ' m')}</b></div>
+      <div class="t-stat">🪂 Chutes: <b>${reentry.chutesDeployed ? 'OPEN ✅' : 'STANDBY'}</b></div>
+    `;
+  } else {
+    strip.innerHTML = `
+      <div class="t-stat">📦 Shipped: <b>${shippedCount}</b></div>
+      <div class="t-stat">⚡ Power: <b>${telemetry.power >= 0 ? '+' : ''}${telemetry.power}W</b></div>
+      <div class="t-stat">📡 Comms: <b>${telemetry.comms} Mb/d</b></div>
+      <div class="t-stat">🔬 Science: <b>${telemetry.science} pts</b></div>
+      <div class="t-stat">⛽ Fuel: <b>${Math.round(telemetry.fuel)}%</b></div>
+    `;
+  }
+}
+
+function update(dt) {
+  if (stage === 'MENU' || stage === 'STAGE5') return;
+
+  stageTimer -= dt;
+  const mins = Math.floor(Math.max(0, stageTimer) / 60);
+  const secs = Math.floor(Math.max(0, stageTimer) % 60);
+  document.getElementById('clock-display').textContent = `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+  document.getElementById('clock-pill').classList.toggle('clock-urgent', stageTimer <= 12);
+
+  if (stage === 'STAGE1') {
+    if (stageTimer <= 0) { startStage1B(); return; }
+
+    orderTimer += dt;
+    if (orderTimer >= 13) { orderTimer = 0; spawnOrder(); }
+    for (let i = orders.length - 1; i >= 0; i--) {
+      orders[i].remaining -= dt;
+      if (orders[i].remaining <= 0) {
+        score = Math.max(0, score - 25);
+        addFloatText(140, 90, 'Order Expired! -25⭐', '#ef4444');
+        orders.splice(i, 1);
+        renderTicketsHUD();
+        if (orders.length === 0) spawnOrder();
+      }
+    }
+    updateTicketBarsOnly();
+
+    // Active Human Player
+    const lead = players[activeCrewIndex] || players[0];
+    let mx = 0, my = 0;
+    if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
+    if (keys['KeyS'] || keys['ArrowDown']) my += 1;
+    if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+    if (mx !== 0 && my !== 0) { mx *= 0.7071; my *= 0.7071; }
+    moveStage1Player(lead, mx * 245 * dt, my * 245 * dt);
+    if (mx !== 0 || my !== 0) {
+      window.ORBITAL_NET.broadcast({ type: 'CREW_INPUT', slot: activeCrewIndex, x: lead.x, y: lead.y, angle: lead.angle });
+    }
+
+    if (keys['Space'] || keys['KeyE']) {
+      const facing = getFacingStation(lead);
+      if (facing && facing.type === 'W' && facing.item && facing.item.kind === 'raw') {
+        facing.progress += dt * 0.7;
+        if (Math.random() < 0.3) playTone(320 + Math.random()*260, 'sawtooth', 0.04, 0.04);
+        if (facing.progress >= 1) {
+          facing.item = { kind: 'proc', id: RAW_ITEMS[facing.item.id].result };
+          facing.progress = 1;
+          addFloatText(facing.x + 34, facing.y, 'Welded!', '#4ade80');
+          playTone(760, 'triangle', 0.12, 0.1);
+        }
+      }
+    }
+
+    // Local 2P movement (IJKL)
+    if (coopMode === 'LOCAL_2P') {
+      const p2 = players[1];
+      let mx2 = 0, my2 = 0;
+      if (keys['KeyI']) my2 -= 1;
+      if (keys['KeyK']) my2 += 1;
+      if (keys['KeyJ']) mx2 -= 1;
+      if (keys['KeyL']) mx2 += 1;
+      if (mx2 !== 0 && my2 !== 0) { mx2 *= 0.7071; my2 *= 0.7071; }
+      moveStage1Player(p2, mx2 * 245 * dt, my2 * 245 * dt);
+    }
+
+    // AI Crewmates
+    if (coopMode !== 'SOLO') {
+      for (let i = 0; i < players.length; i++) {
+        if (i === activeCrewIndex) continue;
+        if (coopMode === 'LOCAL_2P' && i === 1) continue;
+        updateStage1Bot(players[i], i % 2, dt);
+      }
+    }
+
+    for (const st of stations) {
+      if ((st.type === 'A' || st.type === 'P') && st.item) {
+        if (st.item.kind === 'raw') {
+          st.progress += dt * 0.3;
+          if (st.progress >= 1) {
+            st.item = { kind: 'proc', id: RAW_ITEMS[st.item.id].result };
+            playTone(680, 'sine', 0.1, 0.09);
+          }
+        } else if (st.item.kind === 'proc' && st.item.id !== 'burned') {
+          st.progress += dt * 0.13;
+          if (st.progress >= 1.65) {
+            st.item = { kind: 'proc', id: 'burned' };
+            addFloatText(st.x + 34, st.y, 'OVERHEATED!', '#ef4444');
+            playTone(130, 'sawtooth', 0.25, 0.12);
+          }
+        }
+      }
+    }
+
+    const rack = stations.find(s => s.type === 'T');
+    for (let i = trayReturnQueue.length - 1; i >= 0; i--) {
+      trayReturnQueue[i] -= dt;
+      if (trayReturnQueue[i] <= 0) {
+        rack.traysCount++;
+        trayReturnQueue.splice(i, 1);
+      }
+    }
+    conveyorOffset = (conveyorOffset + dt * 45) % 24;
+    for (let i = flyingDeliveries.length - 1; i >= 0; i--) {
+      flyingDeliveries[i].x += dt * 150;
+      if (flyingDeliveries[i].x > LOGICAL_W + 60) flyingDeliveries.splice(i, 1);
+    }
+    updateBottomHUD();
+  }
+
+  else if (stage === 'STAGE1B') {
+    if (stageTimer <= 0) { startStage2(); return; }
+
+    ascent.targetThrust = 0.58 + Math.sin(performance.now() * 0.0018) * 0.16;
+    if (keys['KeyW'] || keys['ArrowUp']) ascent.thrust = Math.min(1, ascent.thrust + 0.65 * dt);
+    else if (keys['KeyS'] || keys['ArrowDown']) ascent.thrust = Math.max(0, ascent.thrust - 0.65 * dt);
+    else ascent.thrust = Math.max(0, ascent.thrust - 0.22 * dt);
+
+    const thrustMatch = Math.abs(ascent.thrust - ascent.targetThrust) <= 0.14;
+    ascent.rocketY -= (14 + ascent.thrust * 32) * dt;
+    if (ascent.rocketY < 160) ascent.rocketY = 160;
+
+    const instability = Math.max(0.28, 0.8 - shippedModules.booster_core * 0.15);
+    ascent.velTilt += (Math.sin(performance.now() * 0.0032) * instability) * dt;
+    if (keys['KeyA'] || keys['ArrowLeft']) ascent.velTilt -= 1.75 * dt;
+    if (keys['KeyD'] || keys['ArrowRight']) ascent.velTilt += 1.75 * dt;
+    if (coopMode === '4P_AI') ascent.velTilt -= ascent.tilt * 0.55 * dt; // P2-P4 RCS assist
+    ascent.tilt = Math.max(-0.55, Math.min(0.55, ascent.tilt + ascent.velTilt * dt));
+    ascent.velTilt *= 0.95;
+
+    const pitchMatch = Math.abs(ascent.tilt) <= 0.2;
+    if (thrustMatch && pitchMatch) score += Math.round(dt * 24);
+    else if (thrustMatch || pitchMatch) score += Math.round(dt * 10);
+
+    ascent.sepWindowOpen = (stageTimer <= 5.5 && stageTimer >= 1.5);
+    if (ascent.separated) ascent.boosterDropY += dt * 120;
+    updateBottomHUD();
+  }
+
+  else if (stage === 'STAGE2') {
+    if (stageTimer <= 0) { startStage3A(); return; }
+
+    orbitState.progress = 1 - (stageTimer / 30);
+    const phase = (orbitState.progress * 3) % 1;
+    orbitState.inEclipse = (phase > 0.35 && phase < 0.62);
+    orbitState.inGroundCone = (phase > 0.68 && phase < 0.92);
+    orbitState.inScanZone = (phase > 0.08 && phase < 0.32);
+
+    const powerGen = orbitState.inEclipse ? -3.5 : (2.2 + shippedModules.power_pack * 1.4);
+    orbitState.battery = Math.max(10, Math.min(100, orbitState.battery + powerGen * dt));
+
+    if (orbitState.inScanZone) {
+      orbitState.dataBuffer = Math.min(100, orbitState.dataBuffer + (4.5 + shippedModules.sensor_pod * 1.5) * dt);
+    }
+    if (orbitState.inGroundCone) {
+      const downlinkRate = 5.0 + shippedModules.comms_relay * 2.5;
+      orbitState.dataBuffer = Math.max(0, orbitState.dataBuffer - downlinkRate * dt);
+    }
+
+    orbitState.eventTimer -= dt;
+    if (orbitState.eventTimer <= 0) {
+      orbitState.eventTimer = 5.2;
+      if (orbitState.inEclipse) consoles.find(c => c.id === 'SPACE').alert = true;
+      else if (orbitState.dataBuffer > 55) consoles.find(c => c.id === 'GROUND').alert = true;
+      else {
+        const calm = consoles.filter(c => !c.alert);
+        if (calm.length > 0) calm[Math.floor(Math.random() * calm.length)].alert = true;
+      }
+    }
+
+    if (activeMiniGame) {
+      if (activeMiniGame.type === 'USER') {
+        const mg = activeMiniGame;
+        mg.tx += mg.vx * dt;
+        mg.ty += mg.vy * dt;
+        if (Math.abs(mg.tx) > 95) mg.vx *= -1;
+        if (Math.abs(mg.ty) > 55) mg.vy *= -1;
+
+        if (keys['KeyW'] || keys['ArrowUp']) mg.ry -= 150 * dt;
+        if (keys['KeyS'] || keys['ArrowDown']) mg.ry += 150 * dt;
+        if (keys['KeyA'] || keys['ArrowLeft']) mg.rx -= 150 * dt;
+        if (keys['KeyD'] || keys['ArrowRight']) mg.rx += 150 * dt;
+        mg.rx = Math.max(-105, Math.min(105, mg.rx));
+        mg.ry = Math.max(-62, Math.min(62, mg.ry));
+
+        if (Math.hypot(mg.rx - mg.tx, mg.ry - mg.ty) < 28) {
+          mg.lockProgress += dt * 0.55;
+          if (mg.lockProgress >= 1) completeConsoleTask(mg.console, 'TARGET LOCKED! +90⭐', 90);
+        }
+      } else if (activeMiniGame.type === 'GROUND') {
+        const mg = activeMiniGame;
+        if (keys['KeyA'] || keys['ArrowLeft']) mg.playerFreq = Math.max(0.1, mg.playerFreq - 0.35 * dt);
+        if (keys['KeyD'] || keys['ArrowRight']) mg.playerFreq = Math.min(0.85, mg.playerFreq + 0.35 * dt);
+
+        if (Math.abs(mg.playerFreq - mg.targetFreq) < 0.045) {
+          mg.holdTime += dt * 0.7;
+          if (mg.holdTime >= 1) {
+            orbitState.dataBuffer = Math.max(0, orbitState.dataBuffer - 45);
+            completeConsoleTask(mg.console, 'DATA DOWNLINKED! +85⭐', 85);
+          }
+        } else {
+          mg.holdTime = Math.max(0, mg.holdTime - dt * 0.25);
+        }
+      }
+    } else {
+      const p = ctrlPlayers[activeCrewIndex] || ctrlPlayers[0];
+      let mx = 0, my = 0;
+      if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
+      if (keys['KeyS'] || keys['ArrowDown']) my += 1;
+      if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+      if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+      if (mx !== 0 || my !== 0) {
+        p.angle = Math.atan2(my, mx);
+        p.walk += 0.22;
+        p.x = Math.max(150, Math.min(970, p.x + mx * 245 * dt));
+        p.y = Math.max(230, Math.min(545, p.y + my * 245 * dt));
+      }
+    }
+
+    // 3 AI Crewmates assist with consoles
+    if (coopMode !== 'SOLO') {
+      const alerting = consoles.filter(c => c.alert && !c.needsWrench && (!activeMiniGame || activeMiniGame.console !== c));
+      for (let i = 0; i < ctrlPlayers.length; i++) {
+        if (i === activeCrewIndex) continue;
+        const b = ctrlPlayers[i];
+        const targetC = alerting[i % Math.max(1, alerting.length)];
+        if (targetC) {
+          const dx = targetC.x - b.x, dy = (targetC.y + 42) - b.y;
+          const d = Math.hypot(dx, dy);
+          if (d > 14) {
+            b.angle = Math.atan2(dy, dx); b.walk += 0.2;
+            b.x += (dx / d) * 175 * dt; b.y += (dy / d) * 175 * dt;
+          } else {
+            targetC.botProg += dt * 0.3;
+            if (targetC.botProg >= 1) {
+              targetC.alert = false;
+              targetC.botProg = 0;
+              score += 45;
+              addFloatText(targetC.x, targetC.y - 38, `${b.name} RESOLVED! +45⭐`, '#fbbf24');
+            }
+          }
+        }
+      }
+    }
+
+    updateBottomHUD();
+  }
+
+  else if (stage === 'STAGE3A') {
+    if (lander.landed) return;
+    if (stageTimer <= 0) {
+      lander.x = lander.padX;
+      lander.y = lander.padY;
+      lander.z = 0;
+      lander.vz = -10;
+    }
+
+    const lunarGravity = 20;
+    const mainThrust = 50;
+    lander.thrusting = (keys['Space'] || keys['ArrowUp']) && lander.fuel > 0;
+    lander.hoverTrim = (keys['ShiftLeft'] || keys['ShiftRight'] || keys['KeyI']) && lander.fuel > 0;
+
+    // P2 Space Copilot Auto-Hover Trim assist if falling fast near ground
+    lander.p2AssistActive = false;
+    if (coopMode === '4P_AI' && lander.z < 90 && lander.vz < -22 && !lander.thrusting && !lander.hoverTrim && lander.fuel > 10) {
+      lander.p2AssistActive = true;
+      lander.vz += 14 * dt;
+    }
+
+    if (lander.thrusting) {
+      lander.vz += mainThrust * dt;
+      lander.fuel = Math.max(0, lander.fuel - dt * 6.0);
+      if (Math.random() < 0.38) playTone(110 + Math.random()*30, 'sawtooth', 0.06, 0.05);
+    } else if (lander.hoverTrim || lander.p2AssistActive) {
+      lander.vz += (lunarGravity - lander.vz * 1.9) * dt;
+      lander.fuel = Math.max(0, lander.fuel - dt * 3.0);
+    }
+
+    let ax = 0, ay = 0;
+    if (keys['KeyA'] || keys['ArrowLeft']) ax -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) ax += 1;
+    if (keys['KeyW']) ay -= 1;
+    if (keys['KeyS']) ay += 1;
+
+    if (ax !== 0 || ay !== 0) {
+      lander.vx += ax * 54 * dt;
+      lander.vy += ay * 42 * dt;
+      lander.tiltX = Math.max(-0.22, Math.min(0.22, ax * 0.16));
+      if (lander.fuel > 0) lander.fuel = Math.max(0, lander.fuel - dt * 1.1);
+    } else {
+      lander.vx *= 0.965;
+      lander.vy *= 0.965;
+      lander.tiltX *= 0.85;
+    }
+
+    lander.vz -= lunarGravity * dt;
+    lander.x = Math.max(120, Math.min(LOGICAL_W - 120, lander.x + lander.vx * dt));
+    lander.y = Math.max(210, Math.min(540, lander.y + lander.vy * dt));
+    lander.z += lander.vz * dt;
+
+    if (lander.z < 75) lander.legAnim = Math.min(1, lander.legAnim + dt * 2.5);
+
+    if ((lander.thrusting || lander.hoverTrim || lander.p2AssistActive) && lander.z < 85) {
+      for (let i = 0; i < 2; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        lunarParticles.push({
+          x: lander.x + Math.cos(ang) * 14,
+          y: lander.y + Math.sin(ang) * 7,
+          vx: Math.cos(ang) * (70 + Math.random() * 60),
+          vy: Math.sin(ang) * (35 + Math.random() * 30),
+          life: 0.5,
+          size: 3 + Math.random() * 3,
+          color: '#cbd5e1'
+        });
+      }
+    }
+
+    if (lander.z <= 0) {
+      lander.z = 0;
+      lander.landed = true;
+      const vSpd = Math.abs(lander.vz * 0.24);
+      const padDist = Math.hypot(lander.x - lander.padX, (lander.y - lander.padY) * 1.4);
+      const onPad = padDist <= 76;
+
+      if (onPad && vSpd <= 3.9) {
+        landingGrade = 'TEXTBOOK 4P BUTTER LANDING (+200⭐)';
+        score += 200;
+        addFloatText(lander.x, lander.y - 65, 'TEXTBOOK 4P TOUCHDOWN! +200⭐', '#4ade80');
+      } else if (onPad && vSpd <= 6.2) {
+        landingGrade = 'SAFE TOUCHDOWN (+130⭐)';
+        score += 130;
+        addFloatText(lander.x, lander.y - 65, 'SAFE LANDING! +130⭐', '#38bdf8');
+      } else {
+        landingGrade = 'HARD / OFF-PAD TOUCHDOWN (+60⭐)';
+        score += 60;
+        lander.x = lander.padX;
+        lander.y = lander.padY;
+        addFloatText(lander.x, lander.y - 65, 'HARD LANDING — DEPLOYING 4P ROVERS!', '#fbbf24');
+      }
+      playTone(440, 'triangle', 0.15, 0.14);
+      setTimeout(() => playTone(660, 'triangle', 0.22, 0.14), 120);
+      setTimeout(startStage3B, 1400);
+    }
+    updateBottomHUD();
+  }
+
+  else if (stage === 'STAGE3B') {
+    if (stageTimer <= 0) { startStage3CMoonLaunch(); return; }
+
+    const targetCrater = lunarCraters.find(c => c.isTarget);
+
+    // Update Primary Rover (LTV-1: P1 Commander + P3 Science Lidar)
+    updateSingleRover(rover, {
+      up: keys['KeyW'] || keys['ArrowUp'],
+      down: keys['KeyS'] || keys['ArrowDown'],
+      left: keys['KeyA'] || keys['ArrowLeft'],
+      right: keys['KeyD'] || keys['ArrowRight'],
+      hop: keys['ShiftLeft'],
+      drill: keys['Space'] || keys['KeyE']
+    }, targetCrater, dt);
+
+    // Update Companion Rover (LTV-2: P2 Space + P4 Ground Relay)
+    if (coopMode === 'LOCAL_2P') {
+      updateSingleRover(rover2, {
+        up: keys['KeyI'],
+        down: keys['KeyK'],
+        left: keys['KeyJ'],
+        right: keys['KeyL'],
+        hop: keys['ShiftRight'],
+        drill: keys['Enter']
+      }, targetCrater, dt);
+      window.ORBITAL_NET.broadcast({ type: 'ROVER2_SYNC', x: rover2.x, y: rover2.y, z: rover2.z });
+    } else if (coopMode === '4P_AI') {
+      updateCompanionRoverAI(rover2, targetCrater, dt);
+    }
+
+    // P3 Science Lidar auto-pulse on nearby unscanned outcrops
+    if (coopMode !== 'SOLO') {
+      for (const sn of scienceNodes) {
+        if (!sn.scanned && Math.hypot(rover.x - sn.x, rover.y - sn.y) < 58) {
+          sn.scanned = true;
+          score += sn.pts;
+          telemetry.science += 25;
+          addFloatText(sn.x, sn.y - 45, `P3 LIDAR SCANNED ${sn.name.toUpperCase()}! +${sn.pts}⭐`, '#e9d5ff');
+          playTone(740, 'triangle', 0.14, 0.1);
+        }
+      }
+    }
+
+    // Auto-board & launch from Moon when rover(s) return to Point A Rocket with sample!
+    if ((rover.hasSample && Math.hypot(rover.x - lander.padX, rover.y - lander.padY) < 68) ||
+        (rover2.hasSample && Math.hypot(rover2.x - lander.padX, rover2.y - lander.padY) < 68)) {
+      handleStage3BInteract(rover.hasSample ? rover : rover2, true);
+    }
+
+    updateBottomHUD();
+  }
+
+  else if (stage === 'STAGE3C') {
+    if (stageTimer <= 0) { startStage4EarthReturn(); return; }
+
+    if (moonLaunch.phase === 'LIFTOFF') {
+      moonLaunch.thrusting = (keys['KeyW'] || keys['ArrowUp'] || keys['Space']);
+      if (moonLaunch.thrusting) {
+        moonLaunch.velocityY += 85 * dt;
+        if (Math.random() < 0.4) playTone(125 + Math.random()*35, 'sawtooth', 0.06, 0.05);
+      } else {
+        moonLaunch.velocityY = Math.max(18, moonLaunch.velocityY - 22 * dt);
+      }
+
+      if (keys['KeyA'] || keys['ArrowLeft']) moonLaunch.velTilt -= 1.4 * dt;
+      if (keys['KeyD'] || keys['ArrowRight']) moonLaunch.velTilt += 1.4 * dt;
+      if (coopMode === '4P_AI') moonLaunch.velTilt -= moonLaunch.tilt * 0.6 * dt;
+      moonLaunch.tilt = Math.max(-0.45, Math.min(0.45, moonLaunch.tilt + moonLaunch.velTilt * dt));
+      moonLaunch.velTilt *= 0.94;
+
+      moonLaunch.capsuleY -= moonLaunch.velocityY * dt;
+
+      // Exhaust plume
+      if (moonLaunch.thrusting) {
+        lunarParticles.push({
+          x: lander.padX + (Math.random() - 0.5) * 14,
+          y: moonLaunch.capsuleY + 12,
+          vx: (Math.random() - 0.5) * 50,
+          vy: 60 + Math.random() * 50,
+          life: 0.4,
+          size: 3.5,
+          color: '#fbbf24'
+        });
+      }
+
+      if (moonLaunch.capsuleY <= 55) {
+        moonLaunch.phase = 'TEI_BURN';
+        moonLaunch.progress = 0;
+        addFloatText(LOGICAL_W / 2, 160, 'LUNAR ORBIT CLEARED! FIRE [SPACE] FOR EARTH TRANSFER!', '#38bdf8');
+        playTone(540, 'triangle', 0.16, 0.12);
+      }
+    } else if (moonLaunch.phase === 'TEI_BURN') {
+      const speed = moonLaunch.teiBurnDone ? 0.34 : 0.2;
+      moonLaunch.progress += speed * dt;
+      if (moonLaunch.progress >= 1) {
+        startStage4EarthReturn();
+        return;
+      }
+    }
+    updateBottomHUD();
+  }
+
+  else if (stage === 'STAGE4') {
+    if (reentry.phase === 'SPLASHED') return;
+    reentry.wavePhase += dt * 3.0;
+
+    if (reentry.phase === 'PLASMA') {
+      const drift = Math.sin(performance.now() * 0.0026) * 0.42;
+      reentry.pitchAngle += drift * dt;
+      if (keys['KeyW'] || keys['ArrowUp']) reentry.pitchAngle += 0.85 * dt;
+      if (keys['KeyS'] || keys['ArrowDown']) reentry.pitchAngle -= 0.85 * dt;
+      reentry.pitchAngle = Math.max(-0.8, Math.min(0.8, reentry.pitchAngle));
+
+      const inCorridor = Math.abs(reentry.pitchAngle) <= reentry.corridorHalfWidth;
+      if (inCorridor) {
+        reentry.altitude -= 6.8 * dt;
+        reentry.heat = Math.max(15, Math.min(82, reentry.heat + 2.4 * dt));
+        score += Math.round(dt * 20);
+      } else if (reentry.pitchAngle < -reentry.corridorHalfWidth) {
+        reentry.altitude -= 8.5 * dt;
+        reentry.heat = Math.min(100, reentry.heat + 12.5 * dt);
+      } else {
+        reentry.altitude -= 3.2 * dt;
+        reentry.heat = Math.max(10, reentry.heat - 3.0 * dt);
+      }
+
+      // P2 Space Thermal Officer AI auto-purges coolant if heat gets high
+      reentry.p2CoolantCd = Math.max(0, reentry.p2CoolantCd - dt);
+      if (coopMode === '4P_AI' && reentry.heat > 74 && reentry.p2CoolantCd <= 0) {
+        reentry.heat -= 15;
+        reentry.p2CoolantCd = 4.0;
+        addFloatText(reentry.capsuleX, 205, 'P2 HEATSHIELD CRYO VENT! ❄️', '#38bdf8');
+      }
+
+      for (let i = 0; i < 3; i++) {
+        lunarParticles.push({
+          x: reentry.capsuleX + (Math.random() - 0.5) * 44,
+          y: 250 + Math.random() * 20,
+          vx: -90 - Math.random() * 120,
+          vy: -140 - Math.random() * 140,
+          life: 0.35,
+          size: 3 + Math.random() * 3,
+          color: reentry.heat > 75 ? '#ef4444' : '#f97316'
+        });
+      }
+
+      if (reentry.altitude <= 24 || stageTimer <= 18) {
+        reentry.phase = 'CHUTES';
+        reentry.altitude = 24;
+        reentry.capsuleX = 430;
+        reentry.capsuleY = 120;
+        addFloatText(LOGICAL_W / 2, 180, 'PEAK HEATING SURVIVED! DEPLOY CHUTES [SPACE]!', '#38bdf8');
+        playTone(580, 'triangle', 0.16, 0.12);
+      }
+    }
+    else if (reentry.phase === 'CHUTES') {
+      // P4 Ground/Recovery Carrier Ship movement (Local 2P J/L or AI Track Assist)
+      if (coopMode === 'LOCAL_2P') {
+        if (keys['KeyJ']) reentry.shipX -= 155 * dt;
+        if (keys['KeyL']) reentry.shipX += 155 * dt;
+        reentry.shipX = Math.max(220, Math.min(900, reentry.shipX));
+        window.ORBITAL_NET.broadcast({ type: 'SHIP_SYNC', shipX: reentry.shipX });
+      } else if (coopMode === '4P_AI') {
+        // P4 Carrier Captain steers toward capsule splashdown zone
+        const diff = reentry.capsuleX - reentry.shipX;
+        reentry.shipX += Math.sign(diff) * Math.min(Math.abs(diff), 48 * dt);
+      } else {
+        reentry.shipX += reentry.shipDir * 58 * dt;
+        if (reentry.shipX > 890) reentry.shipDir = -1;
+        if (reentry.shipX < 340) reentry.shipDir = 1;
+      }
+
+      if (!reentry.chutesDeployed && reentry.altitude <= 7.5) {
+        reentry.chutesDeployed = true;
+        addFloatText(reentry.capsuleX, reentry.capsuleY - 45, 'AUTO-DROGUE CHUTES DEPLOYED!', '#fbbf24');
+      }
+
+      if (reentry.chutesDeployed) {
+        reentry.chuteScale = Math.min(1, reentry.chuteScale + dt * 2.5);
+        reentry.altitude -= 1.55 * dt;
+      } else {
+        reentry.altitude -= 3.4 * dt;
+      }
+
+      const crosswind = Math.sin(performance.now() * 0.0017) * 38;
+      reentry.capsuleX += crosswind * dt;
+      if (keys['KeyA'] || keys['ArrowLeft']) reentry.capsuleX -= 165 * dt;
+      if (keys['KeyD'] || keys['ArrowRight']) reentry.capsuleX += 165 * dt;
+      reentry.capsuleX = Math.max(140, Math.min(LOGICAL_W - 140, reentry.capsuleX));
+
+      reentry.capsuleY = 120 + ((24 - Math.max(0, reentry.altitude)) / 24) * 395;
+
+      if (reentry.altitude <= 0 || stageTimer <= 0) {
+        reentry.altitude = 0;
+        reentry.phase = 'SPLASHED';
+        const distToShip = Math.abs(reentry.capsuleX - reentry.shipX);
+
+        if (distToShip <= 80) {
+          reentry.grade = 'BULLSEYE 4P CARRIER RECOVERY (+250⭐)';
+          score += 250;
+          addFloatText(reentry.capsuleX, 465, 'BULLSEYE CARRIER SPLASHDOWN! +250⭐', '#4ade80');
+        } else if (distToShip <= 170) {
+          reentry.grade = 'SAFE OCEAN SPLASHDOWN (+160⭐)';
+          score += 160;
+          addFloatText(reentry.capsuleX, 465, 'SAFE OCEAN SPLASHDOWN! +160⭐', '#38bdf8');
+        } else {
+          reentry.grade = 'DISTANT SPLASHDOWN — HELO RECOVERY (+90⭐)';
+          score += 90;
+          addFloatText(reentry.capsuleX, 465, 'SPLASHDOWN — RECOVERY TEAM EN ROUTE! +90⭐', '#fbbf24');
+        }
+
+        for (let i = 0; i < 18; i++) {
+          lunarParticles.push({
+            x: reentry.capsuleX + (Math.random() - 0.5) * 30,
+            y: 518,
+            vx: (Math.random() - 0.5) * 180,
+            vy: -50 - Math.random() * 90,
+            life: 0.7,
+            size: 4,
+            color: '#e0f2fe'
+          });
+        }
+        playTone(440, 'triangle', 0.16, 0.14);
+        setTimeout(() => playTone(660, 'triangle', 0.25, 0.14), 130);
+        setTimeout(startStage5Debrief, 1500);
+      }
+    }
+
+    updateBottomHUD();
+  }
+
+  for (let i = lunarParticles.length - 1; i >= 0; i--) {
+    const pt = lunarParticles[i];
+    pt.x += pt.vx * dt;
+    pt.y += pt.vy * dt;
+    pt.life -= dt;
+    if (pt.life <= 0) lunarParticles.splice(i, 1);
+  }
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    floatingTexts[i].y -= dt * 30;
+    floatingTexts[i].life -= dt;
+    if (floatingTexts[i].life <= 0) floatingTexts.splice(i, 1);
+  }
+}
+
+function updateSingleRover(rv, input, targetCrater, dt) {
+  const atCrater = Math.hypot(rv.x - targetCrater.x, rv.y - targetCrater.y) < 78;
+  const isDrilling = atCrater && !rv.hasSample && input.drill;
+
+  if (isDrilling) {
+    rv.drilling = true;
+    rv.vx *= 0.8;
+    rv.vy *= 0.8;
+    rv.armAnim = Math.min(1, rv.armAnim + dt * 3);
+    rv.drillProgress += dt * 0.45;
+    if (Math.random() < 0.4) {
+      lunarParticles.push({
+        x: rv.x + rv.facingX * 22,
+        y: rv.y,
+        vx: (Math.random() - 0.5) * 85,
+        vy: -25 - Math.random() * 35,
+        life: 0.4,
+        size: 3,
+        color: '#4ade80'
+      });
+    }
+    if (rv.drillProgress >= 1) {
+      rv.hasSample = true;
+      rv.drilling = false;
+      score += 150;
+      telemetry.science += 45;
+      addFloatText(rv.x, rv.y - 62, `${rv.id} EXTRACTED CORE SAMPLE! +150⭐`, '#4ade80');
+      playTone(587, 'triangle', 0.14, 0.14);
+      setTimeout(() => playTone(880, 'triangle', 0.22, 0.14), 110);
+    }
+  } else {
+    rv.drilling = false;
+    rv.armAnim = Math.max(0, rv.armAnim - dt * 3);
+
+    const maxSpd = rv.battery > 0 ? 195 : 115;
+    let mx = 0, my = 0;
+    if (input.left) mx -= 1;
+    if (input.right) mx += 1;
+    if (input.up) my -= 1;
+    if (input.down) my += 1;
+
+    if (mx !== 0 || my !== 0) {
+      const len = Math.hypot(mx, my);
+      mx /= len; my /= len;
+      rv.facingX = mx;
+      rv.facingY = my;
+      rv.vx += mx * 480 * dt;
+      rv.vy += my * 360 * dt;
+      const spd = Math.hypot(rv.vx, rv.vy);
+      if (spd > maxSpd) {
+        rv.vx = (rv.vx / spd) * maxSpd;
+        rv.vy = (rv.vy / spd) * maxSpd;
+      }
+      rv.battery = Math.max(0, rv.battery - dt * 2.0);
+      if (rv.z === 0 && Math.random() < 0.32) {
+        lunarParticles.push({
+          x: rv.x - mx * 20,
+          y: rv.y - my * 10,
+          vx: -mx * 35 + (Math.random() - 0.5) * 20,
+          vy: -my * 20 - 10,
+          life: 0.38,
+          size: 3,
+          color: '#94a3b8'
+        });
+      }
+    } else {
+      rv.vx *= 0.86;
+      rv.vy *= 0.86;
+      rv.battery = Math.min(rv.maxBattery, rv.battery + dt * 2.5);
+    }
+
+    rv.rcsHopping = input.hop;
+    if (rv.rcsHopping && rv.z === 0 && rv.battery > 2) {
+      rv.vz = 155;
+      rv.battery = Math.max(0, rv.battery - 3.5);
+      playTone(260, 'sine', 0.14, 0.08);
+    }
+  }
+
+  let nextX = Math.max(130, Math.min(990, rv.x + rv.vx * dt));
+  let nextY = Math.max(195, Math.min(555, rv.y + rv.vy * dt));
+
+  if (rv.z < 14) {
+    for (const b of lunarBoulders) {
+      const dist = Math.hypot(nextX - b.x, (nextY - b.y) * 1.6);
+      if (dist < b.r + 17) {
+        nextX = rv.x;
+        nextY = rv.y;
+        rv.vx *= -0.3;
+        rv.vy *= -0.3;
+      }
+    }
+  }
+
+  rv.x = nextX;
+  rv.y = nextY;
+  rv.wheelSpin += Math.hypot(rv.vx, rv.vy) * dt * 0.08;
+
+  if (rv.z > 0 || rv.vz > 0) {
+    rv.vz -= 290 * dt;
+    rv.z += rv.vz * dt;
+    if (rv.z <= 0) { rv.z = 0; rv.vz = 0; }
+  }
+}
+
+function updateCompanionRoverAI(rv, targetCrater, dt) {
+  // P2+P4 Companion Rover drives to unscanned science nodes, then Point B Crater, then back to Point A Rocket
+  let goalX = lander.padX + 35, goalY = lander.padY + 25;
+  const unscanned = scienceNodes.find(s => !s.scanned);
+  if (unscanned) {
+    goalX = unscanned.x; goalY = unscanned.y;
+  } else if (!rv.hasSample) {
+    goalX = targetCrater.x; goalY = targetCrater.y + 22;
+  }
+
+  const dx = goalX - rv.x, dy = goalY - rv.y;
+  const d = Math.hypot(dx, dy);
+
+  if (d > 26) {
+    const nx = dx / d, ny = dy / d;
+    rv.facingX = nx; rv.facingY = ny;
+    rv.x += nx * 135 * dt;
+    rv.y += ny * 105 * dt;
+    rv.wheelSpin += 135 * dt * 0.08;
+    // Auto-hop if near boulder
+    for (const b of lunarBoulders) {
+      if (rv.z === 0 && Math.hypot(rv.x - b.x, rv.y - b.y) < b.r + 24) {
+        rv.vz = 145;
+      }
+    }
+  } else if (unscanned && !unscanned.scanned) {
+    unscanned.scanned = true;
+    score += unscanned.pts;
+    telemetry.science += 25;
+    addFloatText(unscanned.x, unscanned.y - 45, `LTV-2 SCANNED ${unscanned.name.toUpperCase()}! +${unscanned.pts}⭐`, '#38bdf8');
+  } else if (!rv.hasSample && Math.hypot(rv.x - targetCrater.x, rv.y - targetCrater.y) < 75) {
+    rv.drilling = true;
+    rv.armAnim = 1;
+    rv.drillProgress += dt * 0.42;
+    if (rv.drillProgress >= 1) {
+      rv.hasSample = true;
+      rv.drilling = false;
+      rv.armAnim = 0;
+      score += 140;
+      addFloatText(rv.x, rv.y - 55, 'LTV-2 COLLECTED BACKUP CORE! +140⭐', '#38bdf8');
+    }
+  }
+
+  if (rv.z > 0 || rv.vz > 0) {
+    rv.vz -= 290 * dt;
+    rv.z += rv.vz * dt;
+    if (rv.z <= 0) { rv.z = 0; rv.vz = 0; }
+  }
+}
+
+// ============================================================================
+// RENDERERS FOR ALL STAGES
+// ============================================================================
+function drawItemBadge(x, y, item) {
+  if (!item) return;
+  ctx.save();
+  if (item.kind === 'tray') {
+    ctx.fillStyle = '#e2e8f0';
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 4, 24, 14, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    if (item.parts.length === 0) {
+      ctx.fillStyle = '#475569';
+      ctx.font = 'bold 9px Fredoka';
+      ctx.textAlign = 'center';
+      ctx.fillText('TRAY', x, y + 7);
+    } else if (item.parts.length === 1) {
+      drawHardwareCanvas(ctx, x, y + 1, PROC_META[item.parts[0]].shape, true, 0.72);
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath(); ctx.roundRect(x + 8, y - 14, 20, 13, 5); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px Fredoka'; ctx.textAlign = 'center';
+      ctx.fillText('1/2', x + 18, y - 4);
+    } else {
+      drawHardwareCanvas(ctx, x - 9, y + 1, PROC_META[item.parts[0]].shape, true, 0.65);
+      drawHardwareCanvas(ctx, x + 9, y + 1, PROC_META[item.parts[1]].shape, true, 0.65);
+      ctx.fillStyle = '#16a34a';
+      ctx.beginPath(); ctx.roundRect(x - 18, y - 18, 36, 13, 5); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 8px Fredoka'; ctx.textAlign = 'center';
+      ctx.fillText('READY!', x, y - 9);
+    }
+  } else {
+    const isRaw = item.kind === 'raw';
+    const meta = isRaw ? RAW_ITEMS[item.id] : PROC_META[item.id];
+    ctx.fillStyle = item.id === 'burned' ? '#334155' : (isRaw ? '#fef3c7' : '#dcfce7');
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(x, y, 17, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    drawHardwareCanvas(ctx, x, y, meta.shape, !isRaw && item.id !== 'burned', 0.78);
+  }
+  ctx.restore();
+}
+
+function drawChibiEngineer(p, isLead=false) {
+  const bob = Math.sin(p.walk) * 3;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(p.x, p.y + 15, 17, 8, 0, 0, Math.PI * 2); ctx.fill();
+
+  if (isLead) {
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(p.x, p.y + 15, 21, 10, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  ctx.fillStyle = p.color;
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = 2.8;
+  ctx.beginPath(); ctx.roundRect(p.x - 14, p.y - 13 + bob, 28, 26, 11); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.beginPath(); ctx.arc(p.x, p.y - 21 + bob, 14, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+  const vx = Math.cos(p.angle) * 5, vy = Math.sin(p.angle) * 3;
+  ctx.fillStyle = p.visor;
+  ctx.beginPath(); ctx.roundRect(p.x - 9 + vx, p.y - 26 + bob + vy, 18, 9, 4); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = isLead ? '#fde047' : '#fff';
+  ctx.font = 'bold 10px Fredoka';
+  ctx.textAlign = 'center';
+  ctx.fillText(p.name, p.x, p.y - 40 + bob);
+
+  if (p.holding) {
+    drawItemBadge(p.x + Math.cos(p.angle) * 23, p.y - 6 + Math.sin(p.angle) * 13 + bob, p.holding);
+  }
+  if (p.hasWrench) {
+    ctx.font = '18px Fredoka';
+    ctx.fillText('🔧', p.x + Math.cos(p.angle) * 22, p.y - 4 + bob);
+  }
+}
+
+function drawStage1() {
+  ctx.fillStyle = '#232c40';
+  ctx.fillRect(GRID_X - 8, 12, COLS * TILE + 16, GRID_Y - 12);
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(GRID_X - 8, GRID_Y - 10, COLS * TILE + 16, 10);
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      ctx.fillStyle = (r + c) % 2 === 0 ? '#2b354b' : '#252e42';
+      ctx.fillRect(GRID_X + c * TILE, GRID_Y + r * TILE, TILE, TILE);
+    }
+  }
+
+  const lead = players[activeCrewIndex] || players[0];
+  const facing = lead ? getFacingStation(lead) : null;
+  const renderables = [
+    ...stations.map(s => ({ kind: 'station', y: s.y + TILE, obj: s })),
+    ...players.map((p, idx) => ({ kind: 'player', y: p.y + 15, obj: p, isLead: idx === activeCrewIndex }))
+  ].sort((a, b) => a.y - b.y);
+
+  for (const ent of renderables) {
+    if (ent.kind === 'station') {
+      const s = ent.obj;
+      const isHi = (facing === s);
+
+      ctx.fillStyle = '#151b28';
+      ctx.fillRect(s.x + 2, s.y + 10, TILE - 4, TILE - 6);
+
+      let topCol = '#475569', label = '', lampCol = null;
+      if (s.type === 'CRATE') {
+        topCol = '#b45309';
+        const rm = RAW_ITEMS[s.crateItem];
+        label = rm.name;
+        lampCol = rm.procType === 'weld' ? '#38bdf8' : rm.procType === 'calibrate' ? '#a78bfa' : '#4ade80';
+      } else if (s.type === 'W') { topCol = '#0369a1'; label = 'WELD'; lampCol = '#38bdf8'; }
+      else if (s.type === 'A') { topCol = '#6d28d9'; label = 'CALIBRATE'; lampCol = '#a78bfa'; }
+      else if (s.type === 'P') { topCol = '#15803d'; label = 'CHARGE'; lampCol = '#4ade80'; }
+      else if (s.type === 'T') { topCol = '#0f766e'; label = `TRAYS (${s.traysCount})`; }
+      else if (s.type === 'X') { topCol = '#991b1b'; label = 'SCRAP'; }
+      else if (s.type === '>') { topCol = '#1e293b'; label = 'SUBMIT'; }
+
+      ctx.fillStyle = topCol;
+      ctx.strokeStyle = isHi ? '#fde047' : '#0f172a';
+      ctx.lineWidth = isHi ? 3.5 : 2.2;
+      ctx.beginPath();
+      ctx.roundRect(s.x + 3, s.y - 5, TILE - 6, TILE - 6, 9);
+      ctx.fill(); ctx.stroke();
+
+      if (isHi) {
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(s.x + 1, s.y - 7, TILE - 2, TILE - 2);
+      }
+
+      if (lampCol) {
+        ctx.fillStyle = lampCol;
+        ctx.beginPath(); ctx.arc(s.x + TILE - 12, s.y + 4, 4, 0, Math.PI * 2); ctx.fill();
+      }
+
+      if (s.type === '>') {
+        ctx.save();
+        ctx.beginPath(); ctx.roundRect(s.x + 5, s.y - 3, TILE - 10, TILE - 10, 7); ctx.clip();
+        ctx.fillStyle = '#38bdf8';
+        for (let bx = -24; bx < TILE + 24; bx += 22) {
+          ctx.fillRect(s.x + bx + conveyorOffset, s.y + 14, 9, 24);
+        }
+        ctx.restore();
+      }
+
+      if (s.type === 'CRATE') {
+        drawHardwareCanvas(ctx, s.x + TILE / 2, s.y + 20, RAW_ITEMS[s.crateItem].shape, false, 0.95);
+      }
+      if (label) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 9.5px Fredoka';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, s.x + TILE / 2, s.y + 49);
+      }
+
+      if (s.item) drawItemBadge(s.x + TILE / 2, s.y + 18, s.item);
+
+      if (s.item && s.progress > 0 && s.item.id !== 'burned') {
+        const bw = 50, bh = 7, bx = s.x + (TILE - bw) / 2, by = s.y - 14;
+        ctx.fillStyle = '#0f172a'; ctx.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
+        if (s.progress <= 1) {
+          ctx.fillStyle = s.progress >= 1 ? '#4ade80' : '#38bdf8';
+          ctx.fillRect(bx, by, bw * s.progress, bh);
+        } else {
+          const warn = Math.min(1, (s.progress - 1) / 0.65);
+          ctx.fillStyle = Math.floor(performance.now() / 120) % 2 === 0 ? '#ef4444' : '#fde047';
+          ctx.fillRect(bx, by, bw * warn, bh);
+        }
+      }
+    } else {
+      drawChibiEngineer(ent.obj, ent.isLead);
+    }
+  }
+
+  for (const fd of flyingDeliveries) {
+    drawItemBadge(fd.x, fd.y, { kind: 'tray', parts: fd.parts });
+  }
+
+  if (facing && lead) {
+    let hint = '';
+    if (facing.type === 'CRATE' && !lead.holding) hint = `[SPACE] Grab ${RAW_ITEMS[facing.crateItem].name}`;
+    else if (facing.type === 'W' && facing.item && facing.item.kind === 'raw') hint = `[HOLD SPACE] Welding ${Math.round(facing.progress*100)}%`;
+    else if (facing.type === '>' && lead.holding && lead.holding.kind === 'tray' && lead.holding.parts.length === 2) hint = `[SPACE] Submit Module! 🚀`;
+    else if (lead.holding && facing.item && ((lead.holding.kind === 'tray' && facing.item.kind === 'proc') || (lead.holding.kind === 'proc' && facing.item.kind === 'tray'))) hint = `[SPACE] Plate onto Tray`;
+    else if (!lead.holding && facing.item) hint = `[SPACE] Pick Up`;
+    else if (lead.holding && !facing.item) hint = `[SPACE] Place`;
+
+    if (hint) {
+      ctx.font = 'bold 11px Fredoka';
+      const tw = ctx.measureText(hint).width + 18;
+      const px = Math.max(8, Math.min(LOGICAL_W - tw - 8, facing.x + TILE / 2 - tw / 2));
+      const py = Math.max(8, facing.y - 32);
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.strokeStyle = '#fde047';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(px, py, tw, 22, 8); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#fde047';
+      ctx.textAlign = 'center';
+      ctx.fillText(hint, px + tw / 2, py + 15);
+    }
+  }
+}
+
+function drawStage1B() {
+  const grad = ctx.createLinearGradient(0, 0, 0, LOGICAL_H);
+  grad.addColorStop(0, '#060913');
+  grad.addColorStop(1, '#1e3a8a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+  const tx = 130, ty = 130, tw = 34, th = 320;
+  ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#475569'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, 10); ctx.fill(); ctx.stroke();
+
+  const bandY = ty + th * (1 - ascent.targetThrust - 0.14);
+  const bandH = th * 0.28;
+  ctx.fillStyle = 'rgba(34, 197, 94, 0.35)';
+  ctx.fillRect(tx + 3, bandY, tw - 6, bandH);
+
+  const curY = ty + th * (1 - ascent.thrust);
+  ctx.fillStyle = Math.abs(ascent.thrust - ascent.targetThrust) <= 0.14 ? '#4ade80' : '#f97316';
+  ctx.fillRect(tx - 6, curY - 5, tw + 12, 10);
+
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Fredoka'; ctx.textAlign = 'center';
+  ctx.fillText('THRUST', tx + tw / 2, ty - 14);
+  ctx.fillStyle = '#94a3b8'; ctx.font = '11px Fredoka';
+  ctx.fillText('[W] Up', tx + tw / 2, ty + th + 20);
+  ctx.fillText('[S] Down', tx + tw / 2, ty + th + 35);
+
+  const barW = 380, bx = (LOGICAL_W - barW) / 2, by = 52;
+  ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#475569'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(bx, by, barW, 24, 10); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = 'rgba(34, 197, 94, 0.35)';
+  ctx.fillRect(bx + barW * 0.34, by + 2, barW * 0.32, 20);
+  const markerX = bx + barW / 2 + ascent.tilt * 300;
+  ctx.fillStyle = Math.abs(ascent.tilt) <= 0.2 ? '#4ade80' : '#f87171';
+  ctx.beginPath(); ctx.arc(markerX, by + 12, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Fredoka';
+  ctx.fillText('4P STABILIZER TRIM [A / D]', LOGICAL_W / 2, by - 8);
+
+  if (ascent.sepWindowOpen && !ascent.separated) {
+    ctx.fillStyle = '#f97316';
+    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 175, 96, 350, 42, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Fredoka';
+    ctx.fillText('PRESS [SPACE] FOR STAGE SEPARATION!', LOGICAL_W / 2, 123);
+  }
+
+  ctx.save();
+  ctx.translate(LOGICAL_W / 2, ascent.rocketY);
+  ctx.rotate(ascent.tilt);
+
+  const flameLen = 35 + ascent.thrust * 65 + Math.random() * 18;
+  ctx.fillStyle = '#f97316';
+  ctx.beginPath(); ctx.moveTo(-16, 40); ctx.lineTo(0, 40 + flameLen); ctx.lineTo(16, 40); ctx.fill();
+
+  ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(-20, -45, 40, 50, 8); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ef4444';
+  ctx.beginPath(); ctx.moveTo(-20, -45); ctx.lineTo(0, -78); ctx.lineTo(20, -45); ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  if (!ascent.separated) {
+    ctx.fillStyle = '#cbd5e1';
+    ctx.beginPath(); ctx.roundRect(-22, 5, 44, 38, 6); ctx.fill(); ctx.stroke();
+  } else {
+    ctx.fillStyle = '#94a3b8';
+    ctx.beginPath(); ctx.roundRect(-22, 12 + ascent.boosterDropY, 44, 38, 6); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawStage2() {
+  ctx.fillStyle = '#182032';
+  ctx.fillRect(105, 35, LOGICAL_W - 210, LOGICAL_H - 60);
+  ctx.strokeStyle = '#334155'; ctx.lineWidth = 4;
+  ctx.strokeRect(105, 35, LOGICAL_W - 210, LOGICAL_H - 60);
+
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath(); ctx.roundRect(210, 54, 700, 128, 16); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+  ctx.fillRect(340, 62, 130, 112);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+  ctx.fillRect(485, 62, 155, 112);
+  ctx.fillStyle = 'rgba(74, 222, 128, 0.16)';
+  ctx.fillRect(655, 62, 135, 112);
+
+  ctx.font = 'bold 10px Fredoka'; ctx.textAlign = 'center';
+  ctx.fillStyle = '#38bdf8'; ctx.fillText('SCAN ZONE', 405, 76);
+  ctx.fillStyle = '#94a3b8'; ctx.fillText('ECLIPSE SHADOW', 562, 76);
+  ctx.fillStyle = '#4ade80'; ctx.fillText('GROUND CONE', 722, 76);
+
+  ctx.fillStyle = '#3b82f6'; ctx.beginPath(); ctx.arc(275, 122, 26, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#94a3b8'; ctx.beginPath(); ctx.arc(845, 122, 21, 0, Math.PI * 2); ctx.fill();
+
+  ctx.strokeStyle = '#38bdf8'; ctx.setLineDash([6, 6]);
+  ctx.beginPath(); ctx.moveTo(305, 122); ctx.quadraticCurveTo(560, 74, 820, 122); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const sx = 305 + orbitState.progress * 515;
+  const sy = 122 - Math.sin(orbitState.progress * Math.PI) * 24;
+  ctx.fillStyle = '#fde047';
+  ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = '#334155';
+  ctx.strokeStyle = wrenchRack.available ? '#fde047' : '#475569';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(wrenchRack.x - 48, wrenchRack.y - 22, 96, 44, 10); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Fredoka';
+  ctx.fillText(wrenchRack.available ? '🔧 TOOL RACK' : 'RACK EMPTY', wrenchRack.x, wrenchRack.y + 4);
+
+  for (const c of consoles) {
+    ctx.fillStyle = c.alert ? '#7f1d1d' : '#1e293b';
+    ctx.strokeStyle = c.alert ? '#ef4444' : c.color;
+    ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.roundRect(c.x - 75, c.y - 32, 150, 64, 13); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Fredoka'; ctx.textAlign = 'center';
+    ctx.fillText(c.label, c.x, c.y - 4);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '10.5px Fredoka';
+    ctx.fillText(c.sub, c.x, c.y + 13);
+
+    if (c.alert) {
+      ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka';
+      ctx.fillText(c.needsWrench ? '🔧 NEED WRENCH + [SPACE]' : '⚠️ [SPACE] OPEN TASK', c.x, c.y - 40);
+    }
+  }
+
+  ctrlPlayers.forEach((p, idx) => drawChibiEngineer(p, idx === activeCrewIndex));
+
+  if (activeMiniGame) {
+    const mx = LOGICAL_W / 2, my = 365;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.96)';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.roundRect(mx - 200, my - 125, 400, 250, 18); ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka'; ctx.textAlign = 'center';
+
+    if (activeMiniGame.type === 'USER') {
+      const mg = activeMiniGame;
+      ctx.fillText('SPECTROMETER TARGET TRACKING [WASD]', mx, my - 92);
+      ctx.fillStyle = '#090d16';
+      ctx.fillRect(mx - 120, my - 72, 240, 145);
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+      ctx.beginPath(); ctx.arc(mx + mg.tx, my + mg.ty, 22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath(); ctx.arc(mx + mg.tx, my + mg.ty, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(mx + mg.rx, my + mg.ry, 18, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#334155'; ctx.fillRect(mx - 100, my + 86, 200, 14);
+      ctx.fillStyle = '#4ade80'; ctx.fillRect(mx - 98, my + 88, 196 * mg.lockProgress, 10);
+    }
+    else if (activeMiniGame.type === 'SPACE') {
+      const mg = activeMiniGame;
+      const totalW = mg.breakers.reduce((s, b) => s + (b.on ? b.watts : 0), 0);
+      ctx.fillText(`ECLIPSE LOAD SHEDDING (${totalW}W / ${mg.limit}W MAX)`, mx, my - 92);
+      mg.breakers.forEach((b, i) => {
+        const by = my - 58 + i * 52;
+        ctx.fillStyle = b.on ? '#7f1d1d' : '#14532d';
+        ctx.beginPath(); ctx.roundRect(mx - 150, by, 300, 40, 10); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Fredoka';
+        ctx.fillText(`[${i+1}] ${b.name} (${b.watts}W) — ${b.on ? 'ON (DRAINING)' : 'OFF (SAFE)'}`, mx, by + 25);
+      });
+    }
+    else if (activeMiniGame.type === 'GROUND') {
+      const mg = activeMiniGame;
+      ctx.fillText('KA-BAND WAVE ALIGNMENT [HOLD A / D]', mx, my - 92);
+      ctx.fillStyle = '#090d16';
+      ctx.fillRect(mx - 150, my - 68, 300, 120);
+      const drawWave = (freq, col) => {
+        ctx.strokeStyle = col; ctx.lineWidth = 3;
+        ctx.beginPath();
+        for (let x = -140; x <= 140; x += 5) {
+          const y = Math.sin(x * freq * 0.25) * 36;
+          if (x === -140) ctx.moveTo(mx + x, my - 8 + y);
+          else ctx.lineTo(mx + x, my - 8 + y);
+        }
+        ctx.stroke();
+      };
+      drawWave(mg.targetFreq, '#f59e0b');
+      drawWave(mg.playerFreq, '#38bdf8');
+      ctx.fillStyle = '#334155'; ctx.fillRect(mx - 100, my + 72, 200, 14);
+      ctx.fillStyle = '#38bdf8'; ctx.fillRect(mx - 98, my + 74, 196 * mg.holdTime, 10);
+    }
+    else if (activeMiniGame.type === 'LAUNCH') {
+      const mg = activeMiniGame;
+      ctx.fillText('WRENCH HULL & GYRO REPAIR', mx, my - 82);
+      ctx.fillStyle = '#fde047'; ctx.font = 'bold 18px Fredoka';
+      ctx.fillText(`TAP [SPACE] TO TORQUE BOLTS (${mg.boltsTightened}/${mg.boltsNeeded})`, mx, my - 10);
+      ctx.fillStyle = '#334155'; ctx.fillRect(mx - 120, my + 35, 240, 18);
+      ctx.fillStyle = '#4ade80'; ctx.fillRect(mx - 118, my + 37, 236 * (mg.boltsTightened / mg.boltsNeeded), 14);
+    }
+  }
+}
+
+function draw25DLunarWorld() {
+  ctx.fillStyle = '#070b14';
+  ctx.fillRect(0, 0, LOGICAL_W, 185);
+
+  ctx.fillStyle = '#e2e8f0';
+  for (let i = 0; i < 42; i++) {
+    ctx.fillRect((i * 197) % LOGICAL_W, (i * 53) % 155, 2, 2);
+  }
+
+  ctx.save();
+  ctx.beginPath(); ctx.arc(910, 78, 30, 0, Math.PI * 2);
+  ctx.fillStyle = '#1d4ed8'; ctx.fill();
+  ctx.fillStyle = '#22c55e';
+  ctx.beginPath(); ctx.arc(902, 70, 10, 0, Math.PI * 2); ctx.arc(920, 84, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(147, 197, 253, 0.45)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(910, 78, 32, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+
+  ctx.fillStyle = '#1e2638';
+  ctx.beginPath();
+  ctx.moveTo(0, 185);
+  for (let x = 0; x <= LOGICAL_W; x += 35) {
+    ctx.lineTo(x, 155 - Math.sin(x * 0.009) * 22 - Math.cos(x * 0.022) * 12);
+  }
+  ctx.lineTo(LOGICAL_W, 185);
+  ctx.fill();
+
+  const plainGrad = ctx.createLinearGradient(0, 185, 0, LOGICAL_H);
+  plainGrad.addColorStop(0, '#475569');
+  plainGrad.addColorStop(0.45, '#334155');
+  plainGrad.addColorStop(1, '#1e293b');
+  ctx.fillStyle = plainGrad;
+  ctx.fillRect(0, 185, LOGICAL_W, LOGICAL_H - 185);
+
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.1)';
+  ctx.lineWidth = 1.5;
+  for (let gy = 230; gy < LOGICAL_H; gy += 55) {
+    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(LOGICAL_W, gy); ctx.stroke();
+  }
+
+  for (const cr of lunarCraters) {
+    ctx.fillStyle = cr.isTarget ? '#1e293b' : '#273246';
+    ctx.strokeStyle = cr.isTarget ? '#f59e0b' : '#64748b';
+    ctx.lineWidth = cr.isTarget ? 3 : 2;
+    ctx.beginPath();
+    ctx.ellipse(cr.x, cr.y, cr.rx, cr.ry, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.55)';
+    ctx.beginPath();
+    ctx.ellipse(cr.x, cr.y + 4, cr.rx * 0.85, cr.ry * 0.78, 0, Math.PI, Math.PI * 2);
+    ctx.stroke();
+
+    if (cr.isTarget) {
+      ctx.fillStyle = '#fde047';
+      ctx.font = 'bold 12px Fredoka';
+      ctx.textAlign = 'center';
+      ctx.fillText('POINT B: TARGET CRATER', cr.x, cr.y + cr.ry + 18);
+    }
+  }
+
+  const px = lander.padX, py = lander.padY;
+  ctx.fillStyle = '#1e293b';
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.ellipse(px, py, 68, 32, 0, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+
+  const beaconCol = Math.floor(performance.now() / 250) % 2 === 0 ? '#4ade80' : '#38bdf8';
+  ctx.fillStyle = beaconCol;
+  ctx.beginPath();
+  ctx.arc(px - 60, py, 4.5, 0, Math.PI * 2);
+  ctx.arc(px + 60, py, 4.5, 0, Math.PI * 2);
+  ctx.arc(px, py - 28, 4.5, 0, Math.PI * 2);
+  ctx.arc(px, py + 28, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#e0f2fe';
+  ctx.font = 'bold 12px Fredoka';
+  ctx.textAlign = 'center';
+  ctx.fillText('POINT A: LANDING PAD', px, py + 48);
+}
+
+function draw25DLander(x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampOpen=false, ascentLaunched=false) {
+  const shadowScale = Math.max(0.45, 1 - z / 320);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.beginPath();
+  ctx.ellipse(x, y, 34 * shadowScale, 16 * shadowScale, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (z > 2) {
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - z); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.save();
+  ctx.translate(x, y - z);
+  ctx.rotate(tiltX);
+
+  if (thrusting || hoverTrim) {
+    const len = thrusting ? (38 + Math.random() * 18) : (18 + Math.random() * 8);
+    ctx.fillStyle = thrusting ? '#f97316' : '#38bdf8';
+    ctx.beginPath(); ctx.moveTo(-10, 6); ctx.lineTo(0, 6 + len); ctx.lineTo(10, 6); ctx.closePath(); ctx.fill();
+  }
+
+  const spreadX = 18 + legAnim * 18;
+  const footY = 4 + legAnim * 12;
+  ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 3.2;
+  ctx.beginPath();
+  ctx.moveTo(-15, -4); ctx.lineTo(-spreadX, footY);
+  ctx.moveTo(15, -4);  ctx.lineTo(spreadX, footY);
+  ctx.moveTo(-10, -2); ctx.lineTo(-spreadX * 0.65, footY + 5);
+  ctx.moveTo(10, -2);  ctx.lineTo(spreadX * 0.65, footY + 5);
+  ctx.stroke();
+
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(-spreadX - 5, footY - 2, 10, 4);
+  ctx.fillRect(spreadX - 5, footY - 2, 10, 4);
+
+  // Gold Kapton Foil Descent Base (remains on Moon when Ascent Capsule launches!)
+  ctx.fillStyle = '#eab308'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.roundRect(-22, -18, 44, 18, 5); ctx.fill(); ctx.stroke();
+
+  if (!ascentLaunched) {
+    // White Crew Ascent Cabin
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath(); ctx.roundRect(-17, -40, 34, 22, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#0284c7';
+    ctx.beginPath(); ctx.roundRect(-10, -35, 20, 9, 4); ctx.fill();
+
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, -40); ctx.lineTo(0, -50); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, -51, 6, 0.15*Math.PI, 0.85*Math.PI); ctx.stroke();
+  }
+
+  if (rampOpen) {
+    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(20, -2); ctx.lineTo(48, 16); ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawStage3A() {
+  draw25DLunarWorld();
+
+  // P3 Science Terrain Lidar Scan Ring under lander
+  ctx.strokeStyle = 'rgba(168, 85, 247, 0.45)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(lander.x, lander.y, 48, 22, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // P4 Ground/Comms Glide-Slope Beam over Point A
+  const padDist = Math.hypot(lander.x - lander.padX, (lander.y - lander.padY) * 1.4);
+  const aligned = padDist <= 76;
+  const beamGrad = ctx.createLinearGradient(0, 120, 0, lander.padY);
+  beamGrad.addColorStop(0, 'rgba(56, 189, 248, 0.02)');
+  beamGrad.addColorStop(1, aligned ? 'rgba(74, 222, 128, 0.25)' : 'rgba(251, 191, 36, 0.15)');
+  ctx.fillStyle = beamGrad;
+  ctx.beginPath();
+  ctx.moveTo(lander.padX - 115, 110);
+  ctx.lineTo(lander.padX + 115, 110);
+  ctx.lineTo(lander.padX + 68, lander.padY);
+  ctx.lineTo(lander.padX - 68, lander.padY);
+  ctx.closePath();
+  ctx.fill();
+
+  draw25DLander(lander.x, lander.y, lander.z, lander.tiltX, lander.legAnim, lander.thrusting, lander.hoverTrim || lander.p2AssistActive, false, false);
+
+  const vSpd = Math.abs(lander.vz * 0.24).toFixed(1);
+  const ly = lander.y - lander.z;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+  ctx.strokeStyle = vSpd <= 5.0 ? '#4ade80' : '#ef4444';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(lander.x + 36, ly - 44, 112, 42, 8); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px JetBrains Mono'; ctx.textAlign = 'left';
+  ctx.fillText(`V:${vSpd} m/s`, lander.x + 44, ly - 27);
+  ctx.fillStyle = (lander.hoverTrim || lander.p2AssistActive) ? '#38bdf8' : '#94a3b8';
+  ctx.fillText(lander.p2AssistActive ? 'P2 TRIMMING' : `ALT:${Math.round(lander.z*0.45)}m`, lander.x + 44, ly - 10);
+
+  for (const pt of lunarParticles) {
+    ctx.globalAlpha = Math.max(0, pt.life * 1.6);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function draw25DSingleRover(rv, crewA, crewB) {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+  ctx.beginPath();
+  ctx.ellipse(rv.x, rv.y + 4, 28, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(rv.x, rv.y - 10 - rv.z);
+
+  const dirAngle = Math.atan2(rv.facingY * 0.6, rv.facingX);
+  ctx.save();
+  ctx.rotate(dirAngle);
+  const lightGrad = ctx.createLinearGradient(0, 0, 110, 0);
+  lightGrad.addColorStop(0, 'rgba(253, 224, 71, 0.28)');
+  lightGrad.addColorStop(1, 'rgba(253, 224, 71, 0)');
+  ctx.fillStyle = lightGrad;
+  ctx.beginPath(); ctx.moveTo(18, -4); ctx.lineTo(110, -24); ctx.lineTo(110, 24); ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  if (rv.rcsHopping && rv.z > 0) {
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.moveTo(-12, 6); ctx.lineTo(-18, 22 + Math.random()*8); ctx.lineTo(-6, 6);
+    ctx.moveTo(6, 6); ctx.lineTo(12, 22 + Math.random()*8); ctx.lineTo(18, 6);
+    ctx.fill();
+  }
+
+  const wheelXs = [-19, 0, 19];
+  for (const wx of wheelXs) {
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath(); ctx.arc(wx + 4, 4, 6.5, 0, Math.PI * 2); ctx.fill();
+  }
+
+  ctx.fillStyle = rv.bodyColor;
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.roundRect(-24, -10, 48, 14, 5); ctx.fill(); ctx.stroke();
+
+  // Two Chibi Crewmates riding together in the 2-seat Rover!
+  // Seat 1 (Driver)
+  ctx.fillStyle = crewA.color;
+  ctx.beginPath(); ctx.roundRect(1, -21, 13, 12, 5); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#f8fafc';
+  ctx.beginPath(); ctx.arc(7, -25, 7.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = crewA.visor;
+  ctx.fillRect(7 + rv.facingX * 2 - 3, -28, 7, 4.5);
+
+  // Seat 2 (Specialist)
+  ctx.fillStyle = crewB.color;
+  ctx.beginPath(); ctx.roundRect(-14, -21, 13, 12, 5); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#f8fafc';
+  ctx.beginPath(); ctx.arc(-8, -25, 7.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = crewB.visor;
+  ctx.fillRect(-8 + rv.facingX * 2 - 3, -28, 7, 4.5);
+
+  if (rv.hasSample) {
+    ctx.fillStyle = '#4ade80';
+    ctx.strokeStyle = '#0f172a';
+    ctx.beginPath(); ctx.roundRect(-24, -19, 10, 10, 3); ctx.fill(); ctx.stroke();
+  }
+
+  if (rv.armAnim > 0.05) {
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.moveTo(rv.facingX * 18, -4);
+    ctx.lineTo(rv.facingX * (26 + rv.armAnim * 10), -4 + rv.armAnim * 20);
+    ctx.stroke();
+  }
+
+  for (const wx of wheelXs) {
+    ctx.save();
+    ctx.translate(wx - 2, 9);
+    ctx.rotate(rv.wheelSpin);
+    ctx.fillStyle = '#1e293b';
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(6, 0); ctx.moveTo(0, -6); ctx.lineTo(0, 6); ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 9.5px Fredoka';
+  ctx.textAlign = 'center';
+  ctx.fillText(rv.id, 0, -37);
+
+  ctx.restore();
+}
+
+function drawStage3B() {
+  draw25DLunarWorld();
+
+  const targetCrater = lunarCraters.find(c => c.isTarget);
+  const anySample = rover.hasSample || rover2.hasSample;
+
+  // Ka-Band Comms Relay Link between Point A Rocket and LTV-1
+  ctx.strokeStyle = 'rgba(16, 185, 129, 0.28)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 6]);
+  ctx.beginPath();
+  ctx.moveTo(lander.padX, lander.padY - 35);
+  ctx.lineTo(rover.x, rover.y - 18);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Route path line
+  ctx.strokeStyle = anySample ? 'rgba(74, 222, 128, 0.45)' : 'rgba(56, 189, 248, 0.35)';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([8, 8]);
+  ctx.beginPath();
+  ctx.moveTo(lander.padX + 55, lander.padY);
+  ctx.lineTo(targetCrater.x, targetCrater.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const depthList = [
+    { kind: 'rocket', y: lander.padY },
+    { kind: 'rover1', y: rover.y },
+    ...(coopMode !== 'SOLO' ? [{ kind: 'rover2', y: rover2.y }] : []),
+    ...lunarBoulders.map(b => ({ kind: 'boulder', y: b.y, obj: b })),
+    ...scienceNodes.map(s => ({ kind: 'science', y: s.y, obj: s }))
+  ].sort((a, b) => a.y - b.y);
+
+  for (const item of depthList) {
+    if (item.kind === 'rocket') {
+      draw25DLander(lander.padX, lander.padY, 0, 0, 1, false, false, true, false);
+    } else if (item.kind === 'rover1') {
+      draw25DSingleRover(rover, CREW_ROSTER[0], CREW_ROSTER[2]);
+    } else if (item.kind === 'rover2') {
+      draw25DSingleRover(rover2, CREW_ROSTER[1], CREW_ROSTER[3]);
+    } else if (item.kind === 'boulder') {
+      const b = item.obj;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath(); ctx.ellipse(b.x + 4, b.y + 4, b.r * 1.1, b.r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#475569'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(b.x, b.y - b.r * 0.35, b.r, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else if (item.kind === 'science') {
+      const sn = item.obj;
+      ctx.fillStyle = sn.scanned ? '#64748b' : '#38bdf8';
+      ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sn.x - 9, sn.y); ctx.lineTo(sn.x, sn.y - 22); ctx.lineTo(sn.x + 9, sn.y);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      if (!sn.scanned && Math.hypot(rover.x - sn.x, rover.y - sn.y) < 68) {
+        ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka'; ctx.textAlign = 'center';
+        ctx.fillText(`[SPACE] Scan ${sn.name} (+${sn.pts}⭐)`, sn.x, sn.y - 30);
+      }
+    }
+  }
+
+  if (!rover.hasSample) {
+    ctx.fillStyle = '#4ade80'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(targetCrater.x - 10, targetCrater.y);
+    ctx.lineTo(targetCrater.x - 4, targetCrater.y - 24);
+    ctx.lineTo(targetCrater.x + 4, targetCrater.y - 24);
+    ctx.lineTo(targetCrater.x + 10, targetCrater.y);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    if (Math.hypot(rover.x - targetCrater.x, rover.y - targetCrater.y) < 78) {
+      ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka'; ctx.textAlign = 'center';
+      ctx.fillText(rover.drilling ? `DRILLING SAMPLE... ${Math.round(rover.drillProgress*100)}%` : '[HOLD SPACE] DRILL CORE SAMPLE', targetCrater.x, targetCrater.y - 36);
+      if (rover.drilling) {
+        ctx.fillStyle = '#0f172a'; ctx.fillRect(targetCrater.x - 45, targetCrater.y - 54, 90, 9);
+        ctx.fillStyle = '#4ade80'; ctx.fillRect(targetCrater.x - 43, targetCrater.y - 52, 86 * rover.drillProgress, 5);
+      }
+    }
+  }
+
+  if (anySample) {
+    ctx.fillStyle = '#4ade80'; ctx.font = 'bold 13px Fredoka'; ctx.textAlign = 'center';
+    ctx.fillText('⬇️ BOARD ROCKET FOR MOON LAUNCH! ⬇️', lander.padX, lander.padY - 72);
+  }
+
+  for (const pt of lunarParticles) {
+    ctx.globalAlpha = Math.max(0, pt.life * 1.6);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ============================================================================
+// STAGE 3C RENDERER: CAPSULE LAUNCH FROM THE MOON & CISLUNAR TRANSFER
+// ============================================================================
+function drawStage3C() {
+  if (moonLaunch.phase === 'LIFTOFF') {
+    draw25DLunarWorld();
+
+    // Descent Stage remains on Point A Pad as the lunar launch table!
+    draw25DLander(lander.padX, lander.padY, 0, 0, 1, false, false, false, true);
+
+    // Ascent Capsule blasting off vertically from the Moon!
+    ctx.save();
+    ctx.translate(lander.padX, moonLaunch.capsuleY - 26);
+    ctx.rotate(moonLaunch.tilt);
+
+    if (moonLaunch.thrusting) {
+      const len = 34 + Math.random() * 18;
+      ctx.fillStyle = '#f97316';
+      ctx.beginPath(); ctx.moveTo(-10, 6); ctx.lineTo(0, 6 + len); ctx.lineTo(10, 6); ctx.closePath(); ctx.fill();
+    }
+
+    // White Crew Ascent Capsule
+    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.6;
+    ctx.beginPath(); ctx.roundRect(-17, -18, 34, 22, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#0284c7';
+    ctx.beginPath(); ctx.roundRect(-10, -13, 20, 8, 4); ctx.fill();
+    ctx.fillStyle = '#4ade80';
+    ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = '#fde047'; ctx.font = 'bold 15px Fredoka'; ctx.textAlign = 'center';
+    ctx.fillText('HOLD [W] OR [SPACE] FOR LUNAR ASCENT THRUST! 🚀', LOGICAL_W / 2, 72);
+  } else {
+    // PHASE 3C-2: CISLUNAR TRANSFER (MOON -> EARTH ZOOM BRIDGE)
+    ctx.fillStyle = '#050811';
+    ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+    ctx.fillStyle = '#e2e8f0';
+    for (let i = 0; i < 65; i++) {
+      ctx.fillRect((i * 173) % LOGICAL_W, (i * 97) % LOGICAL_H, 2, 2);
+    }
+
+    // Departing Moon on left (shrinking as capsule escapes)
+    const moonR = Math.max(36, 95 - moonLaunch.progress * 55);
+    ctx.fillStyle = '#64748b';
+    ctx.beginPath(); ctx.arc(170, 340, moonR, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#475569';
+    ctx.beginPath(); ctx.arc(155, 325, moonR * 0.22, 0, Math.PI * 2); ctx.arc(190, 355, moonR * 0.16, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#cbd5e1'; ctx.font = 'bold 13px Fredoka'; ctx.textAlign = 'center';
+    ctx.fillText('MOON (DEPARTED)', 170, 340 + moonR + 24);
+
+    // Approaching Planet Earth on right (growing larger as capsule nears entry!)
+    const earthR = 52 + moonLaunch.progress * 88;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(920, 310, earthR, 0, Math.PI * 2);
+    ctx.fillStyle = '#1d4ed8'; ctx.fill();
+    ctx.fillStyle = '#22c55e';
+    ctx.beginPath();
+    ctx.arc(900, 290, earthR * 0.34, 0, Math.PI * 2);
+    ctx.arc(945, 330, earthR * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.55)'; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.arc(920, 310, earthR + 4, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#bae6fd'; ctx.font = 'bold 14px Fredoka';
+    ctx.fillText('PLANET EARTH (ENTRY INTERFACE)', 920, 310 + earthR + 26);
+
+    // Dashed cislunar arc
+    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 3; ctx.setLineDash([8, 8]);
+    ctx.beginPath(); ctx.moveTo(230, 340); ctx.quadraticCurveTo(550, 210, 825, 305); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Capsule flying along trajectory arc
+    const t = moonLaunch.progress;
+    const cx = (1 - t) * (1 - t) * 230 + 2 * (1 - t) * t * 550 + t * t * 825;
+    const cy = (1 - t) * (1 - t) * 340 + 2 * (1 - t) * t * 210 + t * t * 305;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(0.2);
+    if (moonLaunch.teiBurnDone) {
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath(); ctx.moveTo(-18, -5); ctx.lineTo(-42 - Math.random()*14, 0); ctx.lineTo(-18, 5); ctx.fill();
+    }
+    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(-12, -13); ctx.lineTo(-12, 13); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+
+    if (!moonLaunch.teiBurnDone) {
+      ctx.fillStyle = '#f97316';
+      ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 200, 65, 400, 42, 14); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka';
+      ctx.fillText('PRESS [SPACE] FOR EARTH INJECTION BURN!', LOGICAL_W / 2, 92);
+    }
+  }
+
+  for (const pt of lunarParticles) {
+    ctx.globalAlpha = Math.max(0, pt.life * 1.6);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ============================================================================
+// STAGE 4 RENDERER: 4P EARTH RE-ENTRY & OCEAN RECOVERY SPLASHDOWN
+// ============================================================================
+function drawStage4() {
+  if (reentry.phase === 'PLASMA') {
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, LOGICAL_H);
+    skyGrad.addColorStop(0, '#050811');
+    skyGrad.addColorStop(0.65, '#172554');
+    skyGrad.addColorStop(1, '#0284c7');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+    ctx.fillStyle = '#1d4ed8';
+    ctx.beginPath();
+    ctx.arc(LOGICAL_W / 2, 1360, 880, Math.PI * 1.25, Math.PI * 1.75);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.65)';
+    ctx.lineWidth = 10;
+    ctx.stroke();
+
+    const gx = 120, gy = 120, gw = 36, gh = 340;
+    ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#475569'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.roundRect(gx, gy, gw, gh, 10); ctx.fill(); ctx.stroke();
+
+    const midY = gy + gh / 2;
+    const halfH = (gh / 2) * (reentry.corridorHalfWidth / 0.8);
+    ctx.fillStyle = 'rgba(251, 191, 36, 0.25)';
+    ctx.fillRect(gx + 3, gy + 3, gw - 6, midY - halfH - gy - 3);
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.38)';
+    ctx.fillRect(gx + 3, midY - halfH, gw - 6, halfH * 2);
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.32)';
+    ctx.fillRect(gx + 3, midY + halfH, gw - 6, gy + gh - (midY + halfH) - 3);
+
+    const needleY = midY - (reentry.pitchAngle / 0.8) * (gh / 2);
+    ctx.fillStyle = Math.abs(reentry.pitchAngle) <= reentry.corridorHalfWidth ? '#4ade80' : '#ef4444';
+    ctx.fillRect(gx - 7, needleY - 5, gw + 14, 10);
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Fredoka'; ctx.textAlign = 'center';
+    ctx.fillText('ENTRY ANGLE', gx + gw / 2, gy - 14);
+    ctx.fillStyle = '#fde047'; ctx.font = '10px Fredoka';
+    ctx.fillText('SHALLOW [W]', gx + gw / 2, gy + 16);
+    ctx.fillStyle = '#f87171';
+    ctx.fillText('STEEP [S]', gx + gw / 2, gy + gh - 8);
+
+    const cx = reentry.capsuleX, cy = 260;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(0.45 - reentry.pitchAngle * 0.6);
+
+    const plasmaGrad = ctx.createRadialGradient(0, 14, 12, 0, 14, 68);
+    plasmaGrad.addColorStop(0, reentry.heat > 75 ? 'rgba(239, 68, 68, 0.9)' : 'rgba(249, 115, 22, 0.85)');
+    plasmaGrad.addColorStop(0.6, 'rgba(251, 191, 36, 0.35)');
+    plasmaGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+    ctx.fillStyle = plasmaGrad;
+    ctx.beginPath(); ctx.arc(0, 14, 68, 0, Math.PI * 2); ctx.fill();
+
+    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-14, -22); ctx.lineTo(14, -22); ctx.lineTo(28, 12); ctx.lineTo(-28, 12);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = reentry.heat > 75 ? '#ef4444' : '#ea580c';
+    ctx.beginPath(); ctx.ellipse(0, 14, 29, 8, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+    if (sampleCollected) {
+      ctx.fillStyle = '#4ade80';
+      ctx.beginPath(); ctx.arc(0, -4, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+
+    if (Math.abs(reentry.pitchAngle) > reentry.corridorHalfWidth) {
+      ctx.fillStyle = reentry.pitchAngle < 0 ? '#dc2626' : '#d97706';
+      ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 190, 62, 380, 40, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka'; ctx.textAlign = 'center';
+      ctx.fillText(reentry.pitchAngle < 0 ? '⚠️ TOO STEEP — PRESS [W]!' : '⚠️ TOO SHALLOW — PRESS [S]!', LOGICAL_W / 2, 88);
+    }
+  } else {
+    const daySky = ctx.createLinearGradient(0, 0, 0, 515);
+    daySky.addColorStop(0, '#0284c7');
+    daySky.addColorStop(1, '#bae6fd');
+    ctx.fillStyle = daySky;
+    ctx.fillRect(0, 0, LOGICAL_W, 515);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.beginPath();
+    ctx.arc(240, 150, 32, 0, Math.PI * 2); ctx.arc(275, 145, 40, 0, Math.PI * 2); ctx.arc(315, 152, 30, 0, Math.PI * 2);
+    ctx.arc(780, 190, 28, 0, Math.PI * 2); ctx.arc(815, 185, 36, 0, Math.PI * 2); ctx.arc(850, 192, 26, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#0369a1';
+    ctx.fillRect(0, 510, LOGICAL_W, LOGICAL_H - 510);
+
+    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let x = 0; x <= LOGICAL_W; x += 20) {
+      const wy = 514 + Math.sin(x * 0.03 + reentry.wavePhase) * 4;
+      if (x === 0) ctx.moveTo(x, wy); else ctx.lineTo(x, wy);
+    }
+    ctx.stroke();
+
+    // NASA Recovery Carrier Ship (P4 Ground/Recovery)
+    const sx = reentry.shipX, sy = 516 + Math.sin(reentry.wavePhase * 0.8) * 3;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(-82, -8); ctx.lineTo(82, -8); ctx.lineTo(68, 14); ctx.lineTo(-68, 14); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#f97316';
+    ctx.fillRect(-56, -13, 90, 5);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(28, -32, 24, 24);
+    ctx.fillStyle = '#e0f2fe'; ctx.font = 'bold 11px Fredoka'; ctx.textAlign = 'center';
+    ctx.fillText('P4 NASA RECOVERY CARRIER', 0, 32);
+    ctx.restore();
+
+    const cx = reentry.capsuleX, cy = reentry.capsuleY;
+    if (reentry.chutesDeployed) {
+      const sc = reentry.chuteScale;
+      const offsets = [-34 * sc, 0, 34 * sc];
+      for (const ox of offsets) {
+        ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(cx, cy - 18); ctx.lineTo(cx + ox, cy - 68 * sc); ctx.stroke();
+        ctx.fillStyle = ox === 0 ? '#f97316' : '#f8fafc';
+        ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx + ox, cy - 68 * sc, 20 * sc, Math.PI, 0);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+    } else if (reentry.phase === 'CHUTES') {
+      ctx.fillStyle = '#f97316';
+      ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 185, 58, 370, 42, 14); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Fredoka'; ctx.textAlign = 'center';
+      ctx.fillText('PRESS [SPACE] TO DEPLOY PARACHUTES!', LOGICAL_W / 2, 85);
+    }
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    ctx.moveTo(-12, -18); ctx.lineTo(12, -18); ctx.lineTo(24, 10); ctx.lineTo(-24, 10);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(-24, 10, 48, 5);
+    ctx.restore();
+  }
+
+  for (const pt of lunarParticles) {
+    ctx.globalAlpha = Math.max(0, pt.life * 1.6);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+  if (stage === 'MENU' || stage === 'STAGE1') drawStage1();
+  else if (stage === 'STAGE1B') drawStage1B();
+  else if (stage === 'STAGE2') drawStage2();
+  else if (stage === 'STAGE3A') drawStage3A();
+  else if (stage === 'STAGE3B') drawStage3B();
+  else if (stage === 'STAGE3C') drawStage3C();
+  else if (stage === 'STAGE4' || stage === 'STAGE5') drawStage4();
+
+  for (const ft of floatingTexts) {
+    ctx.globalAlpha = Math.max(0, ft.life);
+    ctx.fillStyle = ft.color;
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 4;
+    ctx.font = 'bold 15px Fredoka';
+    ctx.textAlign = 'center';
+    ctx.strokeText(ft.text, ft.x, ft.y);
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  update(dt);
+  draw();
+  if (stage !== 'MENU' && stage !== 'STAGE5') requestAnimationFrame(loop);
+}
+
+resizeCanvas();
+buildStage1Map();
+draw();
+</script>
+</body>
+</html>
