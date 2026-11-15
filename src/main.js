@@ -1357,7 +1357,25 @@ function initBackgroundHostTicker() {
 }
 initBackgroundHostTicker();
 
+function syncOverlayInert() {
+  const modalOpen = !document.getElementById('modal')?.classList.contains('hidden');
+  const guideOpen = !document.getElementById('guide-modal')?.classList.contains('hidden');
+  const blocked = modalOpen || guideOpen;
+  for (const id of ['hud-top', 'game-wrap', 'hud-bottom']) {
+    const el = document.getElementById(id);
+    if (el) el.inert = blocked;
+  }
+}
+
 try {
+  // Keep background HUD & canvas inert whenever a modal overlay is open so keyboard focus cannot escape behind it.
+  if (typeof MutationObserver !== 'undefined') {
+    const obs = new MutationObserver(syncOverlayInert);
+    for (const id of ['modal', 'guide-modal']) {
+      const el = document.getElementById(id);
+      if (el) obs.observe(el, { attributes: true, attributeFilter: ['class'] });
+    }
+  }
   // Ticket thumbnails are cut from item sprites, so redraw tickets once those load.
   preloadAllAssets().then(() => {
     if (state.stage === 'STAGE1') renderTicketsHUD();

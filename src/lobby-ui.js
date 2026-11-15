@@ -68,6 +68,7 @@ const SKELETON = () => `
         <button id="btn-lobby-copy" class="lobby-mini-btn" type="button" title="Copy room code">${iconHtml('copy')}<span id="lobby-copy-label">Copy</span></button>
         <button id="btn-lobby-newcode" class="lobby-mini-btn" type="button" title="Generate a new room code">${iconHtml('dice')}<span>New</span></button>
       </div>
+      <span id="lobby-copy-live" class="visually-hidden" role="status"></span>
     </div>
   </header>
 
@@ -76,7 +77,7 @@ const SKELETON = () => `
   <div class="lobby-body">
     <section class="lobby-panel lobby-crew" aria-label="Crew list">
       <h2 class="lobby-panel-title"><span>${iconHtml('team')} Crew</span><span id="lobby-count" class="lobby-count"></span></h2>
-      <ul id="lobby-slots" class="lobby-slots"></ul>
+      <ul id="lobby-slots" class="lobby-slots" role="list"></ul>
     </section>
 
     <section class="lobby-panel lobby-custom" aria-label="Customize your astronaut">
@@ -125,9 +126,9 @@ const SKELETON = () => `
             </div>
           </div>
           <div class="lobby-field lobby-field-inline">
-            <span class="lobby-field-label">Helmet</span>
-            <button id="opt-helmet" class="lobby-toggle" type="button" role="switch" aria-checked="false"></button>
-            <em class="lobby-hint">Wearing it hides your hair</em>
+            <span id="lbl-helmet" class="lobby-field-label">Helmet</span>
+            <button id="opt-helmet" class="lobby-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="lbl-helmet" aria-describedby="hint-helmet"></button>
+            <em id="hint-helmet" class="lobby-hint">Wearing it hides your hair</em>
           </div>
         </div>
       </div>
@@ -220,9 +221,15 @@ function renderNetBar() {
 
   const wsOn = isWsMultiplayer();
   const isConn = netState.status === 'connecting';
-  const netKey = `${netState.mode}|${netState.status}|${netState.roomCode}|${netState.error}|${netState.latencyMs ?? ''}`;
-  // Never stomp active typing in the offline URL / Join Code inputs unless connection mode/error changed.
-  if (!wsOn && (activeId === 'lobby-ws-url' || activeId === 'lobby-join-code') && netKey === ui.lastNetBarKey) {
+  const netKey = `${netState.mode}|${netState.status}|${netState.roomCode}|${netState.error}`;
+  const pingText = netState.latencyMs != null ? `${netState.latencyMs}ms` : 'Online';
+
+  if (wsOn && netKey === ui.lastNetBarKey && $('lobby-net-ping')) {
+    $('lobby-net-ping').textContent = pingText;
+    return;
+  }
+  // Never stomp active typing or button focus when structural connection state is unchanged.
+  if (!wsOn && netKey === ui.lastNetBarKey && ($('lobby-ws-url') || activeId === 'lobby-ws-url' || activeId === 'lobby-join-code')) {
     return;
   }
   if (!wsOn && isConn && (activeId === 'lobby-ws-url' || activeId === 'lobby-join-code')) {
@@ -236,11 +243,10 @@ function renderNetBar() {
 
   if (wsOn) {
     const amHost = isWsHost();
-    const pingText = netState.latencyMs != null ? `${netState.latencyMs}ms` : 'Online';
     bar.innerHTML = `
       <div class="lobby-net-row is-online">
         <span class="lobby-net-pill ${amHost ? 'is-host' : 'is-guest'}">${amHost ? `${iconHtml('crown')} HOST ONLINE` : `${iconHtml('dish')} GUEST ONLINE`}</span>
-        <span class="lobby-net-meta">${iconHtml('bolt')} Room <b>${esc(netState.roomCode)}</b> · ${esc(pingText)}</span>
+        <span class="lobby-net-meta">${iconHtml('bolt')} Room <b>${esc(netState.roomCode)}</b> · <span id="lobby-net-ping">${esc(pingText)}</span></span>
         <div class="lobby-net-actions">
           <button id="btn-lobby-invite" class="lobby-mini-btn" type="button" title="Copy direct invite URL">${iconHtml('copy')}<span id="lobby-invite-label">Copy Invite Link</span></button>
           <button id="btn-lobby-ws-leave" class="lobby-mini-btn lobby-btn-danger" type="button" title="Disconnect from online room">${iconHtml('cross')}<span>Leave Online</span></button>
@@ -254,9 +260,11 @@ function renderNetBar() {
   bar.innerHTML = `
     <div class="lobby-net-row">
       <span class="lobby-net-pill">LOCAL CREW</span>
-      <input id="lobby-ws-url" class="lobby-input lobby-net-url" type="text" value="${esc(wsVal)}" placeholder="ws://localhost:8787/ws" aria-label="WebSocket relay URL" spellcheck="false" />
+      <label class="visually-hidden" for="lobby-ws-url">WebSocket relay URL</label>
+      <input id="lobby-ws-url" class="lobby-input lobby-net-url" type="text" value="${esc(wsVal)}" placeholder="ws://localhost:8787/ws" spellcheck="false" />
       <button id="btn-lobby-ws-host" class="lobby-mini-btn lobby-btn-accent" type="button" ${isConn ? 'disabled' : ''}>${iconHtml('dish')}<span>${isConn ? 'Connecting...' : 'Host Online'}</span></button>
-      <input id="lobby-join-code" class="lobby-input lobby-net-code" type="text" maxlength="6" value="${esc(joinVal)}" placeholder="CODE" aria-label="Room code to join" spellcheck="false" />
+      <label class="visually-hidden" for="lobby-join-code">Room code to join</label>
+      <input id="lobby-join-code" class="lobby-input lobby-net-code" type="text" maxlength="6" value="${esc(joinVal)}" placeholder="CODE" spellcheck="false" />
       <button id="btn-lobby-ws-join" class="lobby-mini-btn" type="button" ${isConn ? 'disabled' : ''}>${iconHtml('play')}<span>Join Room</span></button>
     </div>${errHtml}`;
 }
@@ -345,7 +353,7 @@ function renderSelections() {
 
   const helmet = $('opt-helmet');
   helmet.setAttribute('aria-checked', look.helmet ? 'true' : 'false');
-  helmet.innerHTML = `${iconHtml('helmet')}<span>${look.helmet ? 'On' : 'Off'}</span>`;
+  helmet.innerHTML = `${iconHtml('helmet')}<span aria-hidden="true">${look.helmet ? 'On' : 'Off'}</span>`;
   $('field-hair').classList.toggle('is-dim', look.helmet);
   $('field-haircolor').classList.toggle('is-dim', look.helmet);
 }
@@ -451,36 +459,67 @@ function legacyCopy(text) {
   return ok;
 }
 
-async function copyTextWithFeedback(text, labelElId, idleText, okText, timerKey) {
+let lastCopyAnnouncement = '';
+
+async function copyTextWithFeedback(text, btnId, labelElId, idleText, okText, timerKey) {
   if (!ui) return;
   let ok = false;
   try {
-    await navigator.clipboard.writeText(text);
-    ok = true;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } else {
+      ok = legacyCopy(text);
+    }
   } catch {
     ok = legacyCopy(text);
   }
   if (!ui) return;
+
+  const btn = $(btnId);
   const label = $(labelElId);
-  if (label) label.textContent = ok ? okText : 'Copy';
+  const live = $('lobby-copy-live');
+  if (btn) {
+    btn.removeAttribute('data-copied');
+    btn.removeAttribute('data-failed');
+    void btn.offsetWidth;
+    btn.setAttribute(ok ? 'data-copied' : 'data-failed', '');
+  }
+  if (label) label.textContent = ok ? okText : 'Copy failed';
+  if (live) {
+    let msg = ok ? 'Copied' : 'Copy failed';
+    if (msg === lastCopyAnnouncement) msg += '\u00A0';
+    lastCopyAnnouncement = msg;
+    live.textContent = '';
+    requestAnimationFrame(() => {
+      if (ui && $('lobby-copy-live')) $('lobby-copy-live').textContent = msg;
+    });
+  }
   playTone(ok ? 760 : 300, 'triangle', 0.07, 0.06);
   clearTimeout(ui[timerKey]);
   ui[timerKey] = setTimeout(() => {
+    const curBtn = $(btnId);
     const el = $(labelElId);
+    const curLive = $('lobby-copy-live');
+    if (curBtn) {
+      curBtn.removeAttribute('data-copied');
+      curBtn.removeAttribute('data-failed');
+    }
     if (el) el.textContent = idleText;
-  }, 1400);
+    if (curLive) curLive.textContent = '';
+  }, 1600);
 }
 
 function copyCode() {
   if (!ui || !state.lobby) return;
-  copyTextWithFeedback(state.lobby.code, 'lobby-copy-label', 'Copy', 'Copied!', 'copyTimer');
+  copyTextWithFeedback(state.lobby.code, 'btn-lobby-copy', 'lobby-copy-label', 'Copy', 'Copied!', 'copyTimer');
 }
 
 function copyInvite() {
   if (!ui) return;
   const url = buildInviteUrl();
   if (!url) return;
-  copyTextWithFeedback(url, 'lobby-invite-label', 'Copy Invite Link', 'Copied URL!', 'inviteTimer');
+  copyTextWithFeedback(url, 'btn-lobby-invite', 'lobby-invite-label', 'Copy Invite Link', 'Copied URL!', 'inviteTimer');
 }
 
 function handleStart() {
