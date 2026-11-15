@@ -81,10 +81,15 @@ export function regenerateCode(lobby, rng = Math.random) {
   return code;
 }
 
+export function setSlotProfile(lobby, index, profile) {
+  const target = lobby?.slots?.[index];
+  if (!target || (target.kind !== 'host' && target.kind !== 'guest')) return;
+  target.name = sanitizeName(profile?.name) || target.name;
+  target.look = sanitizeLook(profile?.look);
+}
+
 export function setHostProfile(lobby, profile) {
-  const host = lobby.slots[0];
-  host.name = sanitizeName(profile?.name) || host.name;
-  host.look = sanitizeLook(profile?.look);
+  setSlotProfile(lobby, 0, profile);
 }
 
 const takenNames = (lobby) => lobby.slots.filter(s => s.kind !== 'open').map(s => s.name);
@@ -140,14 +145,62 @@ export function setReady(lobby, index, ready) {
 export function lobbyStatus(lobby) {
   const count = (kind) => lobby.slots.filter(s => s.kind === kind).length;
   const guests = lobby.slots.filter(s => s.kind === 'guest');
+  const hosts = count('host');
   const waitingOn = guests.filter(s => !s.ready);
   return {
-    humans: 1 + guests.length,
+    humans: hosts + guests.length,
     bots: count('bot'),
     open: count('open'),
     waitingOn,
     canStart: waitingOn.length === 0
   };
+}
+
+// Synchronize the presentation lobby model from live WebSocket room state.
+export function syncLobbyWithNetState(lobby, net, localProfile = null) {
+  if (!lobby || !net || (net.mode !== 'WS_HOST' && net.mode !== 'WS_GUEST')) return false;
+  if (net.roomCode) lobby.code = net.roomCode;
+  const slots = Array.isArray(net.slots) ? net.slots : [];
+  const taken = slots
+    .filter(s => s && s.occupied && s.name)
+    .map(s => sanitizeName(s.name) || s.name);
+
+  for (let i = 0; i < MAX_CREW; i++) {
+    const ns = slots[i];
+    if (ns && ns.occupied) {
+      const isYou = Boolean(net.clientId && ns.clientId === net.clientId) || i === net.mySlot;
+      const isHost = Boolean(ns.isHost);
+      const rawName = (isYou && localProfile?.name) ? localProfile.name : ns.name;
+      const name = sanitizeName(rawName) || `Crew-${i + 1}`;
+      const rawLook = (isYou && localProfile?.look) ? localProfile.look : ns.look;
+      const look = sanitizeLook(rawLook);
+      lobby.slots[i] = {
+        index: i,
+        role: CREW_ROSTER[i].role,
+        kind: isHost ? 'host' : 'guest',
+        name,
+        look,
+        ready: isHost ? true : Boolean(ns.ready),
+        isYou,
+        clientId: ns.clientId || null
+      };
+    } else if (ns && ns.isBot) {
+      const bot = makeBotProfile(lobby, i, taken);
+      taken.push(bot.name);
+      lobby.slots[i] = {
+        index: i,
+        role: CREW_ROSTER[i].role,
+        kind: 'bot',
+        name: bot.name,
+        look: bot.look,
+        ready: true,
+        isYou: false
+      };
+    } else {
+      lobby.slots[i] = openSlot(i);
+    }
+  }
+  return true;
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;

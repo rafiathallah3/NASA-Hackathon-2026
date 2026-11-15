@@ -1,7 +1,8 @@
 import { LOGICAL_W, LOGICAL_H, COLS, ROWS, TILE, GRID_X, GRID_Y, STAGE1_LAYOUT, RAW_ITEMS, PROC_META, RECIPES, CREW_ROSTER } from '../config.js';
 import { state, getScenario, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
-import { broadcastNet } from '../net.js';
+import { broadcastNet, isWsMultiplayer, isHumanSlotInWs, getMyWsSlot } from '../net.js';
+import { getSlotKeys } from '../sync.js';
 import { addFloatText, drawItemBadge, drawChibiEngineer, drawHardwareCanvas } from '../sprites.js';
 import { getAsset, getAnimFrame, getAnimFrameBounds, getSheetSlice, isImageReady } from '../assets.js';
 import { renderTicketsHUD, updateTicketBarsOnly, updateBottomHUD, setStageBanner, showMissionToast, getActiveTargetRecipe, isProcPartReadyInHangar, isUiTourActive } from '../hud.js';
@@ -944,48 +945,80 @@ export function updateStage1(dt) {
     }
   }
 
-  if (lead.dashTimer <= 0) {
-    let mx = 0, my = 0;
-    if (state.keys['KeyW'] || state.keys['ArrowUp']) my -= 1;
-    if (state.keys['KeyS'] || state.keys['ArrowDown']) my += 1;
-    if (state.keys['KeyA'] || state.keys['ArrowLeft']) mx -= 1;
-    if (state.keys['KeyD'] || state.keys['ArrowRight']) mx += 1;
-    if (mx !== 0 && my !== 0) { mx *= 0.7071; my *= 0.7071; }
-    moveStage1Player(lead, mx * 245 * dt, my * 245 * dt);
-    if (mx !== 0 || my !== 0) {
-      broadcastNet({ type: 'CREW_INPUT', slot: state.activeCrewIndex, x: lead.x, y: lead.y, angle: lead.angle });
+  if (isWsMultiplayer()) {
+    for (let i = 0; i < state.players.length; i++) {
+      const pl = state.players[i];
+      if (!pl) continue;
+      if (i !== getMyWsSlot() && !isHumanSlotInWs(i)) continue;
+      pushOutOfStations(pl, PLAYER_RADIUS);
+      const keys = getSlotKeys(i);
+      if (pl.dashTimer <= 0) {
+        let mx = 0, my = 0;
+        if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
+        if (keys['KeyS'] || keys['ArrowDown']) my += 1;
+        if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+        if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+        if (mx !== 0 && my !== 0) { mx *= 0.7071; my *= 0.7071; }
+        moveStage1Player(pl, mx * 245 * dt, my * 245 * dt);
+      }
+      if (keys['Space'] || keys['KeyE']) {
+        applyHoldWork(pl, dt);
+      }
     }
-  }
-
-  if (state.keys['Space'] || state.keys['KeyE']) {
-    applyHoldWork(lead, dt);
-  }
-
-  if (state.coopMode === 'LOCAL_2P') {
-    const p2 = state.players[1];
-    if (p2.dashTimer <= 0) {
-      let mx2 = 0, my2 = 0;
-      if (state.keys['KeyI']) my2 -= 1;
-      if (state.keys['KeyK']) my2 += 1;
-      if (state.keys['KeyJ']) mx2 -= 1;
-      if (state.keys['KeyL']) mx2 += 1;
-      if (mx2 !== 0 && my2 !== 0) { mx2 *= 0.7071; my2 *= 0.7071; }
-      moveStage1Player(p2, mx2 * 245 * dt, my2 * 245 * dt);
+  } else {
+    if (lead.dashTimer <= 0) {
+      let mx = 0, my = 0;
+      if (state.keys['KeyW'] || state.keys['ArrowUp']) my -= 1;
+      if (state.keys['KeyS'] || state.keys['ArrowDown']) my += 1;
+      if (state.keys['KeyA'] || state.keys['ArrowLeft']) mx -= 1;
+      if (state.keys['KeyD'] || state.keys['ArrowRight']) mx += 1;
+      if (mx !== 0 && my !== 0) { mx *= 0.7071; my *= 0.7071; }
+      moveStage1Player(lead, mx * 245 * dt, my * 245 * dt);
+      if (mx !== 0 || my !== 0) {
+        broadcastNet({ type: 'CREW_INPUT', slot: state.activeCrewIndex, x: lead.x, y: lead.y, angle: lead.angle });
+      }
     }
-    if (state.keys['Enter']) {
-      applyHoldWork(p2, dt);
+
+    if (state.keys['Space'] || state.keys['KeyE']) {
+      applyHoldWork(lead, dt);
+    }
+
+    if (state.coopMode === 'LOCAL_2P') {
+      const p2 = state.players[1];
+      if (p2.dashTimer <= 0) {
+        let mx2 = 0, my2 = 0;
+        if (state.keys['KeyI']) my2 -= 1;
+        if (state.keys['KeyK']) my2 += 1;
+        if (state.keys['KeyJ']) mx2 -= 1;
+        if (state.keys['KeyL']) mx2 += 1;
+        if (mx2 !== 0 && my2 !== 0) { mx2 *= 0.7071; my2 *= 0.7071; }
+        moveStage1Player(p2, mx2 * 245 * dt, my2 * 245 * dt);
+      }
+      if (state.keys['Enter']) {
+        applyHoldWork(p2, dt);
+      }
     }
   }
 
   // During the guided walkthrough, let bots wait cleanly so they don't steal the player's first target parts
-  if (!state.tutorial?.active && (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P')) {
+  if (!state.tutorial?.active && (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P' || state.coopMode === 'WS_4P')) {
     const claimedStations = new Set();
-    const leadFacing = getFacingStation(lead);
-    if (leadFacing) claimedStations.add(leadFacing);
+    for (let i = 0; i < state.players.length; i++) {
+      const isHuman = isWsMultiplayer()
+        ? (i === getMyWsSlot() || isHumanSlotInWs(i))
+        : (i === state.activeCrewIndex || (state.coopMode === 'LOCAL_2P' && i === 1));
+      if (!isHuman) continue;
+      const facing = getFacingStation(state.players[i]);
+      if (facing) claimedStations.add(facing);
+    }
     let botSlot = 0;
     for (let i = 0; i < state.players.length; i++) {
-      if (i === state.activeCrewIndex) continue;
-      if (state.coopMode === 'LOCAL_2P' && i === 1) continue;
+      if (isWsMultiplayer()) {
+        if (i === getMyWsSlot() || isHumanSlotInWs(i)) continue;
+      } else {
+        if (i === state.activeCrewIndex) continue;
+        if (state.coopMode === 'LOCAL_2P' && i === 1) continue;
+      }
       updateStage1Bot(state.players[i], botSlot++, claimedStations, dt);
     }
   }
@@ -1136,6 +1169,114 @@ export function updateStage1(dt) {
   }
 
   updateBottomHUD();
+}
+
+function lerpAngleStage1(a, b, t) {
+  let diff = ((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  return a + diff * t;
+}
+
+export function updateStage1GuestLocal(dt) {
+  const mySlot = getMyWsSlot();
+  state.activeCrewIndex = mySlot;
+
+  for (let i = 0; i < state.players.length; i++) {
+    const pl = state.players[i];
+    if (!pl) continue;
+    if (i === mySlot) {
+      pushOutOfStations(pl, PLAYER_RADIUS);
+      pl.dashCd = Math.max(0, (pl.dashCd || 0) - dt);
+      if (pl.dashTimer > 0) {
+        pl.dashTimer -= dt;
+        moveStage1Player(pl, pl.dashVx * dt, pl.dashVy * dt);
+      } else {
+        let mx = 0, my = 0;
+        if (state.keys['KeyW'] || state.keys['ArrowUp']) my -= 1;
+        if (state.keys['KeyS'] || state.keys['ArrowDown']) my += 1;
+        if (state.keys['KeyA'] || state.keys['ArrowLeft']) mx -= 1;
+        if (state.keys['KeyD'] || state.keys['ArrowRight']) mx += 1;
+        if (mx !== 0 || my !== 0) {
+          if (mx !== 0 && my !== 0) { mx *= 0.7071; my *= 0.7071; }
+          pl.facingX = mx;
+          pl.facingY = my;
+          pl.angle = Math.atan2(my, mx);
+          pl.walk = (pl.walk || 0) + 0.24 * (dt * 60);
+          moveStage1Player(pl, mx * 245 * dt, my * 245 * dt);
+        }
+      }
+      pushOutOfStations(pl, PLAYER_RADIUS);
+      if (typeof pl.netTx === 'number' && typeof pl.netTy === 'number') {
+        const err = Math.hypot(pl.netTx - pl.x, pl.netTy - pl.y);
+        if (err > 85) {
+          pl.x = pl.netTx;
+          pl.y = pl.netTy;
+        } else if (err > 1.5) {
+          const blend = Math.min(1, dt * 10);
+          pl.x += (pl.netTx - pl.x) * blend;
+          pl.y += (pl.netTy - pl.y) * blend;
+        }
+      }
+    } else {
+      if (typeof pl.netTx === 'number' && typeof pl.netTy === 'number') {
+        const dx = pl.netTx - pl.x;
+        const dy = pl.netTy - pl.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 160) {
+          pl.x = pl.netTx;
+          pl.y = pl.netTy;
+        } else if (dist > 0.25) {
+          const blend = Math.min(1, dt * 18);
+          pl.x += dx * blend;
+          pl.y += dy * blend;
+          if (dist > 0.8) {
+            pl.walk = (pl.walk || 0) + 0.24 * (dt * 60);
+          }
+        }
+      }
+      if (typeof pl.netAngle === 'number') {
+        pl.angle = lerpAngleStage1(pl.angle || 0, pl.netAngle, Math.min(1, dt * 18));
+      }
+    }
+  }
+
+  for (let i = state.orders.length - 1; i >= 0; i--) {
+    const ord = state.orders[i];
+    if (ord.remaining > 0) ord.remaining = Math.max(0, ord.remaining - dt);
+  }
+  updateTicketBarsOnly();
+
+  for (let i = state.thrownItems.length - 1; i >= 0; i--) {
+    const th = state.thrownItems[i];
+    th.t = Math.min(1, th.t + dt / (th.dur || 0.26));
+    const ease = 1 - Math.pow(1 - th.t, 2);
+    th.x = th.sx + (th.tx - th.sx) * ease;
+    th.y = th.sy + (th.ty - th.sy) * ease - Math.sin(th.t * Math.PI) * 32;
+  }
+
+  for (const st of state.stations) {
+    if ((st.type === 'A' || st.type === 'P') && st.item && !st.onFire) {
+      if (st.item.kind === 'raw' && st.progress < 0.99) {
+        st.progress = Math.min(0.99, st.progress + dt * 0.32);
+      } else if (st.item.kind === 'proc' && st.item.id !== 'burned' && st.progress < 2.14) {
+        st.progress = Math.min(2.14, st.progress + dt * 0.06);
+      }
+    }
+  }
+
+  state.conveyorOffset = (state.conveyorOffset + dt * 45) % 24;
+  for (let i = state.flyingDeliveries.length - 1; i >= 0; i--) {
+    const fd = state.flyingDeliveries[i];
+    fd.x += dt * 150;
+    if (fd.x > (fd.intakeX ?? 1150) + 30) state.flyingDeliveries.splice(i, 1);
+  }
+  for (let i = state.hangarSparks.length - 1; i >= 0; i--) {
+    const sp = state.hangarSparks[i];
+    sp.x += sp.vx * dt;
+    sp.y += sp.vy * dt;
+    if (!sp.isSmoke) sp.vy += 180 * dt;
+    sp.life -= dt;
+    if (sp.life <= 0) state.hangarSparks.splice(i, 1);
+  }
 }
 
 function getTutorialStepInfo(lead) {

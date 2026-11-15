@@ -4,6 +4,8 @@ import { playTone } from '../audio.js';
 import { getAsset } from '../assets.js';
 import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite } from '../sprites.js';
 import { setStageBanner, updateBottomHUD } from '../hud.js';
+import { isWsHost, broadcastHostEvent } from '../net.js';
+import { isAnyHumanKey } from '../sync.js';
 
 const ASCENT_STARS = createStarfield(75, LOGICAL_W, LOGICAL_H, 11815);
 
@@ -105,6 +107,9 @@ function triggerStage1BAbort(reason, onAbortToHangar) {
   logBlackBox('STAGE 1B', `LAUNCH ABORT: ${reason}`, 'warn');
   playTone(110, 'sawtooth', 0.45, 0.16);
   updateBottomHUD();
+  if (isWsHost()) {
+    broadcastHostEvent('STAGE_ABORT', { stage: 'STAGE1B', title: 'Launch Abort: Game Over', reason });
+  }
 
   const modal = document.getElementById('modal');
   const mc = document.getElementById('modal-content');
@@ -147,10 +152,10 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
   if (a.aborted) return;
 
   if (
-    state.keys['KeyW'] || state.keys['ArrowUp'] ||
-    state.keys['KeyS'] || state.keys['ArrowDown'] ||
-    state.keys['KeyA'] || state.keys['ArrowLeft'] ||
-    state.keys['KeyD'] || state.keys['ArrowRight']
+    isAnyHumanKey('KeyW') || isAnyHumanKey('ArrowUp') ||
+    isAnyHumanKey('KeyS') || isAnyHumanKey('ArrowDown') ||
+    isAnyHumanKey('KeyA') || isAnyHumanKey('ArrowLeft') ||
+    isAnyHumanKey('KeyD') || isAnyHumanKey('ArrowRight')
   ) {
     a.inputTouched = true;
   }
@@ -160,8 +165,8 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
   const overloadPenalty = massRatio > 1 ? (massRatio - 1) * 0.45 : 0;
 
   a.targetThrust = 0.58 + Math.sin(performance.now() * 0.0018) * 0.16;
-  if (state.keys['KeyW'] || state.keys['ArrowUp']) a.thrust = Math.min(1, a.thrust + 0.68 * dt);
-  else if (state.keys['KeyS'] || state.keys['ArrowDown']) a.thrust = Math.max(0, a.thrust - 0.68 * dt);
+  if (isAnyHumanKey('KeyW') || isAnyHumanKey('ArrowUp')) a.thrust = Math.min(1, a.thrust + 0.68 * dt);
+  else if (isAnyHumanKey('KeyS') || isAnyHumanKey('ArrowDown')) a.thrust = Math.max(0, a.thrust - 0.68 * dt);
   else a.thrust = Math.max(0, a.thrust - 0.26 * dt);
 
   a.elapsed = (a.elapsed || 0) + dt;
@@ -183,9 +188,9 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
   }
   const windTorque = a.windActive ? a.windDir * 0.42 * instability : 0;
   a.velTilt += (Math.sin(performance.now() * 0.0032) * instability + 0.16 * Math.cos(performance.now() * 0.0017) + windTorque) * dt;
-  if (state.keys['KeyA'] || state.keys['ArrowLeft']) a.velTilt -= 1.85 * dt;
-  if (state.keys['KeyD'] || state.keys['ArrowRight']) a.velTilt += 1.85 * dt;
-  if (state.coopMode === '4P_AI' || state.coopMode === 'NET_4P') a.velTilt -= a.tilt * 0.18 * dt;
+  if (isAnyHumanKey('KeyA') || isAnyHumanKey('ArrowLeft')) a.velTilt -= 1.85 * dt;
+  if (isAnyHumanKey('KeyD') || isAnyHumanKey('ArrowRight')) a.velTilt += 1.85 * dt;
+  if (state.coopMode === '4P_AI' || state.coopMode === 'NET_4P' || state.coopMode === 'WS_4P') a.velTilt -= a.tilt * 0.18 * dt;
   a.tilt = Math.max(-0.55, Math.min(0.55, a.tilt + a.velTilt * dt));
   a.velTilt *= 0.95;
 

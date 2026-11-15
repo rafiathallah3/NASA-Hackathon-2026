@@ -308,3 +308,12 @@ export const STAGE1_LAYOUT = {
     { id: 'scrap', type: 'X', vx: 1052, vy: 400, vw: 42, vh: 66, x: 1054, y: 428, w: 40, h: 38, itemX: 1074, itemY: 440, r: 5, c: 17, label: 'SCRAP' }
   ]
 };
+
+export const MULTIPLAYER_CONFIG = {
+  // Set your deployed wss:// relay URL here before deploying the frontend to Vercel
+  // (or pass ?ws=wss://your-relay.example.com in the browser URL / lobby input).
+  defaultWsUrl: '',
+  defaultLocalPort: 8787,
+  snapshotHz: 30,
+  inputHz: 60
+};

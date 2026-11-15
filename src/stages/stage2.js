@@ -1,7 +1,8 @@
 import { LOGICAL_W, LOGICAL_H, SHIP_W, SHIP_H, CREW_ROSTER } from '../config.js';
 import { state, getScenario, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
-import { broadcastNet } from '../net.js';
+import { broadcastNet, isWsMultiplayer, isWsGuest, isHumanSlotInWs, getMyWsSlot, sendGuestAction } from '../net.js';
+import { getSlotKeys } from '../sync.js';
 import { getAsset, getSheetSlice, isImageReady } from '../assets.js';
 import { addFloatText, drawChibiEngineer, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite, drawPixelPanel } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
@@ -97,6 +98,7 @@ export function startStage2() {
     d.overrideProg = 0;
     d.overriding = false;
   }
+  state.stage2Doors = DOORS;
 
   const startBatt = Math.max(45, Math.min(100, 60 + Math.round(state.telemetry.power * 0.25)));
   state.orbitState = {
@@ -222,8 +224,8 @@ function shuffledIndices() {
   return arr;
 }
 
-function openConsoleMiniGame(c) {
-  const lead = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
+function openConsoleMiniGame(c, actor = null) {
+  const lead = actor || state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
   if (c.id === 'LAUNCH' && c.needsWrench && !lead.hasWrench) {
     addFloatText(c.x, c.y - 45, 'Grab Wrench from Engine Rack First! 🔧', '#fbbf24');
     playTone(170, 'sawtooth', 0.16, 0.1);
@@ -294,11 +296,11 @@ export function toggleBreaker(idx) {
   }
 }
 
-function completeConsoleTask(c, msg, pts, opts = {}) {
+function applyConsoleCompletion(c, actor, msg, pts, opts = {}) {
   c.alert = false;
   c.botProg = 0;
-  const lead = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
-  if (c.id === 'LAUNCH' && lead.hasWrench) {
+  const lead = actor || state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
+  if (c.id === 'LAUNCH' && lead?.hasWrench) {
     lead.hasWrench = false;
     state.wrenchRack.available = true;
   }
@@ -310,10 +312,42 @@ function completeConsoleTask(c, msg, pts, opts = {}) {
   if (c.id === 'GROUND') state.orbitState.dataBuffer = Math.max(0, state.orbitState.dataBuffer - 40);
   addFloatText(c.x, c.y - 45, msg, opts.floatColor || '#4ade80');
   showMissionToast(c.label, opts.toastDetail || `${c.room} cleared. Bus power stabilized.`);
-  logBlackBox('STAGE 2', opts.blackBoxText || `${lead.name} completed ${c.label} in ${c.room}.`, opts.blackBoxKind || 'good');
+  logBlackBox('STAGE 2', opts.blackBoxText || `${lead?.name || 'Crew'} completed ${c.label} in ${c.room}.`, opts.blackBoxKind || 'good');
   playSuccessChord();
-  state.activeMiniGame = null;
   updateBottomHUD();
+}
+
+function completeConsoleTask(c, msg, pts, opts = {}) {
+  if (isWsGuest()) {
+    sendGuestAction('STAGE2_COMPLETE_CONSOLE', {
+      consoleId: c.id,
+      msg,
+      pts,
+      opts: {
+        floatColor: opts.floatColor,
+        toastDetail: opts.toastDetail,
+        blackBoxText: opts.blackBoxText,
+        blackBoxKind: opts.blackBoxKind
+      },
+      mccResult: opts.mccResult || null
+    });
+    playSuccessChord();
+    state.activeMiniGame = null;
+    return;
+  }
+  applyConsoleCompletion(c, state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0], msg, pts, opts);
+  state.activeMiniGame = null;
+}
+
+export function completeRemoteConsoleTask(slot, payload) {
+  if (state.stage !== 'STAGE2' || !payload?.consoleId) return;
+  const c = state.consoles.find(item => item.id === payload.consoleId);
+  if (!c || !c.alert) return;
+  if (payload.mccResult) {
+    state.mccResult = { ...payload.mccResult };
+  }
+  const actor = state.ctrlPlayers[slot] || state.ctrlPlayers[0];
+  applyConsoleCompletion(c, actor, payload.msg || `${c.label} CLEARED!`, Number(payload.pts || 0), payload.opts || {});
 }
 
 function completeMccBurn(mg) {
@@ -358,20 +392,24 @@ function completeMccBurn(mg) {
     blackBoxKind = 'warn';
   }
 
-  state.mccResult = {
+  const mccPayload = {
     completed: true,
     bPlaneMissKm: missKm,
     nominalCapture,
     fuelPenaltyPct,
     propellantBurnedKg: propKg
   };
+  if (!isWsGuest()) {
+    state.mccResult = mccPayload;
+  }
 
   const statusTag = nominalCapture ? 'NOMINAL' : (fuelPenaltyPct === 8 ? 'MARGINAL +8% fuel' : 'OFF-CORRIDOR +18% fuel');
   completeConsoleTask(mg.console, floatMsg, pts, {
     floatColor,
     toastDetail,
     blackBoxText: `MCC-1 trajectory burn complete: B-Plane miss ${missKm} km (${statusTag}, ${propKg} kg propellant used).`,
-    blackBoxKind
+    blackBoxKind,
+    mccResult: mccPayload
   });
 }
 
@@ -395,10 +433,10 @@ function triggerDistributorHit(mg) {
   }
 }
 
-export function handleStage2Interact() {
-  const p = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
+export function handleStage2Interact(actor = null, isRemote = false) {
+  const p = actor || state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
 
-  if (state.activeMiniGame) {
+  if (!isRemote && state.activeMiniGame) {
     const mg = state.activeMiniGame;
     if (mg.type === 'DISTRIBUTOR') {
       triggerDistributorHit(mg);
@@ -428,6 +466,10 @@ export function handleStage2Interact() {
   }
 
   if (Math.hypot(p.x - state.wrenchRack.x, p.y - state.wrenchRack.y) < 64) {
+    if (!isRemote && isWsGuest()) {
+      sendGuestAction('STAGE2_INTERACT');
+      return;
+    }
     if (!p.hasWrench && state.wrenchRack.available) {
       p.hasWrench = true;
       state.wrenchRack.available = false;
@@ -444,6 +486,10 @@ export function handleStage2Interact() {
 
   for (const d of DOORS) {
     if (d.locked && Math.hypot(p.x - d.x, p.y - d.y) < 92) {
+      if (!isRemote && isWsGuest()) {
+        sendGuestAction('STAGE2_INTERACT');
+        return;
+      }
       d.overriding = true;
       d.overrideProg = Math.max(d.overrideProg || 0, 0.18);
       playTone(380, 'square', 0.06, 0.08);
@@ -451,10 +497,12 @@ export function handleStage2Interact() {
     }
   }
 
+  if (isRemote) return;
+
   for (const c of state.consoles) {
     if (Math.hypot(p.x - c.x, p.y - c.y) < 82) {
       if (c.alert) {
-        openConsoleMiniGame(c);
+        openConsoleMiniGame(c, p);
       } else {
         addFloatText(c.x, c.y - 40, `${c.label} Nominal ✅`, '#4ade80');
       }
@@ -476,6 +524,10 @@ export function handleStage2CanvasClick(lx, ly) {
     const wy = ly + state.stage2Cam.y;
     for (const d of DOORS) {
       if (d.locked && Math.hypot(wx - d.x, wy - d.y) < 64 && Math.hypot(p.x - d.x, p.y - d.y) < 115) {
+        if (isWsGuest()) {
+          sendGuestAction('STAGE2_INTERACT');
+          return;
+        }
         d.overriding = true;
         d.overrideProg = Math.max(d.overrideProg || 0, 0.18);
         playTone(380, 'square', 0.06, 0.08);
@@ -484,7 +536,7 @@ export function handleStage2CanvasClick(lx, ly) {
     }
     for (const c of state.consoles) {
       if (c.alert && Math.hypot(wx - c.x, wy - c.y) < 60 && Math.hypot(p.x - c.x, p.y - c.y) < 115) {
-        openConsoleMiniGame(c);
+        openConsoleMiniGame(c, p);
         return;
       }
     }
@@ -876,6 +928,137 @@ function triggerTransitSurge(surgeNum, os) {
   }
 }
 
+function updateActiveMiniGameLocal(dt, os, activeAlertCount) {
+  const mg = state.activeMiniGame;
+  if (!mg) return;
+  if (mg.type === 'MCC_BURN' && !mg.completed) {
+    if (state.keys['KeyA'] || state.keys['ArrowLeft']) mg.currentPitch -= 28 * dt;
+    if (state.keys['KeyD'] || state.keys['ArrowRight']) mg.currentPitch += 28 * dt;
+    mg.currentPitch = Math.max(-30, Math.min(80, mg.currentPitch));
+
+    const keyBurn = Boolean(state.keys['KeyW'] || state.keys['ArrowUp']);
+    const burning = mg.isBurning || keyBurn || mg.buttonHeld;
+    if (burning) {
+      const pitchError = Math.abs(mg.currentPitch - mg.targetPitch);
+      const burnEfficiency = Math.max(0.25, 1.0 - pitchError / 40.0);
+      const dV = 14.0 * burnEfficiency * dt;
+      const correction = dV * 3.4;
+
+      mg.burnedDeltaV = Math.min(mg.targetDeltaV, mg.burnedDeltaV + 14.0 * dt);
+      mg.propellantUsed += 0.85 * dt;
+      mg.bPlaneMissKm = Math.max(0, mg.bPlaneMissKm - correction);
+
+      if (mg.bPlaneMissKm <= 0 || mg.burnedDeltaV >= mg.targetDeltaV) {
+        completeMccBurn(mg);
+      }
+    }
+  } else if (mg.type === 'DISTRIBUTOR') {
+    for (let i = mg.ringIndex; i < 3; i++) {
+      mg.angles[i] += mg.speeds[i] * dt;
+    }
+  } else if (mg.type === 'GROUND') {
+    const interferenceActive = os.inEclipse || (os.interferenceTimer || 0) > 0 || activeAlertCount >= 2;
+    if (interferenceActive) {
+      mg.targetFreq = Math.max(0.2, Math.min(0.8, mg.targetFreq + Math.sin(performance.now() * 0.0024) * 0.055 * dt));
+    }
+    if (state.keys['KeyA'] || state.keys['ArrowLeft']) mg.playerFreq = Math.max(0.1, mg.playerFreq - 0.35 * dt);
+    if (state.keys['KeyD'] || state.keys['ArrowRight']) mg.playerFreq = Math.min(0.85, mg.playerFreq + 0.35 * dt);
+
+    if (Math.abs(mg.playerFreq - mg.targetFreq) < 0.045) {
+      mg.holdTime += dt * 0.72;
+      if (mg.holdTime >= 1) {
+        completeConsoleTask(mg.console, 'DATA DOWNLINKED! +95⭐', 95);
+      }
+    } else {
+      mg.holdTime = Math.max(0, mg.holdTime - dt * 0.25);
+    }
+  }
+}
+
+function lerpAngleStage2(a, b, t) {
+  let diff = ((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  return a + diff * t;
+}
+
+export function updateStage2GuestLocal(dt) {
+  const os = state.orbitState || {};
+  const activeAlertCount = state.consoles.filter(c => c.alert).length;
+  const mySlot = getMyWsSlot();
+  state.activeCrewIndex = mySlot;
+
+  if (Array.isArray(os.asteroids)) {
+    for (const ast of os.asteroids) {
+      ast.x += ast.vx * dt;
+      ast.y += ast.vy * dt;
+      ast.rot += ast.vr * dt;
+      if (ast.x < -120) ast.x = SHIP_W + 110;
+      if (ast.x > SHIP_W + 120) ast.x = -110;
+    }
+  }
+
+  for (let i = 0; i < state.ctrlPlayers.length; i++) {
+    const pl = state.ctrlPlayers[i];
+    if (!pl) continue;
+    if (i === mySlot) {
+      if (!state.activeMiniGame) {
+        let mx = 0, my = 0;
+        if (state.keys['KeyW'] || state.keys['ArrowUp']) my -= 1;
+        if (state.keys['KeyS'] || state.keys['ArrowDown']) my += 1;
+        if (state.keys['KeyA'] || state.keys['ArrowLeft']) mx -= 1;
+        if (state.keys['KeyD'] || state.keys['ArrowRight']) mx += 1;
+        if (mx !== 0 || my !== 0) {
+          if (mx !== 0 && my !== 0) { mx *= 0.7071; my *= 0.7071; }
+          pl.angle = Math.atan2(my, mx);
+          pl.walk = (pl.walk || 0) + 0.22 * (dt * 60);
+          moveCtrlPlayer(pl, mx * 265 * dt, my * 265 * dt);
+        }
+      }
+      if (typeof pl.netTx === 'number' && typeof pl.netTy === 'number') {
+        const err = Math.hypot(pl.netTx - pl.x, pl.netTy - pl.y);
+        if (err > 90) {
+          pl.x = pl.netTx;
+          pl.y = pl.netTy;
+        } else if (err > 1.5) {
+          const blend = Math.min(1, dt * 10);
+          pl.x += (pl.netTx - pl.x) * blend;
+          pl.y += (pl.netTy - pl.y) * blend;
+        }
+      }
+    } else {
+      if (typeof pl.netTx === 'number' && typeof pl.netTy === 'number') {
+        const dx = pl.netTx - pl.x;
+        const dy = pl.netTy - pl.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 160) {
+          pl.x = pl.netTx;
+          pl.y = pl.netTy;
+        } else if (dist > 0.25) {
+          const blend = Math.min(1, dt * 18);
+          pl.x += dx * blend;
+          pl.y += dy * blend;
+          if (dist > 0.8) {
+            pl.walk = (pl.walk || 0) + 0.22 * (dt * 60);
+          }
+        }
+      }
+      if (typeof pl.netAngle === 'number') {
+        pl.angle = lerpAngleStage2(pl.angle || 0, pl.netAngle, Math.min(1, dt * 18));
+      }
+    }
+  }
+
+  if (state.activeMiniGame) {
+    updateActiveMiniGameLocal(dt, os, activeAlertCount);
+  }
+  const lead = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
+  if (lead) {
+    const targetCamX = Math.max(0, Math.min(SHIP_W - LOGICAL_W, lead.x - LOGICAL_W / 2));
+    const targetCamY = Math.max(0, Math.min(SHIP_H - LOGICAL_H, lead.y - LOGICAL_H / 2));
+    state.stage2Cam.x += (targetCamX - state.stage2Cam.x) * Math.min(1, dt * 7);
+    state.stage2Cam.y += (targetCamY - state.stage2Cam.y) * Math.min(1, dt * 7);
+  }
+}
+
 export function updateStage2(dt, onNextStage) {
   const scen = getScenario();
   const os = state.orbitState;
@@ -1065,50 +1248,58 @@ export function updateStage2(dt, onNextStage) {
 
   // Active Among Us Mini-Game Update
   if (state.activeMiniGame) {
-    const mg = state.activeMiniGame;
-    if (mg.type === 'MCC_BURN' && !mg.completed) {
-      if (state.keys['KeyA'] || state.keys['ArrowLeft']) mg.currentPitch -= 28 * dt;
-      if (state.keys['KeyD'] || state.keys['ArrowRight']) mg.currentPitch += 28 * dt;
-      mg.currentPitch = Math.max(-30, Math.min(80, mg.currentPitch));
+    updateActiveMiniGameLocal(dt, os, activeAlertCount);
+  }
 
-      const keyBurn = Boolean(state.keys['KeyW'] || state.keys['ArrowUp']);
-      const burning = mg.isBurning || keyBurn || mg.buttonHeld;
-      if (burning) {
-        const pitchError = Math.abs(mg.currentPitch - mg.targetPitch);
-        const burnEfficiency = Math.max(0.25, 1.0 - pitchError / 40.0);
-        const dV = 14.0 * burnEfficiency * dt;
-        const correction = dV * 3.4;
-
-        mg.burnedDeltaV = Math.min(mg.targetDeltaV, mg.burnedDeltaV + 14.0 * dt);
-        mg.propellantUsed += 0.85 * dt;
-        mg.bPlaneMissKm = Math.max(0, mg.bPlaneMissKm - correction);
-
-        if (mg.bPlaneMissKm <= 0 || mg.burnedDeltaV >= mg.targetDeltaV) {
-          completeMccBurn(mg);
-        }
-      }
-    } else if (mg.type === 'DISTRIBUTOR') {
-      for (let i = mg.ringIndex; i < 3; i++) {
-        mg.angles[i] += mg.speeds[i] * dt;
-      }
-    } else if (mg.type === 'GROUND') {
-      const interferenceActive = os.inEclipse || (os.interferenceTimer || 0) > 0 || activeAlertCount >= 2;
-      if (interferenceActive) {
-        mg.targetFreq = Math.max(0.2, Math.min(0.8, mg.targetFreq + Math.sin(performance.now() * 0.0024) * 0.055 * dt));
-      }
-      if (state.keys['KeyA'] || state.keys['ArrowLeft']) mg.playerFreq = Math.max(0.1, mg.playerFreq - 0.35 * dt);
-      if (state.keys['KeyD'] || state.keys['ArrowRight']) mg.playerFreq = Math.min(0.85, mg.playerFreq + 0.35 * dt);
-
-      if (Math.abs(mg.playerFreq - mg.targetFreq) < 0.045) {
-        mg.holdTime += dt * 0.72;
-        if (mg.holdTime >= 1) {
-          completeConsoleTask(mg.console, 'DATA DOWNLINKED! +95⭐', 95);
-        }
-      } else {
-        mg.holdTime = Math.max(0, mg.holdTime - dt * 0.25);
+  if (isWsMultiplayer()) {
+    const mySlot = getMyWsSlot();
+    for (let i = 0; i < state.ctrlPlayers.length; i++) {
+      const pl = state.ctrlPlayers[i];
+      if (!pl) continue;
+      if (i !== mySlot && !isHumanSlotInWs(i)) continue;
+      if (i === mySlot && state.activeMiniGame) continue;
+      const keys = getSlotKeys(i);
+      let mx = 0, my = 0;
+      if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
+      if (keys['KeyS'] || keys['ArrowDown']) my += 1;
+      if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+      if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+      if (mx !== 0 || my !== 0) {
+        if (mx !== 0 && my !== 0) { mx *= 0.7071; my *= 0.7071; }
+        pl.angle = Math.atan2(my, mx);
+        pl.walk += 0.22;
+        moveCtrlPlayer(pl, mx * 265 * dt, my * 265 * dt);
       }
     }
-  } else {
+
+    for (const d of DOORS) {
+      if (!d.locked) continue;
+      let someoneOverriding = false;
+      for (let i = 0; i < state.ctrlPlayers.length; i++) {
+        if (i !== mySlot && !isHumanSlotInWs(i)) continue;
+        const pl = state.ctrlPlayers[i];
+        const keys = getSlotKeys(i);
+        if (Math.hypot(pl.x - d.x, pl.y - d.y) < 92 && (d.overriding || keys['Space'] || keys['KeyE'])) {
+          someoneOverriding = true;
+          break;
+        }
+      }
+      if (someoneOverriding) {
+        d.overrideProg = Math.min(1, (d.overrideProg || 0) + dt / 0.6);
+        if (d.overrideProg >= 1) {
+          d.locked = false;
+          d.lockTimer = 0;
+          d.overrideProg = 0;
+          d.overriding = false;
+          state.score += 20;
+          addFloatText(d.x, d.y - 24, '🔓 DOOR OVERRIDDEN! +20⭐', '#4ade80');
+          playTone(620, 'triangle', 0.12, 0.1);
+        }
+      } else if (d.overriding) {
+        d.overriding = false;
+      }
+    }
+  } else if (!state.activeMiniGame) {
     const p = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
     let mx = 0, my = 0;
     if (state.keys['KeyW'] || state.keys['ArrowUp']) my -= 1;
@@ -1166,15 +1357,19 @@ export function updateStage2(dt, onNextStage) {
   state.stage2Cam.y += (targetCamY - state.stage2Cam.y) * Math.min(1, dt * 7);
 
   // AI Crewmates roam rooms to assist consoles without stacking (never solo-clear MCC-1 USER or Hull Breach LAUNCH)
-  if (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P') {
+  if (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P' || state.coopMode === 'WS_4P') {
     const alerting = state.consoles.filter(
       c => c.alert && !c.needsWrench && c.id !== 'USER' && c.id !== 'LAUNCH' && (!state.activeMiniGame || state.activeMiniGame.console !== c)
     );
     const homeConsoles = ['LAUNCH', 'SPACE', 'CALIB', 'GROUND'];
     let alertIdx = 0;
     for (let i = 0; i < state.ctrlPlayers.length; i++) {
-      if (i === state.activeCrewIndex) continue;
-      if (state.coopMode === 'LOCAL_2P' && i === 1) continue;
+      if (isWsMultiplayer()) {
+        if (i === getMyWsSlot() || isHumanSlotInWs(i)) continue;
+      } else {
+        if (i === state.activeCrewIndex) continue;
+        if (state.coopMode === 'LOCAL_2P' && i === 1) continue;
+      }
       const b = state.ctrlPlayers[i];
       const targetC = alerting.length > 0
         ? alerting[alertIdx++ % alerting.length]
