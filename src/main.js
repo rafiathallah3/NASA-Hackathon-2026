@@ -1112,15 +1112,13 @@ function updateGuestLocal(dt) {
     const a = state.ascent;
     const blend = Math.min(1, dt * 16);
     if (typeof a.netRocketY === 'number') {
-      a.rocketY += (a.vy || 0) * dt * 0.25;
+      a.rocketY += (a.velocityY || 0) * dt * 0.25;
       a.rocketY += (a.netRocketY - a.rocketY) * blend;
     }
+    if (typeof a.netPadScroll === 'number') a.padScroll += (a.netPadScroll - a.padScroll) * blend;
     if (typeof a.netTilt === 'number') a.tilt += (a.netTilt - a.tilt) * blend;
     if (typeof a.netThrust === 'number') a.thrust += (a.netThrust - a.thrust) * blend;
     if (typeof a.netTargetThrust === 'number') a.targetThrust += (a.netTargetThrust - a.targetThrust) * blend;
-    if (typeof a.netProgress === 'number') a.progress += (a.netProgress - a.progress) * blend;
-    if (typeof a.netAltitudeKm === 'number') a.altitudeKm += (a.netAltitudeKm - a.altitudeKm) * blend;
-    if (typeof a.netVelKmh === 'number') a.velKmh += (a.netVelKmh - a.velKmh) * blend;
   } else if (state.stage === 'STAGE2') {
     updateStage2GuestLocal(dt);
   } else if (state.stage === 'STAGE3A' && state.lander) {
@@ -1143,31 +1141,24 @@ function updateGuestLocal(dt) {
   } else if (state.stage === 'STAGE3C' && state.moonLaunch) {
     const ml = state.moonLaunch;
     const blend = Math.min(1, dt * 16);
-    ml.altitude += (ml.vy || 0) * dt * 0.3;
-    ml.lateralX += (ml.vx || 0) * dt * 0.3;
-    if (typeof ml.netAltitude === 'number') ml.altitude += (ml.netAltitude - ml.altitude) * blend;
-    if (typeof ml.netLateralX === 'number') ml.lateralX += (ml.netLateralX - ml.lateralX) * blend;
+    ml.capsuleY += (ml.velocityY || 0) * dt * 0.3;
+    if (typeof ml.netCapsuleY === 'number') ml.capsuleY += (ml.netCapsuleY - ml.capsuleY) * blend;
     if (typeof ml.netTilt === 'number') ml.tilt += (ml.netTilt - ml.tilt) * blend;
     if (typeof ml.netProgress === 'number') ml.progress += (ml.netProgress - ml.progress) * blend;
   } else if (state.stage === 'STAGE4' && state.reentry) {
     const r = state.reentry;
     const blend = Math.min(1, dt * 16);
     r.wavePhase = (r.wavePhase || 0) + dt * 2.4;
-    r.capsuleX += (r.capsuleVx || 0) * dt * 0.3;
-    r.capsuleY += (r.capsuleVy || 0) * dt * 0.3;
-    r.shipX += (r.shipVx || 0) * dt * 0.3;
-    if (typeof r.netAltitudeKm === 'number') r.altitudeKm += (r.netAltitudeKm - r.altitudeKm) * blend;
-    if (typeof r.netProgress === 'number') r.progress += (r.netProgress - r.progress) * blend;
+    if (typeof r.netAltitude === 'number') r.altitude += (r.netAltitude - r.altitude) * blend;
     if (typeof r.netPitchAngle === 'number') r.pitchAngle += (r.netPitchAngle - r.pitchAngle) * blend;
-    if (typeof r.netTargetAngle === 'number') r.targetAngle += (r.netTargetAngle - r.targetAngle) * blend;
-    if (typeof r.netBandHalfWidth === 'number') r.bandHalfWidth += (r.netBandHalfWidth - r.bandHalfWidth) * blend;
     if (typeof r.netRollBank === 'number') r.rollBank += (r.netRollBank - r.rollBank) * blend;
-    if (typeof r.netHeatShield === 'number') r.heatShield += (r.netHeatShield - r.heatShield) * blend;
-    if (typeof r.netHeatFlux === 'number') r.heatFlux += (r.netHeatFlux - r.heatFlux) * blend;
+    if (typeof r.netHeat === 'number') r.heat += (r.netHeat - r.heat) * blend;
     if (typeof r.netGLoad === 'number') r.gLoad += (r.netGLoad - r.gLoad) * blend;
     if (typeof r.netCapsuleX === 'number') r.capsuleX += (r.netCapsuleX - r.capsuleX) * blend;
     if (typeof r.netCapsuleY === 'number') r.capsuleY += (r.netCapsuleY - r.capsuleY) * blend;
     if (typeof r.netShipX === 'number') r.shipX += (r.netShipX - r.shipX) * blend;
+    if (typeof r.netHeliX === 'number') r.heliX += (r.netHeliX - r.heliX) * blend;
+    if (typeof r.netHeliY === 'number') r.heliY += (r.netHeliY - r.heliY) * blend;
   }
 
   for (let i = state.lunarParticles.length - 1; i >= 0; i--) {

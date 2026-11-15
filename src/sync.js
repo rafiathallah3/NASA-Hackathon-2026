@@ -422,33 +422,23 @@ export function applyHostSnapshot(snap, hooks = {}) {
       const a = state.ascent;
       const sa = snap.ascent;
       const firstSync = typeof a.netRocketY !== 'number';
+      const curRocketY = a.rocketY;
+      const curPadScroll = a.padScroll;
+      const curTilt = a.tilt;
+      const curThrust = a.thrust;
+      const curTargetThrust = a.targetThrust;
+      Object.assign(a, sa);
       a.netRocketY = sa.rocketY;
+      a.netPadScroll = sa.padScroll;
       a.netTilt = sa.tilt;
       a.netThrust = sa.thrust;
       a.netTargetThrust = sa.targetThrust;
-      a.netProgress = sa.progress;
-      a.netAltitudeKm = sa.altitudeKm;
-      a.netVelKmh = sa.velKmh;
-      a.vy = sa.vy;
-      a.windForce = sa.windForce;
-      a.windDir = sa.windDir;
-      a.windTimer = sa.windTimer;
-      a.windWarning = sa.windWarning;
-      a.boosterAttached = sa.boosterAttached;
-      a.stagingWindow = sa.stagingWindow;
-      a.stagedGood = sa.stagedGood;
-      a.boosterSepAnim = sa.boosterSepAnim;
-      a.countdown = sa.countdown;
-      a.inBandTime = sa.inBandTime;
-      a.totalFlightTime = sa.totalFlightTime;
-      if (firstSync || stageJustChanged) {
-        a.rocketY = sa.rocketY;
-        a.tilt = sa.tilt;
-        a.thrust = sa.thrust;
-        a.targetThrust = sa.targetThrust;
-        a.progress = sa.progress;
-        a.altitudeKm = sa.altitudeKm;
-        a.velKmh = sa.velKmh;
+      if (!firstSync && !stageJustChanged) {
+        a.rocketY = curRocketY;
+        a.padScroll = curPadScroll;
+        a.tilt = curTilt;
+        a.thrust = curThrust;
+        a.targetThrust = curTargetThrust;
       }
     }
   } else if (snap.stage === 'STAGE2' && snap.stage2) {
@@ -504,27 +494,19 @@ export function applyHostSnapshot(snap, hooks = {}) {
       const l = state.lander;
       const sl = snap.lander;
       const firstSync = typeof l.netX !== 'number';
+      const curX = l.x;
+      const curY = l.y;
+      const curZ = l.z;
+      const curBtn = l.continueBtnRect;
+      Object.assign(l, sl);
+      if (curBtn && !sl.continueBtnRect) l.continueBtnRect = curBtn;
       l.netX = sl.x;
       l.netY = sl.y;
       l.netZ = sl.z;
-      l.vx = sl.vx;
-      l.vy = sl.vy;
-      l.vz = sl.vz;
-      l.fuel = sl.fuel;
-      l.maxFuel = sl.maxFuel;
-      l.hull = sl.hull;
-      l.padX = sl.padX;
-      l.padY = sl.padY;
-      l.padR = sl.padR;
-      l.thrusting = sl.thrusting;
-      l.settledTimer = sl.settledTimer;
-      l.dustAlpha = sl.dustAlpha;
-      l.shockDamaged = sl.shockDamaged;
-      l.repairProg = sl.repairProg;
-      if (firstSync || stageJustChanged || Math.hypot(sl.x - l.x, sl.y - l.y) > 120) {
-        l.x = sl.x;
-        l.y = sl.y;
-        l.z = sl.z;
+      if (!firstSync && !stageJustChanged && Math.hypot(sl.x - curX, sl.y - curY) <= 120) {
+        l.x = curX;
+        l.y = curY;
+        l.z = curZ;
       }
     }
   } else if (snap.stage === 'STAGE3B' && snap.stage3b) {
@@ -586,26 +568,18 @@ export function applyHostSnapshot(snap, hooks = {}) {
       } else {
         const ml = state.moonLaunch;
         const sml = snap.stage3c.moonLaunch;
-        const firstSync = typeof ml.netAltitude !== 'number';
-        ml.netAltitude = sml.altitude;
-        ml.netLateralX = sml.lateralX;
+        const firstSync = typeof ml.netCapsuleY !== 'number';
+        const curCapsuleY = ml.capsuleY;
+        const curTilt = ml.tilt;
+        const curProgress = ml.progress;
+        Object.assign(ml, sml);
+        ml.netCapsuleY = sml.capsuleY;
         ml.netTilt = sml.tilt;
         ml.netProgress = sml.progress;
-        ml.vy = sml.vy;
-        ml.vx = sml.vx;
-        ml.fuel = sml.fuel;
-        ml.maxFuel = sml.maxFuel;
-        ml.thrusting = sml.thrusting;
-        ml.teiWindowOpen = sml.teiWindowOpen;
-        ml.teiTriggered = sml.teiTriggered;
-        ml.teiGrade = sml.teiGrade;
-        ml.inCorridorTime = sml.inCorridorTime;
-        ml.totalTime = sml.totalTime;
-        if (firstSync || stageJustChanged) {
-          ml.altitude = sml.altitude;
-          ml.lateralX = sml.lateralX;
-          ml.tilt = sml.tilt;
-          ml.progress = sml.progress;
+        if (!firstSync && !stageJustChanged) {
+          ml.capsuleY = curCapsuleY;
+          ml.tilt = curTilt;
+          ml.progress = curProgress;
         }
       }
     }
@@ -619,48 +593,39 @@ export function applyHostSnapshot(snap, hooks = {}) {
     } else {
       const r = state.reentry;
       const sr = snap.reentry;
-      const firstSync = typeof r.netAltitudeKm !== 'number';
-      r.netAltitudeKm = sr.altitudeKm;
-      r.netProgress = sr.progress;
+      const firstSync = typeof r.netAltitude !== 'number';
+      const curAltitude = r.altitude;
+      const curPitchAngle = r.pitchAngle;
+      const curRollBank = r.rollBank;
+      const curHeat = r.heat;
+      const curGLoad = r.gLoad;
+      const curCapsuleX = r.capsuleX;
+      const curCapsuleY = r.capsuleY;
+      const curShipX = r.shipX;
+      const curHeliX = r.heliX;
+      const curHeliY = r.heliY;
+      Object.assign(r, sr);
+      r.netAltitude = sr.altitude;
       r.netPitchAngle = sr.pitchAngle;
-      r.netTargetAngle = sr.targetAngle;
-      r.netBandHalfWidth = sr.bandHalfWidth;
       r.netRollBank = sr.rollBank;
-      r.netHeatShield = sr.heatShield;
-      r.netHeatFlux = sr.heatFlux;
+      r.netHeat = sr.heat;
       r.netGLoad = sr.gLoad;
       r.netCapsuleX = sr.capsuleX;
       r.netCapsuleY = sr.capsuleY;
       r.netShipX = sr.shipX;
-      r.peakG = sr.peakG;
-      r.coolingCharges = sr.coolingCharges;
-      r.coolingTimer = sr.coolingTimer;
-      r.chutesDeployed = sr.chutesDeployed;
-      r.chuteDeployAlt = sr.chuteDeployAlt;
-      r.chuteStatus = sr.chuteStatus;
-      r.capsuleVx = sr.capsuleVx;
-      r.capsuleVy = sr.capsuleVy;
-      r.shipVx = sr.shipVx;
-      r.splashedDown = sr.splashedDown;
-      r.splashdownTimer = sr.splashdownTimer;
-      r.splashdownBonus = sr.splashdownBonus;
-      r.inCorridorTime = sr.inCorridorTime;
-      r.totalEntryTime = sr.totalEntryTime;
-      r.skipPhase = sr.skipPhase;
-      r.blackoutAlpha = sr.blackoutAlpha;
-      if (firstSync || stageJustChanged) {
-        r.altitudeKm = sr.altitudeKm;
-        r.progress = sr.progress;
-        r.pitchAngle = sr.pitchAngle;
-        r.targetAngle = sr.targetAngle;
-        r.bandHalfWidth = sr.bandHalfWidth;
-        r.rollBank = sr.rollBank;
-        r.heatShield = sr.heatShield;
-        r.heatFlux = sr.heatFlux;
-        r.gLoad = sr.gLoad;
-        r.capsuleX = sr.capsuleX;
-        r.capsuleY = sr.capsuleY;
-        r.shipX = sr.shipX;
+      r.netHeliX = sr.heliX;
+      r.netHeliY = sr.heliY;
+      if (!firstSync && !stageJustChanged) {
+        r.altitude = curAltitude;
+        r.pitchAngle = curPitchAngle;
+        r.rollBank = curRollBank;
+        r.heat = curHeat;
+        r.gLoad = curGLoad;
+        r.capsuleX = curCapsuleX;
+        r.capsuleY = curCapsuleY;
+        r.shipX = curShipX;
+        r.heliX = curHeliX;
+        r.heliY = curHeliY;
       }
     }
   }

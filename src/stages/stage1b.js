@@ -6,8 +6,25 @@ import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield, dra
 import { setStageBanner, updateBottomHUD } from '../hud.js';
 import { isWsHost, broadcastHostEvent } from '../net.js';
 import { isAnyHumanKey } from '../sync.js';
+import { drawCraft, craftBox, drawLaunchPad, CRAFT_GEO, PAD_ARM_COUNT } from '../spacecraft.js';
 
 const ASCENT_STARS = createStarfield(75, LOGICAL_W, LOGICAL_H, 11815);
+
+// Rocket + launch pad geometry (logical px). The stack sprites are anchored at the nose tip; the
+// rotation pivot sits ROCKET_PIVOT below it, a little above mid-height like a real centre of mass.
+const snap2 = (v) => Math.round(v / 2) * 2;
+const ROCKET_SCALE = 0.5;                  // logical px per reference frame pixel of the stack art
+const PAD_SCALE = 0.25;                    // logical px per Launch Pad pixel (rocket ~0.9x the tower)
+const PAD_DECK_RISE = 34;                  // deck top sits this far above the ground reference line
+const ROCKET_PIVOT = 128;                  // nose tip -> pivot
+const STACK_BASE = craftBox('stackBody', { scale: ROCKET_SCALE }).b;    // nose tip -> engine skirt
+const UPPER_BASE = craftBox('upperBody', { scale: ROCKET_SCALE }).b;    // nose tip -> upper-stage engine
+const STAGE_JOIN = snap2(CRAFT_GEO.stageJoinY * ROCKET_SCALE);          // nose tip -> first-stage top
+const NOZZLE_FULL = STACK_BASE - ROCKET_PIVOT;   // pivot -> flame start, full stack
+const NOZZLE_UPPER = UPPER_BASE - ROCKET_PIVOT;  // pivot -> flame start, after separation
+const GROUND_REF_Y = 540;                        // towerY at t=0 (the scrolling ground reference)
+const ROCKET_Y0 = GROUND_REF_Y - PAD_DECK_RISE - NOZZLE_FULL; // pivot y with the skirt on the deck
+const ROCKET_MIN_Y = 150 + ROCKET_PIVOT;         // nose never climbs above y=150 (HUD + staging banner)
 
 export function startStage1B() {
   const modal = document.getElementById('modal');
@@ -16,7 +33,10 @@ export function startStage1B() {
   state.stageTimer = 14;
   state.lunarParticles = [];
   state.ascent = {
-    rocketY: 475,
+    rocketY: ROCKET_Y0,
+    rocketY0: ROCKET_Y0,
+    sepTime: 0,
+    sepDir: 1,
     thrust: 0.55,
     targetThrust: 0.6,
     tilt: 0,
@@ -56,6 +76,8 @@ export function handleStage1BSeparation() {
   state.ascent.inputTouched = true;
   if (state.ascent.sepWindowOpen && !state.ascent.separated) {
     state.ascent.separated = true;
+    state.ascent.sepTime = 0;
+    state.ascent.sepDir = Math.random() < 0.5 ? -1 : 1;
     state.screenShake = 0.24;
     const isPerfect = Math.abs(state.stageTimer - 3.5) <= 1.1;
     const pts = isPerfect ? 130 : 90;
@@ -72,8 +94,8 @@ export function handleStage1BSeparation() {
     for (let i = 0; i < 18; i++) {
       const ang = (i / 18) * Math.PI * 2;
       state.lunarParticles.push({
-        x: LOGICAL_W / 2 + Math.cos(ang) * 24,
-        y: state.ascent.rocketY + 6,
+        x: LOGICAL_W / 2 + Math.cos(ang) * 30,
+        y: state.ascent.rocketY + (STAGE_JOIN - ROCKET_PIVOT),
         vx: Math.cos(ang) * (95 + Math.random() * 65),
         vy: Math.sin(ang) * 45 + 30,
         life: 0.55,
@@ -176,7 +198,7 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
 
   const thrustMatch = Math.abs(a.thrust - a.targetThrust) <= 0.14;
   a.rocketY -= (14 + a.thrust * 32) * rocketEase * dt;
-  if (a.rocketY < 185) a.rocketY = 185;
+  if (a.rocketY < ROCKET_MIN_Y) a.rocketY = ROCKET_MIN_Y;
   a.padScroll += (26 + a.thrust * 138) * padEase * dt;
 
   const instability = Math.max(0.28, 0.85 - state.shippedModules.booster_core * 0.14 - veh.stabilityBonus + overloadPenalty);
@@ -241,6 +263,7 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
 
   a.sepWindowOpen = (state.stageTimer <= 5.5 && state.stageTimer >= 1.5);
   if (a.separated) {
+    a.sepTime += dt;
     a.boosterDropY += dt * 120;
     a.srbSpreadX += dt * 55;
     a.srbRot += dt * 0.65;
@@ -251,9 +274,9 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
   const engineBurning = a.integrity < 55 || a.thrust > 0.93;
   const sinT = Math.sin(a.tilt);
   const cosT = Math.cos(a.tilt);
-  const nozDist = a.separated ? 14 : 52;
+  const nozDist = a.separated ? NOZZLE_UPPER : NOZZLE_FULL;
   if (Math.random() < (isStall ? 0.55 : 0.78)) {
-    const nozX = LOGICAL_W / 2 - sinT * nozDist + (Math.random() - 0.5) * 14;
+    const nozX = LOGICAL_W / 2 - sinT * nozDist + (Math.random() - 0.5) * (a.separated ? 24 : 44);
     const nozY = a.rocketY + cosT * nozDist;
     const exhSpeed = isStall ? (55 + Math.random() * 55) : (145 + a.thrust * 135);
     state.lunarParticles.push({
@@ -271,9 +294,9 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
     });
   }
   if (engineBurning && Math.random() < 0.5) {
-    const fireDist = a.separated ? 2 : 38;
+    const fireDist = nozDist - (a.separated ? 8 : 18);
     state.lunarParticles.push({
-      x: LOGICAL_W / 2 - sinT * fireDist + (Math.random() - 0.5) * 32,
+      x: LOGICAL_W / 2 - sinT * fireDist + (Math.random() - 0.5) * (a.separated ? 28 : 56),
       y: a.rocketY + cosT * fireDist + (Math.random() - 0.5) * 10,
       vx: -sinT * 50 + (Math.random() - 0.5) * 90,
       vy: cosT * (40 + Math.random() * 70),
@@ -617,322 +640,83 @@ function drawCoastalLaunchpadGround(ctx, towerY, a, nowMs) {
   drawHazardCurb(ctx, cx - 242, towerY - 6, 178, 7);
   drawHazardCurb(ctx, cx + 64, towerY - 6, 178, 7);
 
-  // 6. Recessed Concrete Flame Trench & Angled Flame Deflector directly under nozzle
-  const trenchW = 128;
-  const trenchX = cx - trenchW / 2;
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(trenchX, towerY - 4, trenchW, 56);
-  // Concrete trench side retaining walls
-  ctx.fillStyle = '#475569';
-  ctx.fillRect(trenchX - 10, towerY - 6, 10, 58);
-  ctx.fillRect(trenchX + trenchW, towerY - 6, 10, 58);
-  // Inner trench shadow & blast shield
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(trenchX + 4, towerY + 2, trenchW - 8, 46);
-
-  // Mobile Launcher Platform (MLP) Steel Deck flanking the exhaust aperture
-  ctx.fillStyle = '#334155';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2;
-  ctx.fillRect(cx - 134, towerY - 13, 88, 12);
-  ctx.strokeRect(cx - 134, towerY - 13, 88, 12);
-  ctx.fillRect(cx + 46, towerY - 13, 46, 12);
-  ctx.strokeRect(cx + 46, towerY - 13, 46, 12);
-  drawHazardCurb(ctx, cx - 134, towerY - 13, 88, 4);
-  drawHazardCurb(ctx, cx + 46, towerY - 13, 46, 4);
-
-  // Angled Steel Flame Deflector Wedge centered under rocket exhaust
+  // 6. Burn-off glow on the apron under the mobile launcher (the launcher sprite itself is drawn
+  // over the rocket by drawStage1B, so no trench / deck / deflector geometry lives here any more)
   const heatAlpha = a.padScroll < 260 ? (1 - a.padScroll / 260) * clamp01(a.thrust + 0.25) : 0;
-  ctx.fillStyle = '#334155';
-  ctx.beginPath();
-  ctx.moveTo(cx, towerY + 6);
-  ctx.lineTo(cx - 48, towerY + 48);
-  ctx.lineTo(cx + 48, towerY + 48);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#64748b';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
   if (heatAlpha > 0.02) {
-    const defGlow = ctx.createRadialGradient(cx, towerY + 12, 2, cx, towerY + 18, 48);
-    defGlow.addColorStop(0, `rgba(254, 240, 138, ${heatAlpha * 0.95})`);
-    defGlow.addColorStop(0.45, `rgba(249, 115, 22, ${heatAlpha * 0.78})`);
-    defGlow.addColorStop(1, 'rgba(239, 68, 68, 0)');
-    ctx.fillStyle = defGlow;
+    const glow = ctx.createRadialGradient(cx, towerY + 8, 2, cx, towerY + 12, 96);
+    glow.addColorStop(0, `rgba(254, 240, 138, ${heatAlpha * 0.95})`);
+    glow.addColorStop(0.45, `rgba(249, 115, 22, ${heatAlpha * 0.78})`);
+    glow.addColorStop(1, 'rgba(239, 68, 68, 0)');
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.moveTo(cx, towerY + 5);
-    ctx.lineTo(cx - 56, towerY + 48);
-    ctx.lineTo(cx + 56, towerY + 48);
-    ctx.closePath();
+    ctx.ellipse(cx, towerY + 12, 124, 36, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
-function drawUmbilicalTower(ctx, towerY, a, nowMs) {
-  const cx = LOGICAL_W / 2;
-  const tx = cx - 124; // 436
-  const tw = 54;       // right edge at 490, clean 36px clearance to left SRB
-  const baseTop = towerY - 13;
-  const bays = 5;
-  const bayH = 36;
-  const towerH = bays * bayH; // 180px
-  const topY = baseTop - towerH; // 347 at T=0
-
-  ctx.save();
-
-  // Concrete & steel tower pedestal base
-  ctx.fillStyle = '#475569';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2;
-  ctx.fillRect(tx - 6, baseTop - 6, tw + 12, 8);
-  ctx.strokeRect(tx - 6, baseTop - 6, tw + 12, 8);
-
-  // Central Elevator Core Shaft (inside FSS)
-  const elevX = tx + 16;
-  const elevW = 20;
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(elevX, topY, elevW, towerH);
-  ctx.strokeStyle = '#475569';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(elevX, topY, elevW, towerH);
-  // Elevator guide rails & parked yellow-lit service cab
-  ctx.strokeStyle = '#64748b';
-  ctx.beginPath();
-  ctx.moveTo(elevX + 5, topY); ctx.lineTo(elevX + 5, baseTop);
-  ctx.moveTo(elevX + elevW - 5, topY); ctx.lineTo(elevX + elevW - 5, baseTop);
-  ctx.stroke();
-  const cabY = topY + bayH * 2.2;
-  ctx.fillStyle = '#facc15';
-  ctx.fillRect(elevX + 4, cabY, elevW - 8, 16);
-  ctx.fillStyle = '#fef9c3';
-  ctx.fillRect(elevX + 6, cabY + 3, elevW - 12, 6);
-
-  // Multi-level X-Braced Steel Truss Bays (orange/red RSS/FSS heritage steel + slate struts)
-  for (let b = 0; b < bays; b++) {
-    const y0 = baseTop - (b + 1) * bayH;
-    const y1 = y0 + bayH;
-
-    // X-bracing diagonals with crisp dark outline for contrast against sky & space
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 4.2;
-    ctx.beginPath();
-    ctx.moveTo(tx + 3, y0 + 2); ctx.lineTo(tx + tw - 3, y1 - 2);
-    ctx.moveTo(tx + tw - 3, y0 + 2); ctx.lineTo(tx + 3, y1 - 2);
-    ctx.stroke();
-
-    ctx.strokeStyle = b % 2 === 0 ? '#ea580c' : '#94a3b8';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(tx + 3, y0 + 2); ctx.lineTo(tx + tw - 3, y1 - 2);
-    ctx.moveTo(tx + tw - 3, y0 + 2); ctx.lineTo(tx + 3, y1 - 2);
-    ctx.stroke();
-
-    // Grated service deck & safety handrail at top of each bay
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(tx - 5, y0 - 2, tw + 10, 5);
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(tx - 5, y0 - 2, tw + 10, 5);
-
-    // Handrail posts & safety yellow top rail
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (let rx = tx - 3; rx <= tx + tw + 3; rx += 12) {
-      ctx.moveTo(rx, y0 - 2);
-      ctx.lineTo(rx, y0 - 9);
-    }
-    ctx.stroke();
-    ctx.strokeStyle = '#facc15';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(tx - 5, y0 - 9);
-    ctx.lineTo(tx + tw + 5, y0 - 9);
-    ctx.stroke();
-
-    // Subtle amber bay work floodlight
-    ctx.fillStyle = '#fde047';
-    ctx.beginPath();
-    ctx.arc(tx + tw - 2, y0 + 4, 2, 0, Math.PI * 2);
-    ctx.fill();
+// Swing arms fold back one after another as the rocket clears the tower (top arm first).
+function getArmRetract(padScroll) {
+  const out = [];
+  for (let i = 0; i < PAD_ARM_COUNT; i++) {
+    out.push(easeOutQuad((padScroll - (6 + i * 6)) / (38 + i * 4)));
   }
+  return out;
+}
 
-  // Main Vertical Steel Corner Columns (drawn over bay edges)
-  for (const colX of [tx, tx + tw - 5]) {
-    ctx.fillStyle = '#ea580c';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.5;
-    ctx.fillRect(colX, topY, 5, towerH);
-    ctx.strokeRect(colX, topY, 5, towerH);
-    ctx.fillStyle = '#fb923c';
-    ctx.fillRect(colX + 1, topY, 1.5, towerH);
-  }
-
-  // Roof Hammerhead Crane & Elevated Water Deluge Storage Tank
-  // Crane boom on left side of roof
-  ctx.fillStyle = '#c2410c';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 1.5;
-  ctx.fillRect(tx - 24, topY - 14, 58, 7);
-  ctx.strokeRect(tx - 24, topY - 14, 58, 7);
-  ctx.fillRect(tx + 4, topY - 22, 10, 20);
-  ctx.strokeRect(tx + 4, topY - 22, 10, 20);
-
-  // Water Deluge Tank on right roof struts
-  ctx.strokeStyle = '#64748b';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(tx + 28, topY - 2); ctx.lineTo(tx + 32, topY - 14);
-  ctx.moveTo(tx + 48, topY - 2); ctx.lineTo(tx + 44, topY - 14);
-  ctx.stroke();
-  ctx.fillStyle = '#e2e8f0';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.roundRect(tx + 25, topY - 28, 26, 15, 6);
-  ctx.fill();
-  ctx.stroke();
+// Small flat-colour fire tongue licking up the engine skirt when the ascent is damaged / over-thrust.
+function drawFireTongue(ctx, x, baseY, h, nowMs, side) {
+  const w = 8;
+  const sway = Math.round(Math.sin(nowMs * 0.03 + side * 2) * 1.5) * 2;
+  const top = snap2(baseY - h);
   ctx.fillStyle = '#ef4444';
-  ctx.fillRect(tx + 26, topY - 22, 24, 3);
-
-  // Lightning Arrestor Mast & Blinking Red Aviation Beacon
-  const mastX = tx + tw / 2;
-  const mastTopY = topY - 72;
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(mastX - 6, topY - 12); ctx.lineTo(mastX, mastTopY);
-  ctx.moveTo(mastX + 6, topY - 12); ctx.lineTo(mastX, mastTopY);
-  ctx.stroke();
-  ctx.strokeStyle = '#94a3b8';
-  ctx.lineWidth = 1.8;
-  ctx.beginPath();
-  ctx.moveTo(mastX, topY - 12); ctx.lineTo(mastX, mastTopY - 12);
-  ctx.stroke();
-
-  const beaconOn = Math.sin(nowMs * 0.0065) > 0;
-  if (beaconOn) {
-    const bGlow = ctx.createRadialGradient(mastX, mastTopY - 12, 1, mastX, mastTopY - 12, 14);
-    bGlow.addColorStop(0, 'rgba(239, 68, 68, 0.95)');
-    bGlow.addColorStop(1, 'rgba(239, 68, 68, 0)');
-    ctx.fillStyle = bGlow;
-    ctx.beginPath();
-    ctx.arc(mastX, mastTopY - 12, 14, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.fillStyle = beaconOn ? '#ef4444' : '#7f1d1d';
-  ctx.beginPath();
-  ctx.arc(mastX, mastTopY - 12, 3.2, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Articulated Swing Arms (dynamically retract smoothly as liftoff begins: a.padScroll > 0)
-  const hingeX = tx + tw - 2;
-  const crewProg = easeOutQuad(a.padScroll / 64);
-  const umbProg = easeOutQuad(a.padScroll / 44);
-
-  // 1) Crew Access Arm (at upper stage / capsule collar y = towerY - 118)
-  const crewY = towerY - 118;
-  const crewAngle = -crewProg * 1.28; // swings up/back flush against tower
-  ctx.save();
-  ctx.translate(hingeX, crewY);
-  ctx.rotate(crewAngle);
-  ctx.fillStyle = '#f8fafc';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 1.6;
-  ctx.fillRect(0, -6, 50, 11);
-  ctx.strokeRect(0, -6, 50, 11);
-  // NASA blue stripe & White Room end-collar
-  ctx.fillStyle = '#1d4ed8';
-  ctx.fillRect(3, -1, 36, 2.5);
-  ctx.fillStyle = '#e2e8f0';
-  ctx.fillRect(42, -7, 9, 13);
-  ctx.strokeRect(42, -7, 9, 13);
-  ctx.restore();
-
-  // 2) Upper & Core Propellant Umbilical Swing Arms (towerY - 84 & towerY - 62)
-  const umbArms = [
-    { y: towerY - 84, len: 50, ang: -1.18 },
-    { y: towerY - 62, len: 48, ang: -1.12 }
-  ];
-  for (const arm of umbArms) {
-    ctx.save();
-    ctx.translate(hingeX, arm.y);
-    ctx.rotate(umbProg * arm.ang);
-    ctx.fillStyle = '#f97316';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.5;
-    ctx.fillRect(0, -3.5, arm.len, 7);
-    ctx.strokeRect(0, -3.5, arm.len, 7);
-    // Truss diagonal & quick-disconnect cryo plate
-    ctx.strokeStyle = '#fef3c7';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(4, -2); ctx.lineTo(18, 2); ctx.lineTo(32, -2);
-    ctx.stroke();
-    ctx.fillStyle = '#64748b';
-    ctx.fillRect(arm.len - 4, -5, 5, 10);
-    ctx.restore();
-
-    // Subtle cryogenic LOX vent wisp when connected or just detaching
-    if (umbProg < 0.45) {
-      const ventAlpha = (1 - umbProg / 0.45) * 0.45;
-      const drift = ((nowMs * 0.025) % 18);
-      ctx.fillStyle = `rgba(224, 242, 254, ${ventAlpha})`;
-      ctx.beginPath();
-      ctx.arc(hingeX + arm.len - 4 - drift * 0.4, arm.y - drift * 0.6, 3.5 + drift * 0.15, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  // 3) Lower Tail Service Mast (MLP deck umbilical at towerY - 28)
-  ctx.save();
-  ctx.translate(cx - 56, towerY - 13);
-  ctx.rotate(-umbProg * 0.85);
-  ctx.fillStyle = '#64748b';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 1.5;
-  ctx.fillRect(-4, -20, 8, 20);
-  ctx.strokeRect(-4, -20, 8, 20);
-  ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(2, -19, 14, 4);
-  ctx.restore();
-
-  ctx.restore();
+  ctx.fillRect(snap2(x - w / 2 + sway), top, w, snap2(h));
+  ctx.fillStyle = '#f97316';
+  ctx.fillRect(snap2(x - w / 2 + 2 + sway / 2), snap2(baseY - h * 0.72), w - 4, snap2(h * 0.72));
+  ctx.fillStyle = '#fde047';
+  ctx.fillRect(snap2(x - 1 + sway / 2), snap2(baseY - h * 0.4), 2, snap2(h * 0.4));
 }
 
-function drawHoldDownClamps(ctx, towerY, a) {
-  const cx = LOGICAL_W / 2;
-  const clampProg = easeOutQuad(a.padScroll / 16);
-  const deckY = towerY - 13;
+// The rocket, rotated about its pivot. 'body' = stages (+ the first stage peeling away after
+// separation); 'flame' = engine plume + damage fire, drawn after the launcher so it is never
+// hidden by the deck.
+function drawAscentRocket(ctx, a, nowMs, layer) {
+  // A rocket still clamped to the deck cannot pitch: ease the visual tilt in as it clears the pad.
+  const lift = (a.rocketY0 - a.rocketY) + a.padScroll;
+  const tilt = a.tilt * clamp01(lift / 70);
+  const stalled = a.thrust < 0.25;
+  const flameSy = 0.55 + a.thrust * 0.8 + (Math.floor(nowMs / 70) % 3) * 0.07;
+  const opts = { scale: ROCKET_SCALE };
+  const tipY = -ROCKET_PIVOT;
 
   ctx.save();
-  for (const side of [-1, 1]) {
-    const hingeX = cx + side * 42;
-    ctx.save();
-    ctx.translate(hingeX, deckY);
-    ctx.rotate(side * clampProg * 0.92);
-    // Hydraulic clamp arm reaching inward toward SRB skirt
-    ctx.fillStyle = '#f59e0b';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(-side * 12, -14);
-    ctx.lineTo(-side * 6, -18);
-    ctx.lineTo(side * 5, -3);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+  ctx.translate(snap2(LOGICAL_W / 2), snap2(a.rocketY));
+  ctx.rotate(tilt);
 
-    // Base pivot housing
-    ctx.fillStyle = '#475569';
-    ctx.beginPath();
-    ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
+  if (layer === 'body') {
+    if (a.separated) {
+      // Spent first stage: retros still lit for a beat, then it tumbles away and fades out.
+      const half = 56;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0.25, 1 - a.boosterDropY / 260);
+      ctx.translate(snap2(a.sepDir * a.srbSpreadX), snap2(tipY + STAGE_JOIN + a.boosterDropY + half));
+      ctx.rotate(a.sepDir * a.srbRot);
+      drawCraft(ctx, a.sepTime < 0.4 ? 'boosterBurn' : 'boosterSpent', 0, -half, opts);
+      ctx.restore();
+      drawCraft(ctx, stalled ? 'upperIdle' : 'upperBody', 0, tipY, opts);
+    } else {
+      drawCraft(ctx, stalled ? 'stackIdle' : 'stackBody', 0, tipY, opts);
+    }
+  } else {
+    if (!stalled) {
+      drawCraft(ctx, a.separated ? 'upperFlame' : 'stackFlame', 0, tipY, { ...opts, sy: flameSy });
+    }
+    if (a.integrity < 55 || a.thrust > 0.93) {
+      const nozzle = a.separated ? NOZZLE_UPPER : NOZZLE_FULL;
+      const skirt = a.separated ? 16 : 26;
+      const h = 14 + Math.abs(Math.sin(nowMs * 0.03)) * 8;
+      for (const side of [-1, 1]) drawFireTongue(ctx, side * skirt, nozzle - 2, h, nowMs, side);
+    }
   }
   ctx.restore();
 }
@@ -1016,12 +800,11 @@ export function drawStage1B(ctx) {
 
   drawLaunchSkyAndSpace(ctx, a, altRatio, nowMs);
 
-  // Pad 39B Coastal Ground & Umbilical Launch Tower falling away smoothly below
-  const towerY = 540 + a.padScroll;
+  // Pad 39B coastal ground + mobile launcher falling away smoothly below
+  const towerY = GROUND_REF_Y + a.padScroll;
   const padVisible = towerY < LOGICAL_H + 340;
   if (padVisible) {
     drawCoastalLaunchpadGround(ctx, towerY, a, nowMs);
-    drawUmbilicalTower(ctx, towerY, a, nowMs);
     drawPadDelugeSteam(ctx, towerY, a, nowMs, 'back');
   }
 
@@ -1047,139 +830,18 @@ export function drawStage1B(ctx) {
     ctx.fillStyle = '#fde047'; ctx.fillRect(sbx + sbw * winProg - 3, sby - 2, 6, sbh + 4);
   }
 
-  // Detailed Multi-Stage Rocket
-  ctx.save();
-  ctx.translate(LOGICAL_W / 2, a.rocketY);
-  ctx.rotate(a.tilt);
-
-  const bOff = a.separated ? a.boosterDropY : 0;
-  const srbX = a.separated ? (a.srbSpreadX || 0) : 0;
-  const srbR = a.separated ? (a.srbRot || 0) : 0;
-  const isStall = a.thrust < 0.25;
-  const engineFire = a.integrity < 55 || a.thrust > 0.93;
-  const pulse = Math.sin(nowMs * 0.025);
-
-  const drawFallingCoreAndSRBs = () => {
-    ctx.save();
-    if (a.separated) {
-      ctx.globalAlpha = Math.max(0.25, 1 - bOff / 260);
-    }
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 3;
-    // Core Booster Engine Nozzle Bell
-    ctx.fillStyle = '#334155';
-    ctx.beginPath();
-    ctx.moveTo(-10, 45 + bOff);
-    ctx.lineTo(-14, 52 + bOff);
-    ctx.lineTo(14, 52 + bOff);
-    ctx.lineTo(10, 45 + bOff);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Core Booster Hull
-    ctx.fillStyle = a.separated ? '#94a3b8' : '#e2e8f0';
-    ctx.beginPath(); ctx.roundRect(-23, 6 + bOff, 46, 40, 6); ctx.fill(); ctx.stroke();
-
-    // Twin Side SRBs
-    ctx.save();
-    ctx.translate(-28 - srbX, 28 + bOff * 0.85);
-    ctx.rotate(-srbR);
-    ctx.fillStyle = '#f97316';
-    ctx.beginPath(); ctx.roundRect(-6, -16, 11, 34, 4); ctx.fill(); ctx.stroke();
-    ctx.restore();
-
-    ctx.save();
-    ctx.translate(28 + srbX, 28 + bOff * 0.85);
-    ctx.rotate(srbR);
-    ctx.fillStyle = '#f97316';
-    ctx.beginPath(); ctx.roundRect(-5, -16, 11, 34, 4); ctx.fill(); ctx.stroke();
-    ctx.restore();
-    ctx.restore();
-  };
-
-  // When separated, render spent dropping booster behind the active upper-stage plume
-  if (a.separated) {
-    drawFallingCoreAndSRBs();
-  }
-
-  // Thrust-accurate exhaust flame anchored directly to the active stage's nozzle
-  const nozzleY = a.separated ? 11 : 51;
-  const flameWidth = a.separated ? 14 : 18;
-  if (isStall) {
-    const cough = 6 + (a.thrust / 0.25) * 18 + Math.max(0, pulse) * 8;
-    ctx.fillStyle = 'rgba(249, 115, 22, 0.72)';
-    ctx.beginPath(); ctx.moveTo(-9, nozzleY); ctx.lineTo(pulse * 3, nozzleY + cough); ctx.lineTo(9, nozzleY); ctx.fill();
-  } else {
-    const flameLen = (a.separated ? 18 : 24) + a.thrust * 82 + pulse * 8;
-    const outerCol = a.thrust > 0.93 ? '#ef4444' : '#f97316';
-    ctx.fillStyle = outerCol;
-    ctx.beginPath(); ctx.moveTo(-flameWidth, nozzleY); ctx.lineTo(0, nozzleY + flameLen); ctx.lineTo(flameWidth, nozzleY); ctx.fill();
-    ctx.fillStyle = '#fef08a';
-    ctx.beginPath(); ctx.moveTo(-flameWidth * 0.5, nozzleY); ctx.lineTo(0, nozzleY + flameLen * 0.65); ctx.lineTo(flameWidth * 0.5, nozzleY); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.moveTo(-flameWidth * 0.22, nozzleY); ctx.lineTo(0, nozzleY + flameLen * 0.28); ctx.lineTo(flameWidth * 0.22, nozzleY); ctx.fill();
-
-    if (!a.separated) {
-      const srbLen = flameLen * 0.56;
-      for (const side of [-1, 1]) {
-        const sx = side * 28;
-        ctx.fillStyle = outerCol;
-        ctx.beginPath(); ctx.moveTo(sx - 5, 45); ctx.lineTo(sx, 45 + srbLen); ctx.lineTo(sx + 5, 45); ctx.fill();
-        ctx.fillStyle = '#fef08a';
-        ctx.beginPath(); ctx.moveTo(sx - 2.5, 45); ctx.lineTo(sx, 45 + srbLen * 0.58); ctx.lineTo(sx + 2.5, 45); ctx.fill();
-      }
-    }
-  }
-
-  // Upper Stage Second-Stage Engine Nozzle Bell
-  ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(-8, 5);
-  ctx.lineTo(-11, 13);
-  ctx.lineTo(11, 13);
-  ctx.lineTo(8, 5);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  // Upper Stage + Fairing
-  ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.roundRect(-21, -50, 42, 56, 8); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#1d4ed8';
-  ctx.fillRect(-19, -24, 38, 7);
-  ctx.fillStyle = '#ef4444';
-  ctx.beginPath(); ctx.moveTo(-21, -50); ctx.lineTo(0, -86); ctx.lineTo(21, -50); ctx.closePath(); ctx.fill(); ctx.stroke();
-
-  if (!a.separated) {
-    drawFallingCoreAndSRBs();
-  }
-
-  // Visible engine-bay fire tongues anchored cleanly to the active rocket engine skirt
-  if (engineFire) {
-    const sway = Math.sin(nowMs * 0.03) * 4;
-    const fireBaseY = a.separated ? 6 : 44;
-    const skirtX = a.separated ? 17 : 21;
-    for (const side of [-1, 1]) {
-      ctx.fillStyle = '#ef4444';
-      ctx.beginPath();
-      ctx.moveTo(side * (skirtX - 3), fireBaseY + 2);
-      ctx.quadraticCurveTo(side * (skirtX + 10), fireBaseY - 8, side * (skirtX + 4) + sway, fireBaseY - 22);
-      ctx.quadraticCurveTo(side * (skirtX - 2), fireBaseY - 10, side * (skirtX - 7), fireBaseY);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#fde047';
-      ctx.beginPath();
-      ctx.arc(side * skirtX, fireBaseY - 5, 4.5 + Math.abs(pulse) * 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  ctx.restore();
-
-  // Foreground Pad Elements: Hold-Down Clamps + Trench Steam Billows
+  // Rocket first, launcher over it (the deck hides the engine bells), then the flame over both.
+  drawAscentRocket(ctx, a, nowMs, 'body');
   if (padVisible) {
-    drawHoldDownClamps(ctx, towerY, a);
+    drawLaunchPad(ctx, LOGICAL_W / 2, towerY - PAD_DECK_RISE, {
+      scale: PAD_SCALE,
+      retract: getArmRetract(a.padScroll)
+    });
+  }
+  drawAscentRocket(ctx, a, nowMs, 'flame');
+
+  // Foreground trench steam billows
+  if (padVisible) {
     drawPadDelugeSteam(ctx, towerY, a, nowMs, 'front');
   }
 
