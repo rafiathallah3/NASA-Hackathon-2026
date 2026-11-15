@@ -259,6 +259,7 @@ export function renderTicketsHUD() {
     });
   });
   updateLaunchButtonState();
+  updateBlueprintHUD();
 }
 
 export function updateTicketBarsOnly() {
@@ -279,6 +280,7 @@ export function updateTicketBarsOnly() {
     if (c1) c1.classList.toggle('chip-ready', isProcPartReadyInHangar(o.recipe.reqs[0]));
     if (c2) c2.classList.toggle('chip-ready', isProcPartReadyInHangar(o.recipe.reqs[1]));
   }
+  updateBlueprintHUD();
 }
 
 export function getCmlLevel(shippedCount = state.shippedCount) {
@@ -323,6 +325,10 @@ export function syncPauseUI() {
   if (sub) {
     const label = STAGE_LABELS[state.stage] || 'Active Mission';
     sub.textContent = `${label} frozen. Press ESC or Resume to continue.`;
+  }
+  const bpBtn = document.getElementById('btn-blueprint');
+  if (bpBtn) {
+    bpBtn.disabled = !canPause;
   }
 }
 
@@ -468,6 +474,7 @@ export function updateBottomHUD() {
     lastTelemetryHtml = nextHtml;
     strip.innerHTML = iconize(nextHtml);
   }
+  updateBlueprintHUD();
 }
 
 export function showMenuModal(onStartGame) {
@@ -828,4 +835,335 @@ export function skipUiTour() {
   if (!uiTourActive) return false;
   finishUiTour(true);
   return true;
+}
+
+/* ============================================================
+   NASA SPACECRAFT BLUEPRINT SCHEMATIC DRAWER (NON-PAUSING)
+   ============================================================ */
+const BLUEPRINT_STACK = [
+  { id: 'sensor_pod',   slot: '01 TOP FAIRING / PAYLOAD',    code: '01 PAYLOAD' },
+  { id: 'comms_relay',  slot: '02 SERVICE TRUNK / AVIONICS', code: '02 COMMS' },
+  { id: 'power_pack',   slot: '03 SERVICE TRUNK / POWER',    code: '03 POWER' },
+  { id: 'booster_core', slot: '04 DESCENT PROPULSION CORE',  code: '04 CRYO' }
+];
+
+let blueprintOpen = false;
+let lastBpBadgeSig = '';
+let lastBlueprintSig = '';
+
+function formatModuleGains(rec) {
+  if (!rec?.telemetry) return '';
+  const t = rec.telemetry;
+  const parts = [];
+  if (t.science > 0) parts.push(`+${t.science} Sci`);
+  if (t.comms > 0) parts.push(`+${t.comms} Mb/d`);
+  if (t.power > 0) parts.push(`+${t.power}W`);
+  if (t.fuel > 0) parts.push(`+${t.fuel}% Fuel`);
+  if (t.power < 0) parts.push(`${t.power}W`);
+  if (t.comms < 0) parts.push(`${t.comms} Mb/d`);
+  return parts.join(' • ');
+}
+
+function buildRocketBlueprintSvg(stackItems, canPin) {
+  const byId = Object.fromEntries(stackItems.map(item => [item.id, item]));
+  const modClass = (id) => {
+    const it = byId[id];
+    const classes = ['bp-svg-mod', it?.builtCount > 0 ? 'bp-svg-built' : 'bp-svg-needed'];
+    if (it?.isTarget) classes.push('bp-svg-target');
+    if (canPin) classes.push('bp-clickable');
+    return classes.join(' ');
+  };
+  const reqMark = (id, y) => {
+    const it = byId[id];
+    if (!it?.isReq) return '';
+    const fill = it.builtCount > 0 ? '#5fe07c' : '#f6c445';
+    return `<rect x="114" y="${y - 3}" width="6" height="6" fill="${fill}" stroke="#06080f" stroke-width="1"/>`;
+  };
+  const builtTick = (id, x, y) => {
+    const it = byId[id];
+    if (!it || it.builtCount <= 0) return '';
+    return `<text x="${x}" y="${y}" text-anchor="middle" font-family="Jersey 10, monospace" font-size="11" fill="#5fe07c">x${it.builtCount}</text>`;
+  };
+
+  return `
+    <svg class="bp-rocket-svg" viewBox="0 0 160 410" shape-rendering="crispEdges" aria-label="NASA Rocket Stack Cutaway Diagram">
+      <!-- Drafting Grid Centerline & Stage Separation Guides -->
+      <line x1="72" y1="8" x2="72" y2="402" stroke="rgba(79,214,240,0.22)" stroke-width="1" stroke-dasharray="3 4"/>
+      <line x1="12" y1="109" x2="148" y2="109" stroke="rgba(79,214,240,0.24)" stroke-width="1" stroke-dasharray="2 3"/>
+      <line x1="12" y1="201" x2="148" y2="201" stroke="rgba(79,214,240,0.24)" stroke-width="1" stroke-dasharray="2 3"/>
+      <line x1="12" y1="293" x2="148" y2="293" stroke="rgba(79,214,240,0.24)" stroke-width="1" stroke-dasharray="2 3"/>
+
+      <!-- 01 TOP FAIRING / PAYLOAD: Lunar Spectrometer (sensor_pod) -->
+      <g class="${modClass('sensor_pod')}" data-bp-module="sensor_pod">
+        <title>Lunar Spectrometer (Cal. Optics + Solder PCB)</title>
+        <polygon class="bp-shape" points="72,14 86,28 96,52 100,104 44,104 48,52 58,28"/>
+        <rect x="57" y="48" width="30" height="38" fill="rgba(6,8,15,0.72)" stroke="#4fd6f0" stroke-width="1"/>
+        <rect x="64" y="56" width="16" height="16" fill="rgba(79,214,240,0.2)" stroke="#4fd6f0" stroke-width="1"/>
+        <rect x="69" y="61" width="6" height="6" fill="#eef1f8"/>
+        <line x1="60" y1="80" x2="84" y2="80" stroke="#4fd6f0" stroke-width="1"/>
+        <line x1="100" y1="60" x2="152" y2="60" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        ${reqMark('sensor_pod', 60)}
+        <text class="bp-svg-label" x="152" y="54" text-anchor="end">01 PAYLOAD</text>
+        ${builtTick('sensor_pod', 72, 99)}
+      </g>
+
+      <!-- 02 SERVICE TRUNK / AVIONICS: Deep-Space Ka-Relay (comms_relay) -->
+      <g class="${modClass('comms_relay')}" data-bp-module="comms_relay">
+        <title>Deep-Space Ka-Relay (Ka-Band Dish + Solder PCB)</title>
+        <rect class="bp-shape" x="44" y="114" width="56" height="82"/>
+        <!-- Articulated Ka-Band Parabolic Dish -->
+        <polyline class="bp-shape" points="20,132 30,144 30,164 20,176" fill="none"/>
+        <line x1="30" y1="154" x2="44" y2="154" stroke="#4fd6f0" stroke-width="2"/>
+        <rect x="21" y="151" width="6" height="6" fill="#f6c445"/>
+        <!-- Internal Avionics PCB Rack -->
+        <rect x="54" y="128" width="36" height="50" fill="rgba(6,8,15,0.72)" stroke="#4fd6f0" stroke-width="1"/>
+        <line x1="59" y1="140" x2="85" y2="140" stroke="#4fd6f0" stroke-width="2"/>
+        <line x1="59" y1="152" x2="85" y2="152" stroke="#4fd6f0" stroke-width="2"/>
+        <line x1="59" y1="164" x2="79" y2="164" stroke="#4fd6f0" stroke-width="2"/>
+        <line x1="100" y1="154" x2="152" y2="154" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        ${reqMark('comms_relay', 154)}
+        <text class="bp-svg-label" x="152" y="148" text-anchor="end">02 COMMS</text>
+        ${builtTick('comms_relay', 72, 191)}
+      </g>
+
+      <!-- 03 SERVICE TRUNK / POWER: Rover Solar-Battery (power_pack) -->
+      <g class="${modClass('power_pack')}" data-bp-module="power_pack">
+        <title>Rover Solar-Battery (Li-Ion Cell + Solar Wing)</title>
+        <rect class="bp-shape" x="44" y="206" width="56" height="82"/>
+        <!-- Deployed Twin Solar Array Wings -->
+        <rect class="bp-shape" x="8" y="232" width="32" height="28"/>
+        <line x1="19" y1="232" x2="19" y2="260" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        <line x1="29" y1="232" x2="29" y2="260" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        <line x1="8" y1="246" x2="40" y2="246" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        <rect class="bp-shape" x="104" y="232" width="32" height="28"/>
+        <line x1="115" y1="232" x2="115" y2="260" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        <line x1="125" y1="232" x2="125" y2="260" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        <line x1="104" y1="246" x2="136" y2="246" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        <!-- Internal Li-Ion Battery Pack -->
+        <rect x="57" y="220" width="30" height="48" fill="rgba(6,8,15,0.72)" stroke="#4fd6f0" stroke-width="1"/>
+        <rect x="63" y="228" width="18" height="12" fill="rgba(95,224,124,0.35)" stroke="#4fd6f0" stroke-width="1"/>
+        <rect x="63" y="245" width="18" height="12" fill="rgba(95,224,124,0.35)" stroke="#4fd6f0" stroke-width="1"/>
+        <line x1="100" y1="220" x2="152" y2="220" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        ${reqMark('power_pack', 220)}
+        <text class="bp-svg-label" x="152" y="214" text-anchor="end">03 POWER</text>
+        ${builtTick('power_pack', 72, 283)}
+      </g>
+
+      <!-- 04 DESCENT PROPULSION CORE: Descent Cryo-Stage (booster_core) -->
+      <g class="${modClass('booster_core')}" data-bp-module="booster_core">
+        <title>Descent Cryo-Stage (Cryo Core + Solar Wing)</title>
+        <!-- Core Stage Body -->
+        <rect class="bp-shape" x="40" y="298" width="64" height="72"/>
+        <!-- Twin Side Boosters -->
+        <polygon class="bp-shape" points="24,316 31,304 38,316 38,378 24,378"/>
+        <polygon class="bp-shape" points="106,316 113,304 120,316 120,378 106,378"/>
+        <!-- Internal Cryo LOX/LH2 Tanks -->
+        <rect x="54" y="306" width="36" height="24" fill="rgba(6,8,15,0.72)" stroke="#4fd6f0" stroke-width="1"/>
+        <rect x="54" y="335" width="36" height="24" fill="rgba(6,8,15,0.72)" stroke="#4fd6f0" stroke-width="1"/>
+        <!-- Main Engine Bell Nozzle -->
+        <polygon class="bp-shape" points="60,370 84,370 92,396 52,396"/>
+        <line x1="104" y1="336" x2="152" y2="336" stroke="rgba(79,214,240,0.55)" stroke-width="1"/>
+        ${reqMark('booster_core', 336)}
+        <text class="bp-svg-label" x="152" y="330" text-anchor="end">04 CRYO</text>
+        ${builtTick('booster_core', 72, 368)}
+      </g>
+    </svg>
+  `;
+}
+
+export function isBlueprintOpen() {
+  return blueprintOpen;
+}
+
+export function openBlueprint() {
+  if (state.stage === 'MENU' || state.stage === 'STAGE5') return false;
+  blueprintOpen = true;
+  const overlay = document.getElementById('blueprint-overlay');
+  if (overlay) overlay.classList.remove('hidden');
+  updateBlueprintHUD(true);
+  return true;
+}
+
+export function closeBlueprint() {
+  blueprintOpen = false;
+  const overlay = document.getElementById('blueprint-overlay');
+  if (overlay) overlay.classList.add('hidden');
+  updateBlueprintHUD(true);
+  return false;
+}
+
+export function toggleBlueprint() {
+  return blueprintOpen ? closeBlueprint() : openBlueprint();
+}
+
+export function updateBlueprintHUD(force = false) {
+  const builtUnique = BLUEPRINT_STACK.filter(s => (state.shippedModules?.[s.id] || 0) > 0).length;
+  const canInspect = state.stage !== 'MENU' && state.stage !== 'STAGE5';
+  const badgeSig = `${builtUnique}|${blueprintOpen}|${canInspect}`;
+  if (force || badgeSig !== lastBpBadgeSig) {
+    lastBpBadgeSig = badgeSig;
+    const btn = document.getElementById('btn-blueprint');
+    const pill = document.getElementById('bp-progress-pill');
+    if (pill) {
+      pill.textContent = `${builtUnique}/4`;
+      pill.classList.toggle('complete', builtUnique === 4);
+    }
+    if (btn) {
+      btn.classList.toggle('active', blueprintOpen && canInspect);
+      btn.disabled = !canInspect;
+    }
+  }
+
+  const overlay = document.getElementById('blueprint-overlay');
+  if (!overlay) return;
+  if (!blueprintOpen || !canInspect) {
+    overlay.classList.add('hidden');
+    return;
+  }
+  overlay.classList.remove('hidden');
+
+  const obj = getSelectedObjective();
+  const veh = getVehicle();
+  const reqModules = obj?.requiredModules || [];
+  const inHangar = state.stage === 'STAGE1';
+  const targetRec = inHangar ? getActiveTargetRecipe() : null;
+
+  const stackItems = BLUEPRINT_STACK.map(slotInfo => {
+    const rec = RECIPES.find(r => r.id === slotInfo.id);
+    const builtCount = state.shippedModules?.[slotInfo.id] || 0;
+    const isReq = reqModules.includes(slotInfo.id);
+    const isTarget = Boolean(targetRec && targetRec.id === slotInfo.id);
+    const parts = (rec?.reqs || []).map(procId => {
+      const meta = PROC_META[procId] || {};
+      const ready = inHangar ? isProcPartReadyInHangar(procId) : false;
+      return {
+        procId,
+        rawName: meta.rawName || 'Part',
+        name: meta.name || procId,
+        verb: meta.verb || 'Process',
+        ready
+      };
+    });
+    return {
+      ...slotInfo,
+      rec,
+      builtCount,
+      isReq,
+      isTarget,
+      parts
+    };
+  });
+
+  const sig = JSON.stringify({
+    stage: state.stage,
+    obj: state.selectedObjective,
+    veh: state.selectedVehicle,
+    target: targetRec?.id || '',
+    pinned: state.pinnedRecipeId || '',
+    mass: state.telemetry.mass,
+    maxMass: state.telemetry.maxMass,
+    budget: state.telemetry.budget,
+    power: state.telemetry.power,
+    comms: state.telemetry.comms,
+    science: state.telemetry.science,
+    fuel: Math.round(state.telemetry.fuel || 0),
+    items: stackItems.map(it => [it.id, it.builtCount, it.parts.map(p => p.ready)])
+  });
+  if (!force && sig === lastBlueprintSig) return;
+  lastBlueprintSig = sig;
+
+  const hdrProg = document.getElementById('bp-header-progress');
+  if (hdrProg) {
+    hdrProg.textContent = `${builtUnique}/4 BUILT`;
+    hdrProg.classList.toggle('complete', builtUnique === 4);
+  }
+
+  const reqDone = reqModules.filter(id => (state.shippedModules?.[id] || 0) > 0).length;
+  const reqTotal = reqModules.length || 2;
+  const subtitleEl = document.getElementById('bp-subtitle');
+  if (subtitleEl) {
+    subtitleEl.innerHTML = iconize(`
+      <div>🚀 <b>${veh?.name || 'Rocket'}</b> (${state.telemetry.mass}/${state.telemetry.maxMass} kg) &nbsp;•&nbsp; 🔬 <b>${obj?.title || 'Science Goal'}</b> (${reqDone}/${reqTotal} REQ)</div>
+      <div class="bp-subtitle-hint">${inHangar ? 'Click any module card or cutaway section to pin it as your Hangar Build Target.' : 'Flight stack telemetry reference (non-pausing). Press [B] or [Esc] to close.'}</div>
+    `);
+  }
+
+  const bodyEl = document.getElementById('bp-body');
+  if (bodyEl) {
+    const cardsHtml = stackItems.map(it => {
+      const rec = it.rec || {};
+      const built = it.builtCount > 0;
+      const cardCls = [
+        'bp-mod-card',
+        built ? 'bp-card-built' : 'bp-card-needed',
+        it.isTarget ? 'bp-card-target' : '',
+        inHangar ? 'bp-clickable' : ''
+      ].filter(Boolean).join(' ');
+
+      const reqBadge = it.isReq
+        ? `<span class="bp-req-tag ${built ? 'met' : ''}" title="Required by ${obj?.title || 'Science Goal'}">${built ? 'REQ ✓' : 'REQ'}</span>`
+        : '';
+
+      const statusBadge = built
+        ? `<span class="bp-status-pill built">✓ x${it.builtCount} BUILT</span>`
+        : `<span class="bp-status-pill ${it.isTarget ? 'target' : 'needed'}">${it.isTarget ? '🎯 TARGET' : 'LEFT'}</span>`;
+
+      const partsHtml = it.parts.map(p => {
+        if (p.ready) {
+          return `<div class="bp-part-chip ready" title="${p.rawName} -> ${p.verb} (${p.name} ready in hangar)">✓ ${p.name}</div>`;
+        }
+        if (built && !inHangar) {
+          return `<div class="bp-part-chip built-part" title="${p.rawName} -> ${p.verb} (${p.name})">✓ ${p.name}</div>`;
+        }
+        return `<div class="bp-part-chip" title="Craft ${p.name}: ${p.rawName} -> ${p.verb}">${p.rawName} → ${p.verb}</div>`;
+      }).join('');
+
+      return `
+        <div class="${cardCls}" data-bp-module="${it.id}" title="${inHangar ? `Click to pin ${rec.title || it.id} as active target` : (rec.lesson || rec.title || it.id)}">
+          <div class="bp-mod-top">
+            <div class="bp-mod-title-wrap">
+              <span class="bp-mod-slot">${it.slot}</span>
+              <span class="bp-mod-title">${rec.title || it.id}</span>
+            </div>
+            <div class="bp-mod-badges">${reqBadge}${statusBadge}</div>
+          </div>
+          <div class="bp-mod-meta">
+            <span class="bp-mod-gains">${formatModuleGains(rec)}</span>
+            <span>${rec.massKg || 0}kg • $${rec.costM || 0}M</span>
+          </div>
+          <div class="bp-mod-parts">${partsHtml}</div>
+        </div>
+      `;
+    }).join('');
+
+    bodyEl.innerHTML = iconize(`
+      <div class="bp-diagram-pane">${buildRocketBlueprintSvg(stackItems, inHangar)}</div>
+      <div class="bp-modules-col">${cardsHtml}</div>
+    `);
+
+    if (inHangar) {
+      bodyEl.querySelectorAll('[data-bp-module]').forEach(el => {
+        el.addEventListener('click', () => {
+          const modId = el.dataset.bpModule;
+          if (!modId) return;
+          state.pinnedRecipeId = modId;
+          if (state.tutorial?.active) {
+            state.tutorial.active = false;
+            state.tutorial.skipped = true;
+          }
+          renderTicketsHUD();
+          updateBlueprintHUD(true);
+        });
+      });
+    }
+  }
+
+  const footerEl = document.getElementById('bp-footer');
+  if (footerEl) {
+    const allFour = builtUnique === 4;
+    footerEl.innerHTML = iconize(`
+      <span>⚡ ${state.telemetry.power >= 0 ? '+' : ''}${state.telemetry.power}W • 📡 ${state.telemetry.comms} Mb/d • 🔬 ${state.telemetry.science} Sci • ⛽ ${Math.round(state.telemetry.fuel)}%</span>
+      <span class="bp-footer-bonus ${allFour ? 'unlocked' : ''}">${allFour ? '✓ +150⭐ FULL-STACK UNLOCKED' : 'Build all 4 modules for +150⭐'}</span>
+    `);
+  }
 }

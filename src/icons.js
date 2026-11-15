@@ -58,6 +58,7 @@ const RAW_ICONS = {
   box: { c: { a: BR, b: '#7a4f22' }, g: ['aaaaaaa', 'aaabaaa', 'bbbbbbb', 'aaabaaa', 'aaabaaa', 'aaabaaa', 'aaaaaaa'] },
   clipboard: { c: { a: '#b07a40', w: W, k: SD }, g: ['..kkk..', 'aaakaaa', 'awwwwwa', 'awkkkwa', 'awwwwwa', 'awkkwwa', 'aaaaaaa'] },
   ruler: { c: { a: Y, k: K }, g: ['aaaa', 'akaa', 'aaaa', 'akka', 'aaaa', 'akaa', 'aaaa'] },
+  blueprint: { c: { a: '#1b5399', b: C, w: W }, g: ['bbbbbbb', 'baaabwb', 'bawwwab', 'bawwaab', 'baaabab', 'baaaawb', 'bbbbbbb'] },
   rover: { c: { a: '#dfe7f5', w: C, k: K }, g: ['..aaaa..', '.awwwwa.', 'aaaaaaaa', 'aaaaaaaa', '.kk..kk.'] },
   chute: { c: { a: O, w: W }, g: ['.aawaa.', 'awwawwa', 'aaaaaaa', 'a..a..a', '.a.a.a.', '..aaa..', '..aaa..'] },
   comet: { c: { a: C, w: W }, g: ['.....ww', '....aww', '...aa..', '..aa...', '.a.....', 'a......'] },
@@ -110,7 +111,7 @@ const EMOJI_TO_ICON = {
   '⚖': 'scale', '💰': 'money', '🧭': 'compass', '🤝': 'team', '🙌': 'team', '👥': 'team',
   '🌬': 'wind', '🔓': 'unlock', '🔒': 'lock', '🌑': 'moon_dark', '🌕': 'moon', '🌙': 'crescent',
   '🌍': 'earth', '📦': 'box', '📋': 'clipboard', '📏': 'ruler', '🚙': 'rover', '🚐': 'rover',
-  '🪂': 'chute', '⬜': 'square', '☄': 'comet', '⏳': 'hourglass', '✕': 'cross', '🛸': 'ufo'
+  '🪂': 'chute', '⬜': 'square', '☄': 'comet', '⏳': 'hourglass', '✕': 'cross', '🛸': 'ufo', '📐': 'blueprint'
 };
 
 const TOKEN_RE = new RegExp(

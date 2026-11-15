@@ -1562,19 +1562,22 @@ function draw25DLunarWorld(ctx) {
   ctx.closePath();
   ctx.fill();
 
-  // Foreground Moon cliff ridge locked to horizonY with sunlit rim
+  // Foreground Moon cliff ridge locked to horizonY with faceted sunlit rock crest
   ctx.fillStyle = '#232e44';
   ctx.beginPath();
   ctx.moveTo(0, horizonY);
-  for (let x = 0; x <= LOGICAL_W; x += 20) {
+  for (let x = 0; x <= LOGICAL_W + 18; x += 18) {
     const wx = x + cx * 0.42;
-    const flatStep = Math.round((Math.sin(wx * 0.009 + 1.1) * 14 + Math.cos(wx * 0.022) * 8) / 6) * 6;
-    ctx.lineTo(x, horizonY - 15 - flatStep);
+    const ridgePeak =
+      Math.abs(Math.sin(wx * 0.0068 + 1.1)) * 18 +
+      Math.sin(wx * 0.021) * 7 +
+      Math.cos(wx * 0.049) * 3.5;
+    ctx.lineTo(x, horizonY - 11 - ridgePeak);
   }
   ctx.lineTo(LOGICAL_W, horizonY);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = 'rgba(203, 213, 225, 0.28)';
+  ctx.strokeStyle = 'rgba(226, 232, 240, 0.34)';
   ctx.lineWidth = 1.6;
   ctx.stroke();
   ctx.restore();
@@ -1666,9 +1669,311 @@ function drawSingleCrater(ctx, cr, offsetY = 0) {
   ctx.stroke();
 }
 
+const CLIFF_GEOM_CACHE = new WeakMap();
+const LUNAR_SUN_DIR = { x: -0.76, y: -0.65 };
+
+function hashString(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function makeSeededRng(seed) {
+  let s = (seed >>> 0) || 1;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+function sampleRoundedRectPerimeter(rect, stepPx = 24) {
+  const { x1, y1, x2, y2 } = rect;
+  const r = Math.max(2, Math.min(rect.r || 12, (x2 - x1) * 0.45, (y2 - y1) * 0.45));
+  const out = [];
+
+  const pushLine = (ax, ay, bx, by, nx, ny) => {
+    const len = Math.hypot(bx - ax, by - ay);
+    const n = Math.max(1, Math.round(len / stepPx));
+    for (let i = 0; i < n; i++) {
+      const t = i / n;
+      out.push({ x: ax + (bx - ax) * t, y: ay + (by - ay) * t, nx, ny });
+    }
+  };
+
+  const pushArc = (cx, cy, startAng, endAng) => {
+    const arcLen = Math.abs(endAng - startAng) * r;
+    const n = Math.max(2, Math.round(arcLen / Math.max(14, stepPx * 0.8)));
+    for (let i = 0; i < n; i++) {
+      const ang = startAng + (endAng - startAng) * (i / n);
+      out.push({
+        x: cx + Math.cos(ang) * r,
+        y: cy + Math.sin(ang) * r,
+        nx: Math.cos(ang),
+        ny: Math.sin(ang)
+      });
+    }
+  };
+
+  // Clockwise perimeter starting at top-left straight edge
+  pushLine(x1 + r, y1, x2 - r, y1, 0, -1);
+  pushArc(x2 - r, y1 + r, -Math.PI * 0.5, 0);
+  pushLine(x2, y1 + r, x2, y2 - r, 1, 0);
+  pushArc(x2 - r, y2 - r, 0, Math.PI * 0.5);
+  pushLine(x2 - r, y2, x1 + r, y2, 0, 1);
+  pushArc(x1 + r, y2 - r, Math.PI * 0.5, Math.PI);
+  pushLine(x1, y2 - r, x1, y1 + r, -1, 0);
+  pushArc(x1 + r, y1 + r, Math.PI, Math.PI * 1.5);
+  return out;
+}
+
+function isNearFeatureRect(x, y, rects, pad = 16) {
+  for (const r of rects || []) {
+    if (x >= r.x1 - pad && x <= r.x2 + pad && y >= r.y1 - pad && y <= r.y2 + pad) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function makeBoulderPoly(cx, cy, rx, ry, rot, rng) {
+  const count = 6 + Math.floor(rng() * 3);
+  const pts = [];
+  const cosR = Math.cos(rot);
+  const sinR = Math.sin(rot);
+  for (let i = 0; i < count; i++) {
+    const ang = (i / count) * Math.PI * 2;
+    const rad = 0.72 + rng() * 0.42;
+    const lx = Math.cos(ang) * rx * rad;
+    const ly = Math.sin(ang) * ry * rad;
+    pts.push({
+      x: cx + lx * cosR - ly * sinR,
+      y: cy + lx * sinR + ly * cosR
+    });
+  }
+  return pts;
+}
+
+function getCliffGeometry(cliff, ramps = [], isBasin = false) {
+  let cached = CLIFF_GEOM_CACHE.get(cliff);
+  if (cached) return cached;
+
+  const seed = hashString(String(cliff.id || `${cliff.x1}_${cliff.y1}_${cliff.x2}_${cliff.y2}`));
+  const rng = makeSeededRng(seed);
+  const rawPts = sampleRoundedRectPerimeter(cliff, isBasin ? 26 : 24);
+  const ledges = cliff.ledges || [];
+  const cx = (cliff.x1 + cliff.x2) * 0.5;
+  const cy = (cliff.y1 + cliff.y2) * 0.5;
+  const jagAmp = isBasin ? 13 : 15;
+
+  const pts = rawPts.map((pt, idx) => {
+    const nearRamp = isNearFeatureRect(pt.x, pt.y, ramps, 18);
+    const nearLedge = isNearFeatureRect(pt.x, pt.y, ledges, 14);
+    const quiet = nearRamp || nearLedge;
+    const amp = quiet ? 0.18 : 1.0;
+    const zig = (idx % 2 === 0 ? 1 : -0.75) * (0.35 + rng() * 0.65);
+    const nOff = (zig * jagAmp * 0.55 + (rng() - 0.5) * jagAmp * 0.45) * amp;
+    const tx = -pt.ny;
+    const ty = pt.nx;
+    const tOff = (rng() - 0.5) * 8 * amp;
+
+    const x = pt.x + pt.nx * nOff + tx * tOff;
+    const y = pt.y + pt.ny * nOff + ty * tOff;
+    const flare = quiet ? 0 : (4.5 + rng() * 5.5);
+    const baseX = x + pt.nx * flare;
+    const baseY = y + pt.ny * flare * 0.42;
+    const floorX = x + (cx - x) * 0.032;
+    const floorY = y + (cy - y) * 0.018;
+
+    return {
+      x,
+      y,
+      nx: pt.nx,
+      ny: pt.ny,
+      baseX,
+      baseY,
+      floorX,
+      floorY,
+      nearRamp,
+      nearLedge,
+      strataShift: (rng() - 0.5) * 4.5,
+      apronDist: quiet ? 4 : (10 + rng() * 11)
+    };
+  });
+
+  // Scree & weathered talus boulders along visible cliff foot / basin rim
+  const scree = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    if (p.nearRamp || p.nearLedge) continue;
+    if (!isBasin && p.ny < -0.25) continue;
+    const count = rng() < 0.72 ? 1 + Math.floor(rng() * 2) : 0;
+    for (let k = 0; k < count; k++) {
+      const dist = isBasin ? (4 + rng() * 14) : (2 + rng() * 11);
+      const sx = (isBasin ? p.x : p.baseX) + p.nx * dist + (rng() - 0.5) * 14;
+      const sy = (isBasin ? p.y : p.baseY) + p.ny * dist * 0.55 + (rng() - 0.5) * 7;
+      if (isNearFeatureRect(sx, sy, ramps, 16) || isNearFeatureRect(sx, sy, ledges, 12)) continue;
+      const rx = 4 + rng() * 6.5;
+      const ry = rx * (0.48 + rng() * 0.28);
+      scree.push({
+        x: sx,
+        y: sy,
+        rx,
+        ry,
+        rot: (rng() - 0.5) * 0.7,
+        shade: rng(),
+        poly: makeBoulderPoly(sx, sy, rx, ry, (rng() - 0.5) * 0.7, rng)
+      });
+    }
+  }
+
+  // Interior geological ridges / fractures
+  const ridges = [];
+  const w = cliff.x2 - cliff.x1;
+  const h = cliff.y2 - cliff.y1;
+  const ridgeCount = isBasin ? 4 : 5;
+  for (let i = 0; i < ridgeCount; i++) {
+    const rx0 = cliff.x1 + w * (0.16 + rng() * 0.52);
+    const ry0 = cliff.y1 + h * (0.18 + rng() * 0.64);
+    const segs = [{ x: rx0, y: ry0 }];
+    let curX = rx0;
+    let curY = ry0;
+    const steps = 3 + Math.floor(rng() * 3);
+    const dir = rng() < 0.5 ? 1 : -1;
+    for (let s = 0; s < steps; s++) {
+      curX += (24 + rng() * 34) * dir;
+      curY += (rng() - 0.45) * 22;
+      segs.push({ x: curX, y: curY });
+    }
+    ridges.push(segs);
+  }
+
+  // Non-verbal subtle visual cues: solar glints on sunlit plateaus, ice crystals in shadowed basins
+  const glints = [];
+  if (!isBasin) {
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const sunDot = p.nx * LUNAR_SUN_DIR.x + p.ny * LUNAR_SUN_DIR.y;
+      if (sunDot > 0.15 && !p.nearRamp && rng() < 0.42) {
+        glints.push({
+          x: p.x - p.nx * (6 + rng() * 14),
+          y: p.y - p.ny * (4 + rng() * 10),
+          r: 1.8 + rng() * 1.6,
+          phase: rng() * Math.PI * 2
+        });
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      glints.push({
+        x: cliff.x1 + w * (0.15 + rng() * 0.5),
+        y: cliff.y1 + h * (0.15 + rng() * 0.45),
+        r: 1.7 + rng() * 1.4,
+        phase: rng() * Math.PI * 2
+      });
+    }
+  } else {
+    const iceCount = cliff.id === 'low_ice' ? 14 : 7;
+    for (let i = 0; i < iceCount; i++) {
+      glints.push({
+        x: cliff.x1 + 32 + rng() * Math.max(40, w - 64),
+        y: cliff.y1 + 36 + rng() * Math.max(40, h - 72),
+        size: 3.5 + rng() * 4.5,
+        rot: (rng() - 0.5) * 0.8,
+        phase: rng() * Math.PI * 2
+      });
+    }
+  }
+
+  cached = { pts, scree, ridges, glints };
+  CLIFF_GEOM_CACHE.set(cliff, cached);
+  return cached;
+}
+
+function getLedgeGeometry(ledge) {
+  let cached = CLIFF_GEOM_CACHE.get(ledge);
+  if (cached) return cached;
+  const rng = makeSeededRng(hashString(`ledge_${ledge.x1}_${ledge.y1}_${ledge.x2}_${ledge.y2}`));
+  const raw = sampleRoundedRectPerimeter(ledge, 15);
+  const pts = raw.map((pt, idx) => {
+    const nOff = pt.ny < -0.35 ? 0 : ((idx % 2 === 0 ? 1 : -0.8) * (2.5 + rng() * 3.5));
+    const x = pt.x + pt.nx * nOff;
+    const y = pt.y + pt.ny * nOff;
+    return {
+      x,
+      y,
+      nx: pt.nx,
+      ny: pt.ny,
+      baseX: x + pt.nx * 3.5,
+      baseY: y + pt.ny * 1.8
+    };
+  });
+  const scree = [];
+  for (const p of pts) {
+    if (p.ny < 0.25 || rng() > 0.5) continue;
+    const sx = p.baseX + (rng() - 0.5) * 8;
+    const sy = p.baseY + rng() * 5;
+    const rx = 3 + rng() * 3.5;
+    const ry = rx * 0.55;
+    scree.push({
+      x: sx,
+      y: sy,
+      rx,
+      ry,
+      shade: rng(),
+      poly: makeBoulderPoly(sx, sy, rx, ry, (rng() - 0.5) * 0.6, rng)
+    });
+  }
+  cached = { pts, scree };
+  CLIFF_GEOM_CACHE.set(ledge, cached);
+  return cached;
+}
+
+function tracePoly(ctx, pts, dx = 0, dy = 0, scaleX = 1, scaleY = 1, useBase = false) {
+  if (!pts || pts.length === 0) return;
+  ctx.beginPath();
+  for (let i = 0; i < pts.length; i++) {
+    const px = (useBase ? pts[i].baseX : pts[i].x) * scaleX + dx;
+    const py = (useBase ? pts[i].baseY : pts[i].y) * scaleY + dy;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+}
+
+function drawFacetedRockBoulders(ctx, stones, offsetY = 0) {
+  for (const st of stones) {
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.36)';
+    ctx.beginPath();
+    ctx.ellipse(st.x + 2.5, st.y + offsetY + 1.5, st.rx * 1.15, st.ry * 0.65, st.rot || 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = st.shade > 0.5 ? '#475569' : '#334155';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.2;
+    tracePoly(ctx, st.poly, 0, offsetY);
+    ctx.fill();
+    ctx.stroke();
+
+    // Sunlit upper-left facet highlight
+    if (st.poly.length >= 4) {
+      ctx.fillStyle = 'rgba(203, 213, 225, 0.22)';
+      ctx.beginPath();
+      ctx.moveTo(st.x, st.y + offsetY);
+      ctx.lineTo(st.poly[2].x, st.poly[2].y + offsetY);
+      ctx.lineTo(st.poly[3].x, st.poly[3].y + offsetY);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
 function drawCliffRamp(ctx, ramp) {
   const offFrom = -ramp.fromElev * ELEV_LIFT_PX;
   const offTo = -ramp.toElev * ELEV_LIFT_PX;
+  const isBasinRamp = ramp.fromElev < 0 || ramp.toElev < 0;
+  const rng = makeSeededRng(hashString(String(ramp.id || `${ramp.x1}_${ramp.y1}`)));
 
   ctx.save();
   if (ramp.dir === 'x') {
@@ -1677,90 +1982,255 @@ function drawCliffRamp(ctx, ramp) {
     const p3 = { x: ramp.x2, y: ramp.y2 + offTo };
     const p4 = { x: ramp.x1, y: ramp.y2 + offFrom };
 
-    // Front retaining rock skirt under ramp edge
-    ctx.fillStyle = '#1e293b';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.6;
+    // Soft regolith shoulder shadow & embankment
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.32)';
     ctx.beginPath();
-    ctx.moveTo(p4.x, p4.y);
-    ctx.lineTo(p3.x, p3.y);
-    ctx.lineTo(p3.x, ramp.y2 + 6);
-    ctx.lineTo(p4.x, ramp.y2 + 6);
+    ctx.moveTo(p1.x - 4, p1.y - 3);
+    ctx.lineTo(p2.x + 4, p2.y - 3);
+    ctx.lineTo(p3.x + 6, Math.max(p3.y, ramp.y2) + 8);
+    ctx.lineTo(p4.x - 6, Math.max(p4.y, ramp.y2) + 8);
     ctx.closePath();
     ctx.fill();
-    ctx.stroke();
 
-    // Sloped ramp deck
+    if (!isBasinRamp) {
+      // Raised basalt embankment skirt under the southern side of plateau ramp
+      const skirtSegs = 5;
+      for (let i = 0; i < skirtSegs; i++) {
+        const t0 = i / skirtSegs;
+        const t1 = (i + 1) / skirtSegs;
+        const tx0 = p4.x + (p3.x - p4.x) * t0;
+        const ty0 = p4.y + (p3.y - p4.y) * t0;
+        const tx1 = p4.x + (p3.x - p4.x) * t1;
+        const ty1 = p4.y + (p3.y - p4.y) * t1;
+        const bx0 = tx0;
+        const by0 = ramp.y2 + 5 + (rng() - 0.5) * 2.5;
+        const bx1 = tx1;
+        const by1 = ramp.y2 + 5 + (rng() - 0.5) * 2.5;
+
+        ctx.fillStyle = i % 2 === 0 ? '#273449' : '#1b2638';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(tx0, ty0);
+        ctx.lineTo(tx1, ty1);
+        ctx.lineTo(bx1, by1);
+        ctx.lineTo(bx0, by0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Basalt strata crease
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
+        ctx.beginPath();
+        ctx.moveTo(tx0, (ty0 + by0) * 0.5);
+        ctx.lineTo(tx1, (ty1 + by1) * 0.5);
+        ctx.stroke();
+      }
+    } else {
+      // Basin cut-bank shadow along north wall where ramp descends into pit
+      ctx.fillStyle = '#0b1120';
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y - 5);
+      ctx.lineTo(p2.x, p2.y - 4);
+      ctx.lineTo(p2.x, p2.y + 4);
+      ctx.lineTo(p1.x, p1.y + 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Graded lunar regolith causeway surface
     const grad = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
-    grad.addColorStop(0, ramp.fromElev > ramp.toElev ? '#55657d' : '#2d3b52');
-    grad.addColorStop(1, ramp.toElev > ramp.fromElev ? '#55657d' : '#2d3b52');
+    const highCol = '#58677d';
+    const plainCol = '#3b495e';
+    const lowCol = '#1c273b';
+    grad.addColorStop(0, ramp.fromElev > 0 ? highCol : ramp.fromElev < 0 ? lowCol : plainCol);
+    grad.addColorStop(1, ramp.toElev > 0 ? highCol : ramp.toElev < 0 ? lowCol : plainCol);
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.lineTo(p3.x, p3.y);
-    ctx.lineTo(p4.x, p4.y);
+    ctx.moveTo(p1.x, p1.y + 1);
+    ctx.lineTo(p2.x, p2.y + 1);
+    ctx.lineTo(p3.x, p3.y - 1);
+    ctx.lineTo(p4.x, p4.y - 1);
     ctx.closePath();
     ctx.fill();
 
-    // Side guide rails
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
-    ctx.lineWidth = 2.2;
+    // Subtle sunlit upper shoulder & shadowed lower shoulder
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.24)';
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
-    ctx.moveTo(p4.x, p4.y); ctx.lineTo(p3.x, p3.y);
+    ctx.moveTo(p1.x, p1.y + 1);
+    ctx.lineTo(p2.x, p2.y + 1);
     ctx.stroke();
 
-    // Uphill directional chevrons
-    const climbDir = ramp.toElev > ramp.fromElev ? 1 : -1;
-    ctx.strokeStyle = 'rgba(125, 211, 252, 0.78)';
-    ctx.lineWidth = 2.2;
-    for (const frac of [0.28, 0.52, 0.76]) {
-      const cx = ramp.x1 + (ramp.x2 - ramp.x1) * frac;
-      const cy = (ramp.y1 + ramp.y2) * 0.5 + offFrom + (offTo - offFrom) * frac;
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.55)';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(p4.x, p4.y - 1);
+    ctx.lineTo(p3.x, p3.y - 1);
+    ctx.stroke();
+
+    // Compacted dual rover wheel ruts along the causeway
+    const spanY = ramp.y2 - ramp.y1;
+    for (const yFrac of [0.3, 0.7]) {
+      const sy = ramp.y1 + spanY * yFrac;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.34)';
+      ctx.lineWidth = 6.5;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(cx - 5 * climbDir, cy - 8);
-      ctx.lineTo(cx + 5 * climbDir, cy);
-      ctx.lineTo(cx - 5 * climbDir, cy + 8);
+      ctx.moveTo(ramp.x1 + 5, sy + offFrom);
+      ctx.lineTo(ramp.x2 - 5, sy + offTo);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(203, 213, 225, 0.14)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(ramp.x1 + 6, sy + offFrom - 2.5);
+      ctx.lineTo(ramp.x2 - 6, sy + offTo - 2.5);
       ctx.stroke();
     }
+    ctx.lineCap = 'butt';
+
+    // Subtle embossed chevron track marks pressed into regolith dust
+    const climbDir = ramp.toElev > ramp.fromElev ? 1 : -1;
+    for (const frac of [0.26, 0.5, 0.74]) {
+      const cx = ramp.x1 + (ramp.x2 - ramp.x1) * frac;
+      const cy = (ramp.y1 + ramp.y2) * 0.5 + offFrom + (offTo - offFrom) * frac;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.45)';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(cx - 4 * climbDir, cy - 5.5);
+      ctx.lineTo(cx + 4 * climbDir, cy + 0.5);
+      ctx.lineTo(cx - 4 * climbDir, cy + 6.5);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(226, 232, 240, 0.28)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - 4 * climbDir, cy - 6.5);
+      ctx.lineTo(cx + 4 * climbDir, cy - 0.5);
+      ctx.lineTo(cx - 4 * climbDir, cy + 5.5);
+      ctx.stroke();
+    }
+
+    // Weathered guide boulders flanking top & bottom shoulders
+    const guideBoulders = [];
+    for (const frac of [0.16, 0.48, 0.82]) {
+      const bx = ramp.x1 + (ramp.x2 - ramp.x1) * frac;
+      const yOff = offFrom + (offTo - offFrom) * frac;
+      for (const sideY of [ramp.y1 - 2, ramp.y2 + 2]) {
+        const rx = 4.2 + rng() * 3.2;
+        const ry = rx * 0.58;
+        const gy = sideY + yOff;
+        guideBoulders.push({
+          x: bx, y: gy, rx, ry, rot: (rng() - 0.5) * 0.6, shade: rng(),
+          poly: makeBoulderPoly(bx, gy, rx, ry, (rng() - 0.5) * 0.6, rng)
+        });
+      }
+    }
+    drawFacetedRockBoulders(ctx, guideBoulders);
   } else {
     const p1 = { x: ramp.x1, y: ramp.y1 + offFrom };
     const p2 = { x: ramp.x2, y: ramp.y1 + offFrom };
     const p3 = { x: ramp.x2, y: ramp.y2 + offTo };
     const p4 = { x: ramp.x1, y: ramp.y2 + offTo };
 
-    const grad = ctx.createLinearGradient(p1.x, p1.y, p4.x, p4.y);
-    grad.addColorStop(0, ramp.fromElev > ramp.toElev ? '#55657d' : '#2d3b52');
-    grad.addColorStop(1, ramp.toElev > ramp.fromElev ? '#55657d' : '#2d3b52');
-    ctx.fillStyle = grad;
+    // Soft side berm shadow
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.34)';
     ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.lineTo(p3.x, p3.y);
-    ctx.lineTo(p4.x, p4.y);
+    ctx.moveTo(p1.x - 5, p1.y);
+    ctx.lineTo(p2.x + 6, p2.y);
+    ctx.lineTo(p3.x + 7, p3.y + 4);
+    ctx.lineTo(p4.x - 5, p4.y + 4);
     ctx.closePath();
     ctx.fill();
 
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
-    ctx.lineWidth = 2.2;
+    const grad = ctx.createLinearGradient(p1.x, p1.y, p4.x, p4.y);
+    const highCol = '#58677d';
+    const plainCol = '#3b495e';
+    const lowCol = '#1c273b';
+    grad.addColorStop(0, ramp.fromElev > 0 ? highCol : ramp.fromElev < 0 ? lowCol : plainCol);
+    grad.addColorStop(1, ramp.toElev > 0 ? highCol : ramp.toElev < 0 ? lowCol : plainCol);
+    ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y); ctx.lineTo(p4.x, p4.y);
-    ctx.moveTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y);
+    ctx.moveTo(p1.x + 1, p1.y);
+    ctx.lineTo(p2.x - 1, p2.y);
+    ctx.lineTo(p3.x - 1, p3.y);
+    ctx.lineTo(p4.x + 1, p4.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Sunlit left shoulder & shadowed right cut-edge
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.24)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(p1.x + 1, p1.y);
+    ctx.lineTo(p4.x + 1, p4.y);
     ctx.stroke();
 
-    const climbDir = ramp.toElev > ramp.fromElev ? 1 : -1;
-    ctx.strokeStyle = 'rgba(125, 211, 252, 0.78)';
-    ctx.lineWidth = 2.2;
-    for (const frac of [0.28, 0.52, 0.76]) {
-      const cx = (ramp.x1 + ramp.x2) * 0.5;
-      const cy = ramp.y1 + (ramp.y2 - ramp.y1) * frac + offFrom + (offTo - offFrom) * frac;
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.58)';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(p2.x - 1, p2.y);
+    ctx.lineTo(p3.x - 1, p3.y);
+    ctx.stroke();
+
+    // Compacted dual rover wheel ruts
+    const spanX = ramp.x2 - ramp.x1;
+    for (const xFrac of [0.3, 0.7]) {
+      const sx = ramp.x1 + spanX * xFrac;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.34)';
+      ctx.lineWidth = 6.5;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(cx - 8, cy - 5 * climbDir);
-      ctx.lineTo(cx, cy + 5 * climbDir);
-      ctx.lineTo(cx + 8, cy - 5 * climbDir);
+      ctx.moveTo(sx, ramp.y1 + offFrom + 4);
+      ctx.lineTo(sx, ramp.y2 + offTo - 4);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(203, 213, 225, 0.14)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(sx - 2.5, ramp.y1 + offFrom + 5);
+      ctx.lineTo(sx - 2.5, ramp.y2 + offTo - 5);
       ctx.stroke();
     }
+    ctx.lineCap = 'butt';
+
+    // Subtle embossed chevron track marks
+    const climbDir = ramp.toElev > ramp.fromElev ? 1 : -1;
+    for (const frac of [0.26, 0.5, 0.74]) {
+      const cx = (ramp.x1 + ramp.x2) * 0.5;
+      const cy = ramp.y1 + (ramp.y2 - ramp.y1) * frac + offFrom + (offTo - offFrom) * frac;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.45)';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(cx - 5.5, cy - 4 * climbDir + 1);
+      ctx.lineTo(cx, cy + 4 * climbDir + 1);
+      ctx.lineTo(cx + 5.5, cy - 4 * climbDir + 1);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(226, 232, 240, 0.28)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - 5.5, cy - 4 * climbDir);
+      ctx.lineTo(cx, cy + 4 * climbDir);
+      ctx.lineTo(cx + 5.5, cy - 4 * climbDir);
+      ctx.stroke();
+    }
+
+    // Weathered guide boulders flanking left & right shoulders
+    const guideBoulders = [];
+    for (const frac of [0.16, 0.48, 0.82]) {
+      const by = ramp.y1 + (ramp.y2 - ramp.y1) * frac + offFrom + (offTo - offFrom) * frac;
+      for (const sideX of [ramp.x1 - 2, ramp.x2 + 2]) {
+        const rx = 4.2 + rng() * 3.2;
+        const ry = rx * 0.58;
+        guideBoulders.push({
+          x: sideX, y: by, rx, ry, rot: (rng() - 0.5) * 0.6, shade: rng(),
+          poly: makeBoulderPoly(sideX, by, rx, ry, (rng() - 0.5) * 0.6, rng)
+        });
+      }
+    }
+    drawFacetedRockBoulders(ctx, guideBoulders);
   }
   ctx.restore();
 }
@@ -1768,77 +2238,187 @@ function drawCliffRamp(ctx, ramp) {
 function drawLowCliffBasin(ctx, b, ramps, craters, minWorldY) {
   if (b.y2 + 30 < minWorldY) return;
   const depth = ELEV_LIFT_PX;
+  const geom = getCliffGeometry(b, ramps, true);
+  const pts = geom.pts;
 
   ctx.save();
-  // Soft outer crater-basin rim shadow
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.28)';
-  ctx.beginPath();
-  ctx.roundRect(b.x1 - 8, b.y1 - 6, (b.x2 - b.x1) + 16, (b.y2 - b.y1) + 12, b.r + 6);
-  ctx.fill();
+  // Soft regolith ejecta collar blending basin rim into plain
+  tracePoly(ctx, pts);
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.11)';
+  ctx.lineWidth = 22;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
 
-  // Clip interior to basin opening
+  tracePoly(ctx, pts);
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.34)';
+  ctx.lineWidth = 9;
+  ctx.stroke();
+
+  // Clip interior to jagged basin rim polygon
   ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1, b.r);
+  tracePoly(ctx, pts);
   ctx.clip();
 
-  // Deep interior shadowed rock cliff wall (seen along north/side rim)
-  const wallGrad = ctx.createLinearGradient(0, b.y1, 0, b.y1 + depth + 36);
-  wallGrad.addColorStop(0, '#090e1a');
-  wallGrad.addColorStop(0.55, '#172136');
-  wallGrad.addColorStop(1, '#1e293b');
-  ctx.fillStyle = wallGrad;
-  ctx.fillRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+  // Deep abyssal shadow fill behind drop walls
+  ctx.fillStyle = '#070c18';
+  ctx.fillRect(b.x1 - 24, b.y1 - 24, (b.x2 - b.x1) + 48, (b.y2 - b.y1) + 48);
 
-  // Vertical basalt striations on interior drop-wall
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.14)';
-  ctx.lineWidth = 2;
-  for (let wx = b.x1 + 18; wx < b.x2 - 12; wx += 22) {
+  // Faceted interior basalt cliff drop-walls (rim -> sunken floor)
+  for (let i = 0; i < pts.length; i++) {
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % pts.length];
+    const ex = p2.x - p1.x;
+    const ey = p2.y - p1.y;
+    const len = Math.hypot(ex, ey) || 1;
+    // Inward normal is negative outward normal
+    const inx = -ey / len;
+    const iny = ex / len;
+    if (iny < -0.22) continue; // South overhang face is hidden under rim lip
+
+    const lit = inx * LUNAR_SUN_DIR.x + iny * LUNAR_SUN_DIR.y;
+    const topCol = lit > 0.18 ? '#3d4c63' : lit > -0.28 ? '#233046' : '#101729';
+    const botCol = lit > 0.18 ? '#212d42' : lit > -0.28 ? '#131c2e' : '#070b16';
+
+    const f1x = p1.floorX;
+    const f1y = p1.floorY + depth;
+    const f2x = p2.floorX;
+    const f2y = p2.floorY + depth;
+
+    const wallGrad = ctx.createLinearGradient(0, Math.min(p1.y, p2.y), 0, Math.max(f1y, f2y));
+    wallGrad.addColorStop(0, topCol);
+    wallGrad.addColorStop(1, botCol);
+    ctx.fillStyle = wallGrad;
     ctx.beginPath();
-    ctx.moveTo(wx, b.y1 + 2);
-    ctx.lineTo(wx + ((wx % 44 === 0) ? 4 : -3), b.y1 + depth + 24);
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(f2x, f2y);
+    ctx.lineTo(f1x, f1y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Stratified rock ledges & vertical fracture along facet seam
+    ctx.strokeStyle = lit > 0 ? 'rgba(148, 163, 184, 0.2)' : 'rgba(99, 102, 241, 0.12)';
+    ctx.lineWidth = 1.4;
+    for (const frac of [0.36, 0.68]) {
+      ctx.beginPath();
+      ctx.moveTo(p1.x + (f1x - p1.x) * frac, p1.y + (f1y - p1.y) * frac + p1.strataShift * 0.4);
+      ctx.lineTo(p2.x + (f2x - p2.x) * frac, p2.y + (f2y - p2.y) * frac + p2.strataShift * 0.4);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(f1x, f1y);
     ctx.stroke();
   }
 
-  // Sunken basin floor shifted down by +depth
-  const floorGrad = ctx.createLinearGradient(0, b.y1 + depth, 0, b.y2 + depth);
-  floorGrad.addColorStop(0, '#0f172a');
-  floorGrad.addColorStop(0.45, '#192338');
-  floorGrad.addColorStop(1, '#233047');
+  // Sunken rocky basin floor shifted down by +depth
+  const floorGrad = ctx.createLinearGradient(b.x1, b.y1 + depth, b.x2, b.y2 + depth);
+  floorGrad.addColorStop(0, '#0b1224');
+  floorGrad.addColorStop(0.5, '#152036');
+  floorGrad.addColorStop(1, '#212f48');
   ctx.fillStyle = floorGrad;
   ctx.beginPath();
-  ctx.roundRect(b.x1 + 3, b.y1 + depth, (b.x2 - b.x1) - 6, (b.y2 - b.y1) - 2, Math.max(8, b.r - 6));
+  for (let i = 0; i < pts.length; i++) {
+    const fx = pts[i].floorX;
+    const fy = pts[i].floorY + depth;
+    if (i === 0) ctx.moveTo(fx, fy);
+    else ctx.lineTo(fx, fy);
+  }
+  ctx.closePath();
   ctx.fill();
 
-  // Subtle shadow-zone tint & frost sheen on basin floor
-  ctx.strokeStyle = 'rgba(129, 140, 248, 0.22)';
+  // Deep indigo shadow wash cast inward from NW rim (non-verbal 1.4x drain zone cue)
+  const indigoShadow = ctx.createRadialGradient(
+    b.x1 + (b.x2 - b.x1) * 0.26,
+    b.y1 + depth + (b.y2 - b.y1) * 0.24,
+    18,
+    (b.x1 + b.x2) * 0.5,
+    (b.y1 + b.y2) * 0.5 + depth,
+    Math.max(b.x2 - b.x1, b.y2 - b.y1) * 0.72
+  );
+  indigoShadow.addColorStop(0, 'rgba(30, 27, 75, 0.46)');
+  indigoShadow.addColorStop(0.65, 'rgba(49, 46, 129, 0.2)');
+  indigoShadow.addColorStop(1, 'rgba(15, 23, 42, 0)');
+  ctx.fillStyle = indigoShadow;
+  ctx.fillRect(b.x1 - 12, b.y1 - 12, (b.x2 - b.x1) + 24, (b.y2 - b.y1) + 40);
+
+  // Subtle floor rock fracture creases
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.48)';
   ctx.lineWidth = 1.6;
-  ctx.stroke();
+  for (const r of geom.ridges) {
+    ctx.beginPath();
+    r.forEach((pt, idx) => {
+      if (idx === 0) ctx.moveTo(pt.x, pt.y + depth);
+      else ctx.lineTo(pt.x, pt.y + depth);
+    });
+    ctx.stroke();
+  }
+
+  // Icy crystal glints on shadowed basin floor
+  const nowSec = performance.now() * 0.001;
+  for (const ic of geom.glints) {
+    const pulse = 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(nowSec * 2.2 + ic.phase));
+    const iy = ic.y + depth;
+    ctx.save();
+    ctx.translate(ic.x, iy);
+    ctx.rotate(ic.rot);
+    ctx.fillStyle = `rgba(129, 140, 248, ${0.26 + pulse * 0.24})`;
+    ctx.beginPath();
+    ctx.moveTo(0, -ic.size);
+    ctx.lineTo(ic.size * 0.58, 0);
+    ctx.lineTo(0, ic.size * 0.72);
+    ctx.lineTo(-ic.size * 0.58, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(165, 243, 252, ${0.32 * pulse})`;
+    ctx.beginPath();
+    ctx.arc(0, -ic.size * 0.25, 1.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   for (const cr of craters) {
     drawSingleCrater(ctx, cr, depth);
   }
-
-  ctx.fillStyle = 'rgba(165, 180, 252, 0.72)';
-  ctx.font = 'bold 10.5px Fredoka, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(`🌑 ${b.name} (-22m • 1.4x DRAIN)`, (b.x1 + b.x2) * 0.5, b.y2 - 14);
   ctx.restore();
 
-  // Crisp outer basin rim lip
-  ctx.strokeStyle = '#020617';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.roundRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1, b.r);
-  ctx.stroke();
+  // Crisp jagged basin rim edge: dark inner drop on NW, grazing sunlit lip on SE
+  for (let i = 0; i < pts.length; i++) {
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % pts.length];
+    if (p1.nearRamp && p2.nearRamp) continue;
+    const ex = p2.x - p1.x;
+    const ey = p2.y - p1.y;
+    const len = Math.hypot(ex, ey) || 1;
+    const inx = -ey / len;
+    const iny = ex / len;
+    const rimLit = inx * LUNAR_SUN_DIR.x + iny * LUNAR_SUN_DIR.y;
 
-  ctx.strokeStyle = 'rgba(203, 213, 225, 0.34)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.roundRect(b.x1 - 1, b.y1 - 1, (b.x2 - b.x1) + 2, (b.y2 - b.y1) + 2, b.r + 1);
-  ctx.stroke();
+    ctx.strokeStyle = '#020617';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
 
-  // Draw exit ramps bridging across the basin rim
+    if (rimLit > -0.1) {
+      ctx.strokeStyle = `rgba(203, 213, 225, ${0.22 + Math.max(0, rimLit) * 0.28})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(p1.x - inx * 1.4, p1.y - iny * 1.4);
+      ctx.lineTo(p2.x - inx * 1.4, p2.y - iny * 1.4);
+      ctx.stroke();
+    }
+  }
+
+  // Scattered weathered boulders around outer crater-basin rim
+  drawFacetedRockBoulders(ctx, geom.scree);
+
+  // Graded access ramps bridging across the basin rim
   for (const ramp of ramps) {
     drawCliffRamp(ctx, ramp);
   }
@@ -1847,108 +2427,252 @@ function drawLowCliffBasin(ctx, b, ramps, craters, minWorldY) {
 
 function drawHighCliffPlateau(ctx, p, ramps, craters) {
   const lift = ELEV_LIFT_PX;
+  const geom = getCliffGeometry(p, ramps, false);
+  const pts = geom.pts;
 
   ctx.save();
-  // Ground drop shadow under plateau
-  ctx.fillStyle = 'rgba(2, 6, 23, 0.44)';
-  ctx.beginPath();
-  ctx.roundRect(p.x1 + 8, p.y1 + 6, (p.x2 - p.x1) + 4, (p.y2 - p.y1) + 10, p.r);
+  // Ground regolith dust skirt & directional lunar cast shadow (away from NW sun)
+  tracePoly(ctx, pts, 0, 0, 1, 1, true);
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.24)';
+  ctx.lineWidth = 20;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  tracePoly(ctx, pts, 16, 11, 1, 1, true);
+  ctx.fillStyle = 'rgba(2, 6, 23, 0.42)';
   ctx.fill();
 
-  // Layered shadowed rock cliff wall extruded from ground footprint up to lifted plateau top
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(p.x1, p.y1 - lift, p.x2 - p.x1, (p.y2 - p.y1) + lift, p.r);
-  ctx.clip();
+  // Faceted 2.5D extruded rock escarpment wall quads (lifted top rim -> flared ground base)
+  const wallFacets = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % pts.length];
+    const ex = p2.x - p1.x;
+    const ey = p2.y - p1.y;
+    const len = Math.hypot(ex, ey) || 1;
+    const nx = ey / len;
+    const ny = -ex / len;
+    if (ny < -0.35) continue; // Back/north rim is covered cleanly by plateau top
+    wallFacets.push({
+      p1,
+      p2,
+      nx,
+      ny,
+      sortY: Math.max(p1.baseY, p2.baseY)
+    });
+  }
+  wallFacets.sort((a, b) => a.sortY - b.sortY);
 
-  const cliffGrad = ctx.createLinearGradient(0, p.y2 - lift, 0, p.y2 + 2);
-  cliffGrad.addColorStop(0, '#3b495e');
-  cliffGrad.addColorStop(0.45, '#1e293b');
-  cliffGrad.addColorStop(1, '#0f172a');
-  ctx.fillStyle = cliffGrad;
-  ctx.fillRect(p.x1, p.y1 - lift, p.x2 - p.x1, (p.y2 - p.y1) + lift + 4);
+  for (const f of wallFacets) {
+    const { p1, p2, nx, ny } = f;
+    const lit = nx * LUNAR_SUN_DIR.x + ny * LUNAR_SUN_DIR.y;
+    const topCol = lit > 0.16 ? '#54647c' : lit > -0.28 ? '#3b4a62' : '#243044';
+    const botCol = lit > 0.16 ? '#2a374c' : lit > -0.28 ? '#1b2639' : '#0f172a';
 
-  // Horizontal sedimentary/basalt strata bands
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
-  ctx.lineWidth = 2;
-  for (let sy = p.y2 - lift + 8; sy < p.y2; sy += 7) {
+    const t1y = p1.y - lift;
+    const t2y = p2.y - lift;
+    const wallGrad = ctx.createLinearGradient(0, Math.min(t1y, t2y), 0, Math.max(p1.baseY, p2.baseY));
+    wallGrad.addColorStop(0, topCol);
+    wallGrad.addColorStop(0.62, botCol);
+    wallGrad.addColorStop(1, '#0b1220');
+
+    ctx.fillStyle = wallGrad;
     ctx.beginPath();
-    ctx.moveTo(p.x1, sy);
-    ctx.lineTo(p.x2, sy);
+    ctx.moveTo(p1.x, t1y);
+    ctx.lineTo(p2.x, t2y);
+    ctx.lineTo(p2.baseX, p2.baseY);
+    ctx.lineTo(p1.baseX, p1.baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Stratified lunar basalt rock ledges along cliff face
+    ctx.strokeStyle = lit > 0 ? 'rgba(203, 213, 225, 0.22)' : 'rgba(148, 163, 184, 0.12)';
+    ctx.lineWidth = 1.5;
+    for (const frac of [0.34, 0.67]) {
+      ctx.beginPath();
+      ctx.moveTo(p1.x + (p1.baseX - p1.x) * frac, t1y + (p1.baseY - t1y) * frac + p1.strataShift * 0.45);
+      ctx.lineTo(p2.x + (p2.baseX - p2.x) * frac, t2y + (p2.baseY - t2y) * frac + p2.strataShift * 0.45);
+      ctx.stroke();
+    }
+
+    // Vertical angular facet crease + dark base contact seam
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.52)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, t1y);
+    ctx.lineTo(p1.baseX, p1.baseY);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.72)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p1.baseX, p1.baseY);
+    ctx.lineTo(p2.baseX, p2.baseY);
     ctx.stroke();
   }
 
-  // Vertical jagged rock cliff fissures
-  ctx.strokeStyle = 'rgba(2, 6, 23, 0.55)';
-  ctx.lineWidth = 2.4;
-  for (let fx = p.x1 + 22; fx < p.x2 - 16; fx += 26) {
+  // Weathered scree & talus boulders piled along cliff wall feet
+  drawFacetedRockBoulders(ctx, geom.scree);
+
+  // Sunlit plateau top surface shifted up by -lift
+  const topGrad = ctx.createLinearGradient(p.x1, p.y1 - lift, p.x2, p.y2 - lift);
+  topGrad.addColorStop(0, '#6a7a91');
+  topGrad.addColorStop(0.5, '#4e5f77');
+  topGrad.addColorStop(1, '#37455b');
+  ctx.fillStyle = topGrad;
+  tracePoly(ctx, pts, 0, -lift);
+  ctx.fill();
+
+  ctx.save();
+  tracePoly(ctx, pts, 0, -lift);
+  ctx.clip();
+
+  // Warm sunlit highland wash on NW ridge (non-verbal +4.5Wh/s solar cue)
+  const sunWash = ctx.createRadialGradient(
+    p.x1 + (p.x2 - p.x1) * 0.28,
+    p.y1 - lift + (p.y2 - p.y1) * 0.25,
+    20,
+    p.x1 + (p.x2 - p.x1) * 0.42,
+    p.y1 - lift + (p.y2 - p.y1) * 0.42,
+    Math.max(p.x2 - p.x1, p.y2 - p.y1) * 0.78
+  );
+  sunWash.addColorStop(0, 'rgba(253, 224, 71, 0.12)');
+  sunWash.addColorStop(0.6, 'rgba(254, 240, 138, 0.04)');
+  sunWash.addColorStop(1, 'rgba(254, 240, 138, 0)');
+  ctx.fillStyle = sunWash;
+  ctx.fillRect(p.x1 - 24, p.y1 - lift - 24, (p.x2 - p.x1) + 48, (p.y2 - p.y1) + 48);
+
+  // Subtle interior basalt rock ridges & surface creases
+  for (const r of geom.ridges) {
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.34)';
+    ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.moveTo(fx, p.y2 - lift - 2);
-    ctx.lineTo(fx + ((fx % 52 === 0) ? 5 : -4), p.y2 - 10);
-    ctx.lineTo(fx + ((fx % 52 === 0) ? 2 : -1), p.y2 + 2);
+    r.forEach((pt, idx) => {
+      if (idx === 0) ctx.moveTo(pt.x, pt.y - lift);
+      else ctx.lineTo(pt.x, pt.y - lift);
+    });
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.16)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    r.forEach((pt, idx) => {
+      if (idx === 0) ctx.moveTo(pt.x, pt.y - lift - 1.5);
+      else ctx.lineTo(pt.x, pt.y - lift - 1.5);
+    });
     ctx.stroke();
   }
   ctx.restore();
 
-  // Outer dark rock wall outline
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2.4;
-  ctx.beginPath();
-  ctx.roundRect(p.x1, p.y1 - lift, p.x2 - p.x1, (p.y2 - p.y1) + lift, p.r);
-  ctx.stroke();
+  // Directional sunlit crest & shadowed rim highlights around plateau top
+  for (let i = 0; i < pts.length; i++) {
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % pts.length];
+    if (p1.nearRamp && p2.nearRamp) continue;
+    const ex = p2.x - p1.x;
+    const ey = p2.y - p1.y;
+    const len = Math.hypot(ex, ey) || 1;
+    const nx = ey / len;
+    const ny = -ex / len;
+    const lit = nx * LUNAR_SUN_DIR.x + ny * LUNAR_SUN_DIR.y;
 
-  // Sunlit plateau top surface shifted up by -lift
-  const topGrad = ctx.createLinearGradient(p.x1, p.y1 - lift, p.x2, p.y2 - lift);
-  topGrad.addColorStop(0, '#64748b');
-  topGrad.addColorStop(0.55, '#4c5c73');
-  topGrad.addColorStop(1, '#3b495e');
-  ctx.fillStyle = topGrad;
-  ctx.beginPath();
-  ctx.roundRect(p.x1, p.y1 - lift, p.x2 - p.x1, p.y2 - p.y1, p.r);
-  ctx.fill();
+    ctx.strokeStyle = lit > 0.12
+      ? 'rgba(254, 240, 138, 0.62)'
+      : lit > -0.22
+        ? 'rgba(226, 232, 240, 0.36)'
+        : 'rgba(15, 23, 42, 0.78)';
+    ctx.lineWidth = lit > 0.12 ? 2.4 : 2.0;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y - lift);
+    ctx.lineTo(p2.x, p2.y - lift);
+    ctx.stroke();
+  }
 
-  // Sunlit rim highlight
-  ctx.strokeStyle = 'rgba(248, 250, 252, 0.52)';
-  ctx.lineWidth = 2.4;
-  ctx.stroke();
+  // Tiny solar glint particles along sunlit highland ridges
+  const nowSec = performance.now() * 0.001;
+  for (const g of geom.glints) {
+    const tw = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(nowSec * 2.6 + g.phase));
+    const gy = g.y - lift;
+    ctx.fillStyle = `rgba(253, 224, 71, ${0.42 * tw})`;
+    ctx.beginPath();
+    ctx.arc(g.x, gy, g.r * (1.2 + tw * 0.4), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.75 * tw})`;
+    ctx.beginPath();
+    ctx.arc(g.x, gy, g.r * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // Craters resting on top of this plateau
   for (const cr of craters) {
     drawSingleCrater(ctx, cr, -lift);
   }
 
-  // Sunlit plateau solar recharge tag
-  ctx.fillStyle = 'rgba(253, 224, 71, 0.88)';
-  ctx.font = 'bold 10.5px Fredoka, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText(`☀️ ${p.name} (+4.5Wh/s SUN)`, p.x1 + 24, p.y1 - lift + 20);
-
-  // Stepped jump ledges along cliff rim for SHIFT RCS Hop
+  // Natural stepped rock shelves along cliff rim for SHIFT RCS Hop
   for (const ledge of p.ledges || []) {
     const ledgeLift = Math.round(ledge.elev * ELEV_LIFT_PX);
-    ctx.fillStyle = '#1e293b';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(ledge.x1, ledge.y1 - ledgeLift, ledge.x2 - ledge.x1, (ledge.y2 - ledge.y1) + ledgeLift, ledge.r);
-    ctx.fill();
-    ctx.stroke();
+    const lGeom = getLedgeGeometry(ledge);
+    const lPts = lGeom.pts;
 
-    ctx.fillStyle = '#4c5c73';
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.68)';
+    // Ground shadow
+    tracePoly(ctx, lPts, 6, 4, 1, 1, true);
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.38)';
+    ctx.fill();
+
+    // Faceted rock ledge wall
+    for (let i = 0; i < lPts.length; i++) {
+      const p1 = lPts[i];
+      const p2 = lPts[(i + 1) % lPts.length];
+      const ex = p2.x - p1.x;
+      const ey = p2.y - p1.y;
+      const len = Math.hypot(ex, ey) || 1;
+      const nx = ey / len;
+      const ny = -ex / len;
+      if (ny < -0.3) continue;
+      const lit = nx * LUNAR_SUN_DIR.x + ny * LUNAR_SUN_DIR.y;
+      ctx.fillStyle = lit > 0 ? '#3a495f' : '#1e293b';
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y - ledgeLift);
+      ctx.lineTo(p2.x, p2.y - ledgeLift);
+      ctx.lineTo(p2.baseX, p2.baseY);
+      ctx.lineTo(p1.baseX, p1.baseY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    drawFacetedRockBoulders(ctx, lGeom.scree);
+
+    // Jagged shelf top surface
+    const lGrad = ctx.createLinearGradient(ledge.x1, ledge.y1 - ledgeLift, ledge.x2, ledge.y2 - ledgeLift);
+    lGrad.addColorStop(0, '#5a6a82');
+    lGrad.addColorStop(1, '#3d4c63');
+    ctx.fillStyle = lGrad;
+    tracePoly(ctx, lPts, 0, -ledgeLift);
+    ctx.fill();
+
+    // Subtle cool rock-step edge highlight & tiny embossed step chevrons (no noisy text)
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.56)';
     ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.roundRect(ledge.x1, ledge.y1 - ledgeLift, ledge.x2 - ledge.x1, ledge.y2 - ledge.y1, ledge.r);
-    ctx.fill();
+    tracePoly(ctx, lPts, 0, -ledgeLift);
     ctx.stroke();
 
-    ctx.fillStyle = '#7dd3fc';
-    ctx.font = 'bold 9px Fredoka, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('▲ SHIFT HOP', (ledge.x1 + ledge.x2) * 0.5, (ledge.y1 + ledge.y2) * 0.5 - ledgeLift + 3);
+    const lmx = (ledge.x1 + ledge.x2) * 0.5;
+    const lmy = (ledge.y1 + ledge.y2) * 0.5 - ledgeLift;
+    ctx.strokeStyle = 'rgba(186, 230, 253, 0.52)';
+    ctx.lineWidth = 1.6;
+    for (const dy of [-2, 4]) {
+      ctx.beginPath();
+      ctx.moveTo(lmx - 6, lmy + dy + 2);
+      ctx.lineTo(lmx, lmy + dy - 3);
+      ctx.lineTo(lmx + 6, lmy + dy + 2);
+      ctx.stroke();
+    }
   }
 
-  // Sloped access ramps connecting plain to plateau
+  // Graded regolith causeways connecting plain to plateau
   for (const ramp of ramps) {
     drawCliffRamp(ctx, ramp);
   }
@@ -2038,23 +2762,25 @@ function drawLunarRadarMap(ctx) {
   ctx.beginPath(); ctx.roundRect(mmX, mmY, mmW, mmH, 10); ctx.fill(); ctx.stroke();
   const sx = mmW / LUNAR_W, sy = mmH / LUNAR_H;
 
-  // High Cliff Plateau & Low Cliff Basin contour outlines on Lunar Radar
+  // High Cliff Plateau & Low Cliff Basin rocky contour outlines on Lunar Radar
   const cliffs = state.lunarCliffs || { plateaus: [], basins: [], ramps: [] };
   for (const p of cliffs.plateaus || []) {
+    const pRamps = (cliffs.ramps || []).filter(r => r.cliffId === p.id);
+    const geom = getCliffGeometry(p, pRamps, false);
     ctx.fillStyle = 'rgba(245, 158, 11, 0.22)';
     ctx.strokeStyle = '#f59e0b';
     ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.roundRect(mmX + p.x1 * sx, mmY + p.y1 * sy, (p.x2 - p.x1) * sx, (p.y2 - p.y1) * sy, Math.max(2, p.r * sx));
+    tracePoly(ctx, geom.pts, mmX, mmY, sx, sy);
     ctx.fill();
     ctx.stroke();
   }
   for (const b of cliffs.basins || []) {
+    const bRamps = (cliffs.ramps || []).filter(r => r.cliffId === b.id);
+    const geom = getCliffGeometry(b, bRamps, true);
     ctx.fillStyle = 'rgba(49, 46, 129, 0.65)';
     ctx.strokeStyle = '#818cf8';
     ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.roundRect(mmX + b.x1 * sx, mmY + b.y1 * sy, (b.x2 - b.x1) * sx, (b.y2 - b.y1) * sy, Math.max(2, b.r * sx));
+    tracePoly(ctx, geom.pts, mmX, mmY, sx, sy);
     ctx.fill();
     ctx.stroke();
   }

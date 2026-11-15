@@ -226,3 +226,85 @@ export const MAP_LAYOUT = [
   ['C:battery', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', 'L', 'L'],
   ['C:tank',    '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', 'L', 'L']
 ];
+
+// Pixel-aligned Stage 1 Hangar coordinates mapped from 2752x1536 art to 1120x620 logical canvas
+export const STAGE1_LAYOUT = {
+  floor: {
+    topY: 202,
+    bottomY: 604,
+    leftWallTopX: 68,
+    leftWallTopY: 236,
+    leftWallBottomX: 8,
+    leftWallBottomY: 620,
+    rightWallTopX: 1074,
+    rightWallTopY: 200,
+    rightWallBottomX: 1112,
+    rightWallBottomY: 620
+  },
+  obstacles: [
+    { id: 'lockers',  x: 64,  y: 104, w: 250, h: 134 },
+    { id: 'elevator', x: 936, y: 474, w: 184, h: 146 }
+  ],
+  tables: {
+    left_u:   { dx: 258, dy: 306, dw: 258, dh: 193, splitY: 446 },
+    center_u: { dx: 598, dy: 306, dw: 256, dh: 193, splitY: 444 },
+    right_l:  { dx: 926, dy: 302, dw: 168, dh: 124 },
+    props: {
+      beacon:  { x: 266, y: 286, w: 22, h: 28 },
+      arm:     { x: 332, y: 268, w: 46, h: 48 },
+      monitor: { x: 794, y: 278, w: 36, h: 40 }
+    }
+  },
+  stations: [
+    // Left-wall crates (hugging left wall outside the diagonal yellow floor hazard stripe)
+    { id: 'crate_optics',  type: 'CRATE', crateItem: 'optics',  vx: 68,  vy: 218, vw: 70, vh: 73, x: 72,  y: 230, w: 64, h: 58, r: 2, c: 0, label: 'Optics' },
+    { id: 'crate_battery', type: 'CRATE', crateItem: 'battery', vx: 58,  vy: 286, vw: 72, vh: 75, x: 62,  y: 298, w: 66, h: 60, r: 3, c: 0, label: 'Battery' },
+    { id: 'crate_solar',   type: 'CRATE', crateItem: 'solar',   vx: 48,  vy: 358, vw: 73, vh: 77, x: 52,  y: 370, w: 67, h: 62, r: 4, c: 0, label: 'Solar' },
+    { id: 'crate_dish',    type: 'CRATE', crateItem: 'dish',    vx: 38,  vy: 432, vw: 74, vh: 77, x: 42,  y: 444, w: 68, h: 62, r: 5, c: 0, label: 'Dish' },
+    { id: 'crate_tank',    type: 'CRATE', crateItem: 'tank',    vx: 28,  vy: 508, vw: 76, vh: 79, x: 32,  y: 520, w: 70, h: 64, r: 6, c: 0, label: 'Fuel Tank' },
+
+    // Circuit crate tucked beside white cabinet
+    { id: 'crate_circuit', type: 'CRATE', crateItem: 'circuit', vx: 316, vy: 186, vw: 50, vh: 52, x: 316, y: 192, w: 50, h: 46, r: 0, c: 4, label: 'Circuit' },
+
+    // Back-wall stations (flush against back wall above top yellow hazard stripe)
+    { id: 'weld_1',  type: 'W', vx: 368, vy: 172, vw: 82, vh: 68, x: 372, y: 186, w: 76, h: 54, itemX: 409, itemY: 204, r: 0, c: 5,  label: 'WELD' },
+    { id: 'weld_2',  type: 'W', vx: 452, vy: 172, vw: 82, vh: 68, x: 456, y: 186, w: 76, h: 54, itemX: 493, itemY: 204, r: 0, c: 6,  label: 'WELD' },
+    { id: 'cal_1',   type: 'A', vx: 538, vy: 160, vw: 55, vh: 80, x: 540, y: 184, w: 51, h: 56, itemX: 565, itemY: 210, r: 0, c: 7,  label: 'CAL' },
+    { id: 'cal_2',   type: 'A', vx: 593, vy: 160, vw: 55, vh: 80, x: 595, y: 184, w: 51, h: 56, itemX: 620, itemY: 210, r: 0, c: 8,  label: 'CAL' },
+    { id: 'chg_1',   type: 'P', vx: 652, vy: 156, vw: 50, vh: 84, x: 654, y: 184, w: 46, h: 56, itemX: 677, itemY: 204, r: 0, c: 9,  label: 'CHARGE' },
+    { id: 'chg_2',   type: 'P', vx: 704, vy: 156, vw: 50, vh: 84, x: 706, y: 184, w: 46, h: 56, itemX: 729, itemY: 204, r: 0, c: 10, label: 'CHARGE' },
+    { id: 'trays',   type: 'T', vx: 760, vy: 156, vw: 56, vh: 84, x: 762, y: 184, w: 52, h: 56, itemX: 788, itemY: 204, r: 0, c: 11, label: 'TRAYS' },
+    { id: 'co2',     type: 'F', vx: 820, vy: 176, vw: 33, vh: 64, x: 820, y: 186, w: 34, h: 54, itemX: 837, itemY: 206, r: 0, c: 14, label: 'CO2' },
+
+    // Upper-right submit conveyors
+    { id: 'conv_1',  type: '>', vx: 900, vy: 132, vw: 152, vh: 86, x: 902, y: 170, w: 148, h: 48, itemX: 964, itemY: 184, r: 0, c: 16, label: 'SUBMIT' },
+    { id: 'conv_2',  type: '>', vx: 924, vy: 182, vw: 156, vh: 86, x: 926, y: 222, w: 152, h: 46, itemX: 988, itemY: 236, r: 1, c: 16, label: 'SUBMIT' },
+
+    // Left U-Table counters & walkable Swing Gate ('G')
+    { id: 'lu_tl', type: '#', x: 258, y: 306, w: 86, h: 46,  itemX: 301, itemY: 320, r: 3, c: 4 },
+    { id: 'lu_tm', type: '#', x: 344, y: 306, w: 86, h: 46,  itemX: 387, itemY: 320, r: 3, c: 5 },
+    { id: 'lu_tr', type: '#', x: 430, y: 306, w: 86, h: 46,  itemX: 473, itemY: 320, r: 3, c: 7, defaultTray: true },
+    { id: 'lu_lm', type: '#', x: 258, y: 352, w: 56, h: 100, itemX: 286, itemY: 394, r: 4, c: 4 },
+    { id: 'lu_rm', type: '#', x: 470, y: 352, w: 46, h: 100, itemX: 493, itemY: 394, r: 4, c: 7 },
+    { id: 'lu_bl', type: '#', x: 258, y: 452, w: 96, h: 47,  itemX: 306, itemY: 466, r: 5, c: 4 },
+    { id: 'lu_br', type: '#', x: 432, y: 452, w: 84, h: 47,  itemX: 474, itemY: 466, r: 5, c: 7 },
+    { id: 'lu_g',  type: 'G', x: 354, y: 462, w: 78, h: 37,  r: 5, c: 5 },
+
+    // Center U-Table counters
+    { id: 'cu_tl', type: '#', x: 598, y: 306, w: 85,  h: 46, itemX: 640, itemY: 320, r: 3, c: 10, defaultTray: true },
+    { id: 'cu_tm', type: '#', x: 683, y: 306, w: 85,  h: 46, itemX: 725, itemY: 320, r: 3, c: 11 },
+    { id: 'cu_tr', type: '#', x: 768, y: 306, w: 86,  h: 46, itemX: 811, itemY: 320, r: 3, c: 13 },
+    { id: 'cu_lm', type: '#', x: 598, y: 352, w: 52,  h: 98, itemX: 624, itemY: 394, r: 4, c: 10 },
+    { id: 'cu_lb', type: '#', x: 598, y: 450, w: 52,  h: 49, itemX: 624, itemY: 466, r: 5, c: 10 },
+    { id: 'cu_rm', type: '#', x: 804, y: 352, w: 50,  h: 98, itemX: 829, itemY: 394, r: 4, c: 13 },
+    { id: 'cu_br', type: '#', x: 744, y: 450, w: 110, h: 49, itemX: 799, itemY: 466, r: 5, c: 12 },
+
+    // Right L-Table counters
+    { id: 'rl_tl', type: '#', x: 926,  y: 302, w: 62, h: 60,  itemX: 957,  itemY: 320, r: 3, c: 15 },
+    { id: 'rl_tr', type: '#', x: 988,  y: 302, w: 58, h: 60,  itemX: 1017, itemY: 320, r: 3, c: 16 },
+    { id: 'rl_r',  type: '#', x: 1046, y: 302, w: 48, h: 124, itemX: 1070, itemY: 342, r: 4, c: 17 },
+
+    // Scrap Bin tucked below right_l's right leg above the elevator stairs
+    { id: 'scrap', type: 'X', vx: 1052, vy: 400, vw: 42, vh: 66, x: 1054, y: 428, w: 40, h: 38, itemX: 1074, itemY: 440, r: 5, c: 17, label: 'SCRAP' }
+  ]
+};

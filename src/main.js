@@ -6,7 +6,8 @@ import { broadcastNet, registerNetStageHandler } from './net.js';
 import {
   selectActiveCrew, cycleCoopMode, showMenuModal, renderTicketsHUD,
   updateBottomHUD, updateClockHUD, syncPauseUI, showMissionToast, hideMissionToast,
-  startUiTour, advanceUiTour, skipUiTour, isUiTourActive
+  startUiTour, advanceUiTour, skipUiTour, isUiTourActive,
+  isBlueprintOpen, toggleBlueprint, closeBlueprint
 } from './hud.js';
 import { startTransition, skipTransition, updateTransition, drawTransition } from './transitions.js';
 import { initStage1, buildStage1Map, handleStage1Interact, handleStage1Dash, handleStage1Throw, handleStage1CanvasClick, skipStage1Tutorial, updateStage1, drawStage1 } from './stages/stage1.js';
@@ -72,6 +73,7 @@ export function togglePause() {
 
 function goToDebrief() {
   setPaused(false);
+  closeBlueprint();
   hideMissionToast();
   startStage5Debrief(startGame, openMenu);
 }
@@ -311,6 +313,7 @@ function runStage1GuidedTour() {
 
 function startGame(fromNet = false) {
   hideMissionToast();
+  closeBlueprint();
   document.getElementById('modal').classList.add('hidden');
   startBackgroundMusic();
   resetRunState();
@@ -335,6 +338,7 @@ function startGame(fromNet = false) {
 function openMenu() {
   state.stage = 'MENU';
   setPaused(false);
+  closeBlueprint();
   buildStage1Map();
   updateClockHUD();
   draw();
@@ -362,6 +366,15 @@ document.getElementById('btn-coop').addEventListener('click', cycleCoopMode);
 document.getElementById('btn-skip').addEventListener('click', () => advanceStageManual(false));
 document.getElementById('btn-next').addEventListener('click', () => advanceStageManual(false));
 
+document.getElementById('btn-blueprint')?.addEventListener('click', () => {
+  const opened = toggleBlueprint();
+  playTone(opened ? 620 : 440, 'sine', 0.05, 0.05);
+});
+document.getElementById('btn-close-blueprint')?.addEventListener('click', () => {
+  closeBlueprint();
+  playTone(440, 'sine', 0.05, 0.05);
+});
+
 document.getElementById('btn-guide').addEventListener('click', () => {
   document.getElementById('guide-modal').classList.remove('hidden');
 });
@@ -373,6 +386,7 @@ if (replayGuideBtn) {
   replayGuideBtn.addEventListener('click', () => {
     document.getElementById('guide-modal').classList.add('hidden');
     document.getElementById('modal')?.classList.add('hidden');
+    closeBlueprint();
     startBackgroundMusic();
     if (state.stage === 'STAGE1') {
       setPaused(false);
@@ -473,6 +487,8 @@ window.addEventListener('keydown', (e) => {
         setPaused(false);
       } else if (state.stage === 'STAGE1' && mainModal && !mainModal.classList.contains('hidden')) {
         mainModal.classList.add('hidden');
+      } else if (isBlueprintOpen()) {
+        closeBlueprint();
       } else if (state.stage === 'STAGE2' && state.activeMiniGame) {
         state.activeMiniGame = null;
       } else {
@@ -483,6 +499,19 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (state.paused) return;
+
+  if (e.code === 'KeyB' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const tag = e.target?.tagName;
+    const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(e.target?.isContentEditable);
+    const guideOpen = !document.getElementById('guide-modal')?.classList.contains('hidden');
+    const modalOpen = !document.getElementById('modal')?.classList.contains('hidden');
+    if (!isTyping && !guideOpen && !modalOpen && !state.dilemma && state.stage !== 'MENU' && state.stage !== 'STAGE5') {
+      e.preventDefault();
+      const opened = toggleBlueprint();
+      playTone(opened ? 620 : 440, 'sine', 0.05, 0.05);
+    }
+    return;
+  }
 
   // Gameplay Tutorial paused gate: ONLY Space (unpauses to act), Enter (advances/unpauses), or Tab (skips)
   if (state.stage === 'STAGE1' && state.tutorial?.active && state.tutorial?.paused) {

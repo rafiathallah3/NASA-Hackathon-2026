@@ -73,6 +73,11 @@
       </div>
     </div>
     <div class="hud-cmd-row hud-cmd-row-bottom">
+      <button id="btn-blueprint" class="btn-hud btn-blueprint" type="button" title="Toggle NASA Spacecraft Blueprint Schematic (B)">
+        <span data-icon="blueprint"></span>
+        <span>Blueprint [B]</span>
+        <span class="bp-progress-pill" id="bp-progress-pill">0/4</span>
+      </button>
       <button id="btn-guide" class="btn-hud btn-guide" type="button" title="Mission Guide & Controls">Guide</button>
       <button id="btn-mute" class="btn-hud btn-guide" type="button" title="Toggle Sound" data-icon="sound"></button>
       <button id="btn-pause" class="btn-hud btn-pause" type="button" title="Pause / Resume Game (ESC)" data-icon="pause" data-icon-label="Pause"></button>
@@ -85,6 +90,21 @@
 <div id="game-wrap">
   <canvas id="game" width="1120" height="620"></canvas>
   <div id="mission-toast" class="mission-toast hidden"></div>
+  <aside id="blueprint-overlay" class="blueprint-overlay hidden" role="complementary" aria-label="NASA Spacecraft Blueprint Schematic">
+    <div class="bp-header">
+      <div class="bp-title-group">
+        <span class="bp-tag">NASA TECHNICAL SCHEMATIC // NON-PAUSING</span>
+        <div class="bp-heading-row">
+          <h3>Artemis Lunar Stack Blueprint</h3>
+          <span id="bp-header-progress" class="bp-header-progress">0/4 BUILT</span>
+        </div>
+      </div>
+      <button id="btn-close-blueprint" class="bp-close-btn" type="button" title="Close Blueprint [B / Esc]" aria-label="Close Blueprint" data-icon="cross"></button>
+    </div>
+    <div id="bp-subtitle" class="bp-subtitle"></div>
+    <div id="bp-body" class="bp-body"></div>
+    <div id="bp-footer" class="bp-footer"></div>
+  </aside>
   <div id="pause-overlay" class="pause-overlay hidden" role="dialog" aria-label="Game Paused">
     <div class="pause-card">
       <div class="pause-badge">FLIGHT HOLD</div>
@@ -142,7 +162,7 @@
         Launch from the Moon, fire <kbd>SPACE</kbd> inside the green TEI burn window, hold Earth entry pitch in green (<kbd>W</kbd>/<kbd>S</kbd>) and vent coolant (<kbd>SPACE</kbd>), open chutes at <b>8–18 km</b> (<kbd>SPACE</kbd>), and steer (<kbd>A</kbd>/<kbd>D</kbd> + <kbd>J</kbd>/<kbd>L</kbd>) onto the recovery carrier.
       </div>
     </div>
-    <p class="sub" style="margin-bottom:14px;">Controls: <kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Interact / Override &nbsp;•&nbsp; <kbd>SHIFT</kbd> Dash / RCS Hop &nbsp;•&nbsp; <kbd>F</kbd> Throw &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Crew &nbsp;•&nbsp; <kbd>ESC</kbd> Pause</p>
+    <p class="sub" style="margin-bottom:14px;">Controls: <kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Interact / Override &nbsp;•&nbsp; <kbd>SHIFT</kbd> Dash / RCS Hop &nbsp;•&nbsp; <kbd>F</kbd> Throw &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Crew &nbsp;•&nbsp; <kbd>B</kbd> Blueprint &nbsp;•&nbsp; <kbd>ESC</kbd> Pause</p>
     <div class="modal-actions">
       <button id="btn-replay-guide" class="btn-secondary" type="button">Replay Stage 1 Guide</button>
       <button id="btn-close-guide" class="btn-play" type="button">Close</button>

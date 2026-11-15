@@ -1,4 +1,4 @@
-import { LOGICAL_W, LOGICAL_H, COLS, ROWS, TILE, GRID_X, GRID_Y, MAP_LAYOUT, RAW_ITEMS, PROC_META, RECIPES, CREW_ROSTER } from '../config.js';
+import { LOGICAL_W, LOGICAL_H, COLS, ROWS, TILE, GRID_X, GRID_Y, STAGE1_LAYOUT, RAW_ITEMS, PROC_META, RECIPES, CREW_ROSTER } from '../config.js';
 import { state, getScenario, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
@@ -6,39 +6,117 @@ import { addFloatText, drawItemBadge, drawChibiEngineer, drawHardwareCanvas } fr
 import { getAsset, getAnimFrame, getAnimFrameBounds, getSheetSlice, isImageReady } from '../assets.js';
 import { renderTicketsHUD, updateTicketBarsOnly, updateBottomHUD, setStageBanner, showMissionToast, getActiveTargetRecipe, isProcPartReadyInHangar, isUiTourActive } from '../hud.js';
 
-// SUBMIT belt art is anchored to the right hangar wall (not to its tile) so the gray intake
-// box touches the wall. Delivered trays ride the belt and disappear into that box instead of
-// flying past the wall and out of the canvas.
-const SUBMIT_BELT_W = 97;                                        // conveyor sprite aspect at TILE + 12 tall
-const SUBMIT_BELT_RIGHT = GRID_X + COLS * TILE + 12;             // wall face (1076)
-const SUBMIT_BELT_LEFT = SUBMIT_BELT_RIGHT - SUBMIT_BELT_W;
-const SUBMIT_INTAKE_X = SUBMIT_BELT_LEFT + SUBMIT_BELT_W * 0.82; // left face of the intake box
+const PLAYER_RADIUS = 12;
+const NAV_CELL = 16;
+const NAV_COLS = Math.ceil(LOGICAL_W / NAV_CELL);
+const NAV_ROWS = Math.ceil(LOGICAL_H / NAV_CELL);
+let navGrid = null;
 
-export function buildStage1Map() {
-  state.stations = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const code = MAP_LAYOUT[r][c];
-      if (code === '.') continue;
-      const st = {
-        r, c,
-        x: GRID_X + c * TILE,
-        y: GRID_Y + r * TILE,
-        type: code.startsWith('C:') ? 'CRATE' : code,
-        crateItem: code.startsWith('C:') ? code.split(':')[1] : null,
-        item: null,
-        progress: 0,
-        onFire: false,
-        fireProg: 0,
-        traysCount: code === 'T' ? 4 : 0,
-        hasExtinguisher: code === 'F'
-      };
-      if ((r === 3 && c === 7) || (r === 3 && c === 10)) {
-        st.item = { kind: 'tray', parts: [], touchedBy: [] };
-      }
-      state.stations.push(st);
+function getFloorBoundsAtY(y) {
+  const f = STAGE1_LAYOUT.floor;
+  const lt = Math.max(0, Math.min(1, (y - f.leftWallTopY) / (f.leftWallBottomY - f.leftWallTopY)));
+  const minX = f.leftWallTopX + (f.leftWallBottomX - f.leftWallTopX) * lt;
+  const rt = Math.max(0, Math.min(1, (y - f.rightWallTopY) / (f.rightWallBottomY - f.rightWallTopY)));
+  const maxX = f.rightWallTopX + (f.rightWallBottomX - f.rightWallTopX) * rt;
+  return { minX, maxX };
+}
+
+function collidesAt(nx, ny, r = PLAYER_RADIUS) {
+  const f = STAGE1_LAYOUT.floor;
+  if (ny - r < f.topY || ny + r > f.bottomY) return true;
+  const { minX, maxX } = getFloorBoundsAtY(ny);
+  if (nx - r < minX || nx + r > maxX) return true;
+  for (const ob of STAGE1_LAYOUT.obstacles) {
+    if (nx + r > ob.x && nx - r < ob.x + ob.w && ny + r > ob.y && ny - r < ob.y + ob.h) {
+      return true;
     }
   }
+  for (const s of state.stations) {
+    if (s.type === 'G' || s.type === 'L') continue;
+    if (nx + r > s.x && nx - r < s.x + s.w && ny + r > s.y && ny - r < s.y + s.h) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function rebuildNavGrid() {
+  navGrid = Array.from({ length: NAV_ROWS }, (_, nr) =>
+    Array.from({ length: NAV_COLS }, (_, nc) => {
+      const cx = (nc + 0.5) * NAV_CELL;
+      const cy = (nr + 0.5) * NAV_CELL;
+      return !collidesAt(cx, cy, PLAYER_RADIUS);
+    })
+  );
+}
+
+function isWalkableNavCell(nr, nc) {
+  if (nr < 0 || nr >= NAV_ROWS || nc < 0 || nc >= NAV_COLS) return false;
+  if (!navGrid) rebuildNavGrid();
+  return navGrid[nr][nc];
+}
+
+function toNavCell(x, y) {
+  return {
+    r: Math.max(0, Math.min(NAV_ROWS - 1, Math.floor(y / NAV_CELL))),
+    c: Math.max(0, Math.min(NAV_COLS - 1, Math.floor(x / NAV_CELL)))
+  };
+}
+
+function findNearestWalkableCell(startR, startC) {
+  const sr = Math.max(0, Math.min(NAV_ROWS - 1, startR));
+  const sc = Math.max(0, Math.min(NAV_COLS - 1, startC));
+  if (isWalkableNavCell(sr, sc)) return { r: sr, c: sc };
+  const visited = Array.from({ length: NAV_ROWS }, () => Array(NAV_COLS).fill(false));
+  const queue = [{ r: sr, c: sc }];
+  visited[sr][sc] = true;
+  const dirs = [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, { dr: 0, dc: -1 }, { dr: 0, dc: 1 }];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    for (const d of dirs) {
+      const nr = cur.r + d.dr;
+      const nc = cur.c + d.dc;
+      if (nr < 0 || nr >= NAV_ROWS || nc < 0 || nc >= NAV_COLS || visited[nr][nc]) continue;
+      if (isWalkableNavCell(nr, nc)) return { r: nr, c: nc };
+      visited[nr][nc] = true;
+      queue.push({ r: nr, c: nc });
+    }
+  }
+  return toNavCell(556, 290);
+}
+
+function findNearestWalkablePoint(x, y) {
+  const cell = toNavCell(x, y);
+  const safe = findNearestWalkableCell(cell.r, cell.c);
+  return { x: (safe.c + 0.5) * NAV_CELL, y: (safe.r + 0.5) * NAV_CELL };
+}
+
+export function buildStage1Map() {
+  state.stations = STAGE1_LAYOUT.stations.map(def => {
+    const w = def.w ?? TILE;
+    const h = def.h ?? TILE;
+    const st = {
+      ...def,
+      w,
+      h,
+      vx: def.vx ?? def.x,
+      vy: def.vy ?? def.y,
+      vw: def.vw ?? w,
+      vh: def.vh ?? h,
+      cx: def.x + w / 2,
+      cy: def.y + h / 2,
+      itemX: def.itemX ?? (def.x + w / 2),
+      itemY: def.itemY ?? (def.y + h * 0.42),
+      item: def.defaultTray ? { kind: 'tray', parts: [], touchedBy: [] } : null,
+      progress: 0,
+      onFire: false,
+      fireProg: 0,
+      traysCount: def.type === 'T' ? 4 : 0,
+      hasExtinguisher: def.type === 'F'
+    };
+    return st;
+  });
+  rebuildNavGrid();
 }
 
 export function spawnOrder(recipeId = null) {
@@ -84,19 +162,19 @@ export function initStage1() {
 
   buildStage1Map();
   const preferredSpots = [
-    { c: 2.5, r: 2.5, a: 0 },
-    { c: 8.5, r: 2.5, a: 0 },
-    { c: 8.5, r: 5.5, a: Math.PI },
-    { c: 14.5, r: 2.5, a: Math.PI }
+    { x: 205, y: 286, a: 0 },
+    { x: 556, y: 286, a: 0 },
+    { x: 556, y: 452, a: Math.PI },
+    { x: 890, y: 286, a: Math.PI }
   ];
   state.players = CREW_ROSTER.map((cr, i) => {
     const pref = preferredSpots[i];
-    const safeTile = findNearestWalkableCell(Math.floor(pref.r), Math.floor(pref.c));
+    const safePt = findNearestWalkablePoint(pref.x, pref.y);
     return {
       name: cr.id,
       role: cr.role,
-      x: GRID_X + (safeTile.c + 0.5) * TILE,
-      y: GRID_Y + (safeTile.r + 0.5) * TILE,
+      x: safePt.x,
+      y: safePt.y,
       angle: pref.a,
       color: cr.color,
       visor: cr.visor,
@@ -169,13 +247,16 @@ export function handleStage1Throw(p) {
   item.lastBy = p.name;
   p.holding = null;
   const dist = 148;
+  const f = STAGE1_LAYOUT.floor;
+  const rawTy = Math.max(f.topY + 18, Math.min(f.bottomY - 12, p.y + Math.sin(p.angle) * dist));
+  const { minX, maxX } = getFloorBoundsAtY(rawTy);
   state.thrownItems.push({
     x: p.x + Math.cos(p.angle) * 20,
     y: p.y + Math.sin(p.angle) * 14,
     startX: p.x + Math.cos(p.angle) * 20,
     startY: p.y + Math.sin(p.angle) * 14,
-    tx: Math.max(GRID_X + 24, Math.min(GRID_X + COLS * TILE - 24, p.x + Math.cos(p.angle) * dist)),
-    ty: Math.max(GRID_Y + 24, Math.min(GRID_Y + ROWS * TILE - 24, p.y + Math.sin(p.angle) * dist)),
+    tx: Math.max(minX + 18, Math.min(maxX - 18, p.x + Math.cos(p.angle) * dist)),
+    ty: rawTy,
     t: 0,
     dur: 0.34,
     item,
@@ -184,20 +265,25 @@ export function handleStage1Throw(p) {
   playTone(580, 'triangle', 0.09, 0.09);
 }
 
+function distToStationRect(px, py, st) {
+  const nx = Math.max(st.x, Math.min(st.x + st.w, px));
+  const ny = Math.max(st.y, Math.min(st.y + st.h, py));
+  return Math.hypot(px - nx, py - ny);
+}
+
 export function getFacingStation(p) {
-  const reach = 38;
+  const reach = 34;
   const fx = p.x + Math.cos(p.angle) * reach;
   const fy = p.y + Math.sin(p.angle) * reach;
   let best = null;
   let bestScore = 999;
   for (const st of state.stations) {
     if (st.type === 'G' || st.type === 'L') continue;
-    const cx = st.x + TILE / 2;
-    const cy = st.y + TILE / 2;
-    const dist = Math.hypot(fx - cx, fy - cy);
-    const pDist = Math.hypot(p.x - cx, p.y - cy);
-    if (dist < 46 && pDist < 76) {
-      const sc = dist + pDist * 0.25;
+    const dist = distToStationRect(fx, fy, st);
+    const pDist = distToStationRect(p.x, p.y, st);
+    if (dist < 30 && pDist < 48) {
+      const centerTie = Math.hypot(fx - st.cx, fy - st.cy) * 0.08;
+      const sc = dist + pDist * 0.25 + centerTie;
       if (sc < bestScore) {
         bestScore = sc;
         best = st;
@@ -234,12 +320,12 @@ export function handleStage1Interact(p) {
     if (!p.holding && st.hasExtinguisher) {
       st.hasExtinguisher = false;
       p.holding = { kind: 'extinguisher' };
-      addFloatText(st.x + 34, st.y, 'CO2 Extinguisher!', '#e2e8f0');
+      addFloatText(st.cx, st.y, 'CO2 Extinguisher!', '#e2e8f0');
       playTone(540, 'sine', 0.08, 0.08);
     } else if (p.holding && p.holding.kind === 'extinguisher') {
       p.holding = null;
       st.hasExtinguisher = true;
-      addFloatText(st.x + 34, st.y, 'Returned CO2', '#94a3b8');
+      addFloatText(st.cx, st.y, 'Returned CO2', '#94a3b8');
       playTone(420, 'sine', 0.07, 0.07);
     }
     return;
@@ -250,10 +336,10 @@ export function handleStage1Interact(p) {
       if (p.holding.kind === 'tray') {
         p.holding.parts = [];
         p.holding.touchedBy = [];
-        addFloatText(st.x + 34, st.y, 'Tray Cleared!', '#94a3b8');
+        addFloatText(st.cx, st.y, 'Tray Cleared!', '#94a3b8');
       } else if (p.holding.kind !== 'extinguisher') {
         p.holding = null;
-        addFloatText(st.x + 34, st.y, 'Scrapped!', '#f87171');
+        addFloatText(st.cx, st.y, 'Scrapped!', '#f87171');
       }
       playTone(180, 'sawtooth', 0.14, 0.09);
     }
@@ -314,21 +400,28 @@ export function handleStage1Interact(p) {
         state.screenShake = Math.max(state.screenShake || 0, 0.15);
 
         state.orders = state.orders.filter(o => o.uid !== matched.uid);
-        state.flyingDeliveries.push({ x: SUBMIT_BELT_LEFT + 16, y: st.y + 34, parts: [...p.holding.parts] });
+        const beltX = st.vx ?? st.x;
+        const beltW = st.vw ?? st.w;
+        state.flyingDeliveries.push({
+          x: beltX + 28,
+          y: st.itemY,
+          intakeX: beltX + beltW * 0.82,
+          parts: [...p.holding.parts]
+        });
         p.holding = null;
         state.trayReturnQueue.push(2.5);
         spawnOrder(rec.id);
         renderTicketsHUD();
         updateBottomHUD();
         const tag = coopBonus > 0 ? `CO-OP SHIPPED! +${pts}⭐` : state.stage1Combo > 1 ? `COMBO x${state.stage1Combo}! +${pts}⭐` : `SHIPPED! +${pts}⭐`;
-        addFloatText(st.x - 10, st.y, tag, coopBonus > 0 ? '#fde047' : '#4ade80');
+        addFloatText(st.cx, st.y, tag, coopBonus > 0 ? '#fde047' : '#4ade80');
         playSuccessChord();
       } else {
-        addFloatText(st.x, st.y, 'No Matching Ticket!', '#f87171');
+        addFloatText(st.cx, st.y, 'No Matching Ticket!', '#f87171');
         playTone(150, 'square', 0.18, 0.1);
       }
     } else {
-      addFloatText(st.x, st.y, 'Need Full 2-Part Tray!', '#fbbf24');
+      addFloatText(st.cx, st.y, 'Need Full 2-Part Tray!', '#fbbf24');
     }
     return;
   }
@@ -352,7 +445,7 @@ export function handleStage1Interact(p) {
 
   if (st.onFire) {
     if (!p.holding || p.holding.kind !== 'extinguisher') {
-      addFloatText(st.x + 34, st.y, '🔥 Grab CO2 Extinguisher [F]!', '#f87171');
+      addFloatText(st.cx, st.y, '🔥 Grab CO2 Extinguisher [F]!', '#f87171');
       playTone(170, 'sawtooth', 0.12, 0.08);
     }
     return;
@@ -362,12 +455,12 @@ export function handleStage1Interact(p) {
 
   if (!p.holding && st.item) {
     if ((st.type === 'A' || st.type === 'P') && st.item.kind === 'raw' && st.progress < 1) {
-      addFloatText(st.x + 34, st.y, 'Processing...', '#fbbf24');
+      addFloatText(st.cx, st.y, 'Processing...', '#fbbf24');
       return;
     }
     p.holding = st.item;
     if (st.type === '#' && p.holding.lastBy && p.holding.lastBy !== p.name) {
-      addFloatText(st.x + 34, st.y - 12, 'Nice Catch! 🤝', '#38bdf8');
+      addFloatText(st.cx, st.y - 12, 'Nice Catch! 🤝', '#38bdf8');
     }
     st.item = null;
     st.progress = 0;
@@ -394,10 +487,10 @@ export function handleStage1Interact(p) {
       st.item.parts.push(p.holding.id);
       st.item.touchedBy = [...new Set([...(st.item.touchedBy || []), p.name, p.holding.lastBy].filter(Boolean))];
       p.holding = null;
-      addFloatText(st.x + 34, st.y, 'Plated!', '#38bdf8');
+      addFloatText(st.cx, st.y, 'Plated!', '#38bdf8');
       playTone(660, 'triangle', 0.09, 0.09);
     } else {
-      addFloatText(st.x + 34, st.y, 'Wrong Combo!', '#f87171');
+      addFloatText(st.cx, st.y, 'Wrong Combo!', '#f87171');
     }
     return;
   }
@@ -405,14 +498,14 @@ export function handleStage1Interact(p) {
   if (p.holding && !st.item && p.holding.kind !== 'extinguisher') {
     if (isProc) {
       if (p.holding.kind !== 'raw') {
-        addFloatText(st.x + 34, st.y, 'Raw Parts Only!', '#f87171');
+        addFloatText(st.cx, st.y, 'Raw Parts Only!', '#f87171');
         return;
       }
       const rawMeta = RAW_ITEMS[p.holding.id];
       const reqType = st.type === 'W' ? 'weld' : st.type === 'A' ? 'calibrate' : 'charge';
       if (rawMeta.procType !== reqType) {
         const names = { weld: 'Weld Bench', calibrate: 'Calibrate Rig', charge: 'Power Charger' };
-        addFloatText(st.x + 34, st.y, `Use ${names[rawMeta.procType]}!`, '#fbbf24');
+        addFloatText(st.cx, st.y, `Use ${names[rawMeta.procType]}!`, '#fbbf24');
         playTone(180, 'sawtooth', 0.1, 0.09);
         return;
       }
@@ -425,71 +518,46 @@ export function handleStage1Interact(p) {
   }
 }
 
-function isWalkableCell(r, c) {
-  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
-  if (state.stations && state.stations.length > 0) {
-    return !state.stations.some(s => s.r === r && s.c === c && s.type !== 'G');
-  }
-  const code = MAP_LAYOUT[r][c];
-  return code === '.' || code === 'G';
-}
-
-function findNearestWalkableCell(startR, startC) {
-  const sr = Math.max(0, Math.min(ROWS - 1, startR));
-  const sc = Math.max(0, Math.min(COLS - 1, startC));
-  if (isWalkableCell(sr, sc)) return { r: sr, c: sc };
-  const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
-  const queue = [{ r: sr, c: sc }];
-  visited[sr][sc] = true;
-  const dirs = [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, { dr: 0, dc: -1 }, { dr: 0, dc: 1 }];
-  while (queue.length > 0) {
-    const cur = queue.shift();
-    for (const d of dirs) {
-      const nr = cur.r + d.dr;
-      const nc = cur.c + d.dc;
-      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || visited[nr][nc]) continue;
-      if (isWalkableCell(nr, nc)) return { r: nr, c: nc };
-      visited[nr][nc] = true;
-      queue.push({ r: nr, c: nc });
+function resolveBoxOverlap(p, box, r) {
+  const left = box.x - r;
+  const right = box.x + box.w + r;
+  const top = box.y - r;
+  const bottom = box.y + box.h + r;
+  if (p.x > left && p.x < right && p.y > top && p.y < bottom) {
+    const candidates = [
+      { x: left, y: p.y, pen: p.x - left },
+      { x: right, y: p.y, pen: right - p.x },
+      { x: p.x, y: top, pen: p.y - top },
+      { x: p.x, y: bottom, pen: bottom - p.y }
+    ].filter(c => !collidesAt(c.x, c.y, r));
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => a.pen - b.pen);
+      p.x = candidates[0].x;
+      p.y = candidates[0].y;
     }
   }
-  return { r: 2, c: 8 };
 }
 
-function pushOutOfStations(p, r = 14) {
-  p.x = Math.max(GRID_X + r, Math.min(GRID_X + COLS * TILE - r, p.x));
-  p.y = Math.max(GRID_Y + r, Math.min(GRID_Y + ROWS * TILE - r, p.y));
+function pushOutOfStations(p, r = PLAYER_RADIUS) {
+  const f = STAGE1_LAYOUT.floor;
+  p.y = Math.max(f.topY + r, Math.min(f.bottomY - r, p.y));
+  const { minX, maxX } = getFloorBoundsAtY(p.y);
+  p.x = Math.max(minX + r, Math.min(maxX - r, p.x));
 
-  // If center landed inside an obstacle cell, move directly to the nearest walkable tile center
-  const curR = Math.max(0, Math.min(ROWS - 1, Math.floor((p.y - GRID_Y) / TILE)));
-  const curC = Math.max(0, Math.min(COLS - 1, Math.floor((p.x - GRID_X) / TILE)));
-  if (!isWalkableCell(curR, curC)) {
-    const free = findNearestWalkableCell(curR, curC);
-    p.x = GRID_X + (free.c + 0.5) * TILE;
-    p.y = GRID_Y + (free.r + 0.5) * TILE;
-    return;
+  if (!collidesAt(p.x, p.y, r)) return;
+
+  for (const ob of STAGE1_LAYOUT.obstacles) {
+    resolveBoxOverlap(p, ob, r);
   }
-
-  // Otherwise resolve any hitbox overlap cleanly along minimum penetration axis
   for (const s of state.stations) {
-    if (s.type === 'G') continue;
-    const left = s.x + 5 - r;
-    const right = s.x + TILE - 5 + r;
-    const top = s.y + 5 - r;
-    const bottom = s.y + TILE - 5 + r;
-    if (p.x > left && p.x < right && p.y > top && p.y < bottom) {
-      const candidates = [
-        { x: left, y: p.y, pen: p.x - left, nr: s.r, nc: s.c - 1 },
-        { x: right, y: p.y, pen: right - p.x, nr: s.r, nc: s.c + 1 },
-        { x: p.x, y: top, pen: p.y - top, nr: s.r - 1, nc: s.c },
-        { x: p.x, y: bottom, pen: bottom - p.y, nr: s.r + 1, nc: s.c }
-      ].filter(c => isWalkableCell(c.nr, c.nc) && c.x >= GRID_X + r && c.x <= GRID_X + COLS * TILE - r && c.y >= GRID_Y + r && c.y <= GRID_Y + ROWS * TILE - r);
-      if (candidates.length > 0) {
-        candidates.sort((a, b) => a.pen - b.pen);
-        p.x = candidates[0].x;
-        p.y = candidates[0].y;
-      }
-    }
+    if (s.type === 'G' || s.type === 'L') continue;
+    resolveBoxOverlap(p, s, r);
+  }
+
+  if (collidesAt(p.x, p.y, r)) {
+    const safePt = findNearestWalkablePoint(p.x, p.y);
+    p.x = safePt.x;
+    p.y = safePt.y;
   }
 }
 
@@ -498,79 +566,89 @@ function moveStage1Player(p, vx, vy) {
     p.angle = Math.atan2(vy, vx);
     p.walk += 0.22;
   }
-  const r = 13;
+  const r = PLAYER_RADIUS;
   pushOutOfStations(p, r);
-  const collides = (nx, ny) => {
-    if (nx < GRID_X + r || nx > GRID_X + COLS * TILE - r) return true;
-    if (ny < GRID_Y + r || ny > GRID_Y + ROWS * TILE - r) return true;
-    for (const s of state.stations) {
-      if (s.type === 'G') continue;
-      if (nx + r > s.x + 5 && nx - r < s.x + TILE - 5 &&
-          ny + r > s.y + 5 && ny - r < s.y + TILE - 5) return true;
-    }
-    return false;
-  };
-  if (!collides(p.x + vx, p.y)) {
+
+  if (!collidesAt(p.x + vx, p.y, r)) {
     p.x += vx;
   } else if (vx !== 0) {
-    const curR = Math.floor((p.y - GRID_Y) / TILE);
-    const centerY = GRID_Y + (curR + 0.5) * TILE;
-    const nudgeY = Math.sign(centerY - p.y) * Math.min(Math.abs(centerY - p.y), 2.8);
-    if (nudgeY !== 0 && !collides(p.x, p.y + nudgeY)) p.y += nudgeY;
+    for (const step of [2.5, -2.5, 5, -5]) {
+      if (!collidesAt(p.x + vx, p.y + step, r) && !collidesAt(p.x, p.y + step, r)) {
+        p.y += Math.sign(step) * Math.min(Math.abs(step), 2.5);
+        break;
+      }
+    }
   }
 
-  if (!collides(p.x, p.y + vy)) {
+  if (!collidesAt(p.x, p.y + vy, r)) {
     p.y += vy;
   } else if (vy !== 0) {
-    const curC = Math.floor((p.x - GRID_X) / TILE);
-    const centerX = GRID_X + (curC + 0.5) * TILE;
-    const nudgeX = Math.sign(centerX - p.x) * Math.min(Math.abs(centerX - p.x), 2.8);
-    if (nudgeX !== 0 && !collides(p.x + nudgeX, p.y)) p.x += nudgeX;
+    for (const step of [2.5, -2.5, 5, -5]) {
+      if (!collidesAt(p.x + step, p.y + vy, r) && !collidesAt(p.x + step, p.y, r)) {
+        p.x += Math.sign(step) * Math.min(Math.abs(step), 2.5);
+        break;
+      }
+    }
   }
 }
 
 function getStationStandTile(st, actor) {
-  const dirs = [
-    { dr: 1, dc: 0 },
-    { dr: 0, dc: 1 },
-    { dr: 0, dc: -1 },
-    { dr: -1, dc: 0 }
-  ];
-  const actorC = (actor.x - GRID_X) / TILE;
-  const actorR = (actor.y - GRID_Y) / TILE;
-  let best = null;
-  let bestDist = 9999;
-  for (const d of dirs) {
-    const nr = st.r + d.dr;
-    const nc = st.c + d.dc;
-    if (isWalkableCell(nr, nc)) {
-      const sameHalfBonus = (actorC < 9 && nc < 9) || (actorC >= 9 && nc >= 9) ? -2.5 : 0;
-      const dist = Math.hypot(nc + 0.5 - actorC, nr + 0.5 - actorR) + sameHalfBonus;
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = { r: nr, c: nc, x: GRID_X + (nc + 0.5) * TILE, y: GRID_Y + (nr + 0.5) * TILE };
-      }
+  const candidates = [];
+  const offsets = [18, 24];
+  for (const off of offsets) {
+    const xs = [st.x + st.w * 0.2, st.x + st.w * 0.5, st.x + st.w * 0.8];
+    const ys = [st.y + st.h * 0.25, st.y + st.h * 0.5, st.y + st.h * 0.75];
+    for (const px of xs) {
+      candidates.push({ x: px, y: st.y - off });
+      candidates.push({ x: px, y: st.y + st.h + off });
+    }
+    for (const py of ys) {
+      candidates.push({ x: st.x - off, y: py });
+      candidates.push({ x: st.x + st.w + off, y: py });
     }
   }
-  return best || { r: 2, c: 8, x: GRID_X + 8.5 * TILE, y: GRID_Y + 2.5 * TILE };
+
+  let best = null;
+  let bestDist = 99999;
+  for (const pt of candidates) {
+    if (collidesAt(pt.x, pt.y, PLAYER_RADIUS)) continue;
+    const cell = toNavCell(pt.x, pt.y);
+    if (!isWalkableNavCell(cell.r, cell.c)) continue;
+    const d = Math.hypot(pt.x - actor.x, pt.y - actor.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = { r: cell.r, c: cell.c, x: pt.x, y: pt.y };
+    }
+  }
+  if (best) return best;
+
+  const fallback = findNearestWalkablePoint(st.cx, st.y + st.h + 22);
+  const fCell = toNavCell(fallback.x, fallback.y);
+  return { r: fCell.r, c: fCell.c, x: fallback.x, y: fallback.y };
 }
 
 function findFullPathBFS(startR, startC, goalR, goalC) {
-  const safeStart = isWalkableCell(startR, startC) ? { r: startR, c: startC } : findNearestWalkableCell(startR, startC);
-  if (safeStart.r === goalR && safeStart.c === goalC) return [safeStart];
-  const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
-  const parent = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  const safeStart = isWalkableNavCell(startR, startC) ? { r: startR, c: startC } : findNearestWalkableCell(startR, startC);
+  const safeGoal = isWalkableNavCell(goalR, goalC) ? { r: goalR, c: goalC } : findNearestWalkableCell(goalR, goalC);
+  if (safeStart.r === safeGoal.r && safeStart.c === safeGoal.c) return [safeStart];
+
+  const visited = Array.from({ length: NAV_ROWS }, () => Array(NAV_COLS).fill(false));
+  const parent = Array.from({ length: NAV_ROWS }, () => Array(NAV_COLS).fill(null));
   const queue = [safeStart];
   visited[safeStart.r][safeStart.c] = true;
   const dirs = [
     { dr: -1, dc: 0 },
     { dr: 1, dc: 0 },
     { dr: 0, dc: -1 },
-    { dr: 0, dc: 1 }
+    { dr: 0, dc: 1 },
+    { dr: -1, dc: -1 },
+    { dr: -1, dc: 1 },
+    { dr: 1, dc: -1 },
+    { dr: 1, dc: 1 }
   ];
   while (queue.length > 0) {
     const cur = queue.shift();
-    if (cur.r === goalR && cur.c === goalC) {
+    if (cur.r === safeGoal.r && cur.c === safeGoal.c) {
       const path = [];
       let p = cur;
       while (p) {
@@ -582,13 +660,16 @@ function findFullPathBFS(startR, startC, goalR, goalC) {
     for (const d of dirs) {
       const nr = cur.r + d.dr;
       const nc = cur.c + d.dc;
-      if (!isWalkableCell(nr, nc) || visited[nr][nc]) continue;
+      if (!isWalkableNavCell(nr, nc) || visited[nr][nc]) continue;
+      if (d.dr !== 0 && d.dc !== 0) {
+        if (!isWalkableNavCell(cur.r + d.dr, cur.c) || !isWalkableNavCell(cur.r, cur.c + d.dc)) continue;
+      }
       visited[nr][nc] = true;
       parent[nr][nc] = cur;
       queue.push({ r: nr, c: nc });
     }
   }
-  return [safeStart, { r: goalR, c: goalC }];
+  return [safeStart, safeGoal];
 }
 
 function findNextStepBFS(startR, startC, goalR, goalC) {
@@ -712,23 +793,14 @@ function updateStage1Bot(bot, botSlot, claimedStations, dt) {
     const stand = getStationStandTile(targetSt, bot);
     const distToGoal = Math.hypot(stand.x - bot.x, stand.y - bot.y);
 
-    if (distToGoal > 14) {
-      const curR = Math.max(0, Math.min(ROWS - 1, Math.floor((bot.y - GRID_Y) / TILE)));
-      const curC = Math.max(0, Math.min(COLS - 1, Math.floor((bot.x - GRID_X) / TILE)));
-      const nextCell = findNextStepBFS(curR, curC, stand.r, stand.c);
-      const wpX = (nextCell.r === stand.r && nextCell.c === stand.c) ? stand.x : GRID_X + (nextCell.c + 0.5) * TILE;
-      const wpY = (nextCell.r === stand.r && nextCell.c === stand.c) ? stand.y : GRID_Y + (nextCell.r + 0.5) * TILE;
+    if (distToGoal > 12) {
+      const curCell = toNavCell(bot.x, bot.y);
+      const nextCell = findNextStepBFS(curCell.r, curCell.c, stand.r, stand.c);
+      const wpX = (nextCell.r === stand.r && nextCell.c === stand.c) ? stand.x : (nextCell.c + 0.5) * NAV_CELL;
+      const wpY = (nextCell.r === stand.r && nextCell.c === stand.c) ? stand.y : (nextCell.r + 0.5) * NAV_CELL;
 
       let vx = wpX - bot.x;
       let vy = wpY - bot.y;
-      // Align perpendicular offset toward current tile center before turning corners/doorways
-      const curCenterX = GRID_X + (curC + 0.5) * TILE;
-      const curCenterY = GRID_Y + (curR + 0.5) * TILE;
-      if (nextCell.r !== curR && Math.abs(bot.x - curCenterX) > 10) {
-        vx = (curCenterX - bot.x) * 1.6;
-      } else if (nextCell.c !== curC && Math.abs(bot.y - curCenterY) > 10) {
-        vy = (curCenterY - bot.y) * 1.6;
-      }
       const len = Math.hypot(vx, vy) || 1;
       vx /= len;
       vy /= len;
@@ -750,9 +822,9 @@ function updateStage1Bot(bot, botSlot, claimedStations, dt) {
       // Anti-stuck check
       if (Math.hypot(bot.x - (bot.lastX || bot.x), bot.y - (bot.lastY || bot.y)) < 18 * dt) {
         bot.stuckTime = (bot.stuckTime || 0) + dt;
-        if (bot.stuckTime > 0.45 && isWalkableCell(curR, curC)) {
-          bot.x += (GRID_X + (curC + 0.5) * TILE - bot.x) * 0.35;
-          bot.y += (GRID_Y + (curR + 0.5) * TILE - bot.y) * 0.35;
+        if (bot.stuckTime > 0.45 && isWalkableNavCell(curCell.r, curCell.c)) {
+          bot.x += ((curCell.c + 0.5) * NAV_CELL - bot.x) * 0.35;
+          bot.y += ((curCell.r + 0.5) * NAV_CELL - bot.y) * 0.35;
           bot.stuckTime = 0;
         }
       } else {
@@ -761,7 +833,9 @@ function updateStage1Bot(bot, botSlot, claimedStations, dt) {
       bot.lastX = bot.x;
       bot.lastY = bot.y;
     } else {
-      bot.angle = Math.atan2((targetSt.y + TILE / 2) - bot.y, (targetSt.x + TILE / 2) - bot.x);
+      const aimX = Math.max(targetSt.x + 6, Math.min(targetSt.x + targetSt.w - 6, bot.x));
+      const aimY = Math.max(targetSt.y + 6, Math.min(targetSt.y + targetSt.h - 6, bot.y));
+      bot.angle = Math.atan2(aimY - bot.y, aimX - bot.x);
       if (act === 'interact') {
         bot.cd = (bot.cd || 0) - dt;
         if (bot.cd <= 0) {
@@ -775,21 +849,19 @@ function updateStage1Bot(bot, botSlot, claimedStations, dt) {
   } else {
     // Idle standby home positions out of the player's way
     const homes = [
-      { c: 2.5, r: 6.5 },
-      { c: 8.5, r: 6.5 },
-      { c: 8.5, r: 2.5 },
-      { c: 14.5, r: 2.5 }
+      { x: 200, y: 548 },
+      { x: 556, y: 548 },
+      { x: 556, y: 286 },
+      { x: 890, y: 420 }
     ];
     const h = homes[botSlot % homes.length];
-    const hx = GRID_X + h.c * TILE;
-    const hy = GRID_Y + h.r * TILE;
-    const hd = Math.hypot(hx - bot.x, hy - bot.y);
+    const hd = Math.hypot(h.x - bot.x, h.y - bot.y);
     if (hd > 18) {
-      const curR = Math.max(1, Math.min(ROWS - 2, Math.floor((bot.y - GRID_Y) / TILE)));
-      const curC = Math.max(1, Math.min(COLS - 2, Math.floor((bot.x - GRID_X) / TILE)));
-      const nextCell = findNextStepBFS(curR, curC, Math.floor(h.r), Math.floor(h.c));
-      const wpX = GRID_X + (nextCell.c + 0.5) * TILE;
-      const wpY = GRID_Y + (nextCell.r + 0.5) * TILE;
+      const curCell = toNavCell(bot.x, bot.y);
+      const goalCell = toNavCell(h.x, h.y);
+      const nextCell = findNextStepBFS(curCell.r, curCell.c, goalCell.r, goalCell.c);
+      const wpX = (nextCell.c + 0.5) * NAV_CELL;
+      const wpY = (nextCell.r + 0.5) * NAV_CELL;
       const dx = wpX - bot.x, dy = wpY - bot.y, d = Math.hypot(dx, dy) || 1;
       moveStage1Player(bot, (dx / d) * 150 * dt, (dy / d) * 150 * dt);
     }
@@ -802,7 +874,7 @@ function applyHoldWork(p, dt) {
   if (facing.onFire && p.holding && p.holding.kind === 'extinguisher') {
     facing.fireProg += dt * 1.1;
     if (Math.random() < 0.5) {
-      state.hangarSparks.push({ x: facing.x + 34, y: facing.y + 16, vx: (Math.random() - 0.5) * 90, vy: -20 - Math.random() * 40, life: 0.35, color: '#f8fafc' });
+      state.hangarSparks.push({ x: facing.cx, y: facing.y + 16, vx: (Math.random() - 0.5) * 90, vy: -20 - Math.random() * 40, life: 0.35, color: '#f8fafc' });
     }
     if (facing.fireProg >= 1) {
       facing.onFire = false;
@@ -812,7 +884,7 @@ function applyHoldWork(p, dt) {
         facing.progress = 0;
       }
       state.score += 30;
-      addFloatText(facing.x + 34, facing.y, 'FIRE DOUSED! +30⭐', '#4ade80');
+      addFloatText(facing.cx, facing.y, 'FIRE DOUSED! +30⭐', '#4ade80');
       playSuccessChord();
     }
     return;
@@ -820,13 +892,13 @@ function applyHoldWork(p, dt) {
   if (facing.type === 'W' && !facing.onFire && facing.item && facing.item.kind === 'raw') {
     facing.progress += dt * 0.72;
     if (Math.random() < 0.35) {
-      state.hangarSparks.push({ x: facing.x + 34, y: facing.y + 18, vx: (Math.random() - 0.5) * 110, vy: -35 - Math.random() * 50, life: 0.35, color: '#fde047' });
+      state.hangarSparks.push({ x: facing.cx, y: facing.y + 18, vx: (Math.random() - 0.5) * 110, vy: -35 - Math.random() * 50, life: 0.35, color: '#fde047' });
     }
     if (Math.random() < 0.3) playTone(320 + Math.random() * 260, 'sawtooth', 0.04, 0.04);
     if (facing.progress >= 1) {
       facing.item = { kind: 'proc', id: RAW_ITEMS[facing.item.id].result, lastBy: p.name };
       facing.progress = 1;
-      addFloatText(facing.x + 34, facing.y, 'Welded!', '#4ade80');
+      addFloatText(facing.cx, facing.y, 'Welded!', '#4ade80');
       playTone(760, 'triangle', 0.12, 0.1);
     }
   }
@@ -834,7 +906,7 @@ function applyHoldWork(p, dt) {
 
 export function updateStage1(dt) {
   const lead = state.players[state.activeCrewIndex] || state.players[0];
-  if (lead) pushOutOfStations(lead, 14);
+  if (lead) pushOutOfStations(lead, PLAYER_RADIUS);
 
   // When paused on a Stage 1 Spotlight Tutorial step, hold timers & bots so the player can read the spotlight
   if (state.tutorial?.active && state.tutorial?.paused) {
@@ -924,9 +996,10 @@ export function updateStage1(dt) {
     th.x = th.startX + (th.tx - th.startX) * p;
     th.y = th.startY + (th.ty - th.startY) * p;
     if (p >= 1) {
-      let landedSt = null, bestD = 54;
+      let landedSt = null, bestD = 38;
       for (const s of state.stations) {
-        const d = Math.hypot(s.x + 34 - th.tx, s.y + 34 - th.ty);
+        if (s.type === 'G' || s.type === 'L') continue;
+        const d = distToStationRect(th.tx, th.ty, s);
         if (d < bestD) { bestD = d; landedSt = s; }
       }
       let absorbed = false;
@@ -934,7 +1007,7 @@ export function updateStage1(dt) {
         if (th.item.kind === 'proc' && landedSt.item && landedSt.item.kind === 'tray' && canAcceptPartOnTray(landedSt.item, th.item.id)) {
           landedSt.item.parts.push(th.item.id);
           landedSt.item.touchedBy = [...new Set([...(landedSt.item.touchedBy || []), th.thrower].filter(Boolean))];
-          addFloatText(landedSt.x + 34, landedSt.y - 10, 'SLAM DUNK TRAY! 🎯', '#4ade80');
+          addFloatText(landedSt.cx, landedSt.y - 10, 'SLAM DUNK TRAY! 🎯', '#4ade80');
           playTone(720, 'triangle', 0.1, 0.1);
           absorbed = true;
         } else if (!landedSt.item && (landedSt.type === '#' || landedSt.type === 'W' || landedSt.type === 'A' || landedSt.type === 'P')) {
@@ -942,14 +1015,15 @@ export function updateStage1(dt) {
           if (!isProc || (th.item.kind === 'raw' && RAW_ITEMS[th.item.id].procType === (landedSt.type === 'W' ? 'weld' : landedSt.type === 'A' ? 'calibrate' : 'charge'))) {
             landedSt.item = th.item;
             landedSt.progress = 0;
-            addFloatText(landedSt.x + 34, landedSt.y - 10, 'Caught! 🙌', '#38bdf8');
+            addFloatText(landedSt.cx, landedSt.y - 10, 'Caught! 🙌', '#38bdf8');
             playTone(540, 'sine', 0.08, 0.08);
             absorbed = true;
           }
         }
       }
       if (!absorbed) {
-        state.floorItems.push({ x: th.tx, y: th.ty, item: th.item });
+        const dropPt = collidesAt(th.tx, th.ty, 8) ? findNearestWalkablePoint(th.tx, th.ty) : { x: th.tx, y: th.ty };
+        state.floorItems.push({ x: dropPt.x, y: dropPt.y, item: th.item });
       }
       state.thrownItems.splice(i, 1);
     }
@@ -959,7 +1033,7 @@ export function updateStage1(dt) {
     if (st.onFire) {
       if (Math.random() < 0.45) {
         state.hangarSparks.push({
-          x: st.x + 18 + Math.random() * 32,
+          x: st.cx + (Math.random() - 0.5) * Math.min(32, st.w * 0.6),
           y: st.y + 4,
           vx: (Math.random() - 0.5) * 26,
           vy: -52 - Math.random() * 38,
@@ -970,7 +1044,7 @@ export function updateStage1(dt) {
       }
       if (Math.random() < 0.35) {
         state.hangarSparks.push({
-          x: st.x + 22 + Math.random() * 24,
+          x: st.cx + (Math.random() - 0.5) * Math.min(24, st.w * 0.5),
           y: st.y - 6,
           vx: (Math.random() - 0.5) * 18,
           vy: -36 - Math.random() * 22,
@@ -995,7 +1069,7 @@ export function updateStage1(dt) {
           st.onFire = true;
           st.fireProg = 0;
           state.overheatedParts++;
-          addFloatText(st.x + 34, st.y, 'BENCH FIRE! GRAB CO2 [F]!', '#ef4444');
+          addFloatText(st.cx, st.y, 'BENCH FIRE! GRAB CO2 [F]!', '#ef4444');
           playTone(130, 'sawtooth', 0.25, 0.12);
         }
       }
@@ -1012,8 +1086,9 @@ export function updateStage1(dt) {
   }
   state.conveyorOffset = (state.conveyorOffset + dt * 45) % 24;
   for (let i = state.flyingDeliveries.length - 1; i >= 0; i--) {
-    state.flyingDeliveries[i].x += dt * 150;
-    if (state.flyingDeliveries[i].x > SUBMIT_INTAKE_X + 30) state.flyingDeliveries.splice(i, 1);
+    const fd = state.flyingDeliveries[i];
+    fd.x += dt * 150;
+    if (fd.x > (fd.intakeX ?? 1150) + 30) state.flyingDeliveries.splice(i, 1);
   }
   for (let i = state.hangarSparks.length - 1; i >= 0; i--) {
     const sp = state.hangarSparks[i];
@@ -1080,7 +1155,7 @@ function getTutorialStepInfo(lead) {
         ? 'Place Circuit on a Blue WELD bench (SPACE), then HOLD SPACE until finished.'
         : state.stations.some(s => s.type === 'W' && s.item?.id === 'circuit')
           ? 'Stand at the Blue WELD bench and HOLD SPACE until the Circuit finishes welding.'
-          : 'Grab a Circuit from the top crate on the left wall, place it on Blue WELD, and HOLD SPACE.',
+          : 'Grab a Circuit from the top-left crate beside the lockers, place it on Blue WELD, and HOLD SPACE.',
       find: () => lead?.holding?.id === 'circuit'
         ? (state.stations.find(s => s.type === 'W' && !s.item) || state.stations.find(s => s.type === 'W'))
         : (state.stations.find(s => s.type === 'W' && s.item?.id === 'circuit') || state.stations.find(s => s.crateItem === 'circuit'))
@@ -1115,21 +1190,30 @@ function getTutorialStepInfo(lead) {
 function drawStage1Trail(ctx, actor, targetSt, bright = false) {
   if (!actor || !targetSt) return;
   const stand = getStationStandTile(targetSt, actor);
-  const startR = Math.max(0, Math.min(ROWS - 1, Math.floor((actor.y - GRID_Y) / TILE)));
-  const startC = Math.max(0, Math.min(COLS - 1, Math.floor((actor.x - GRID_X) / TILE)));
-  const cellPath = findFullPathBFS(startR, startC, stand.r, stand.c);
+  const startCell = toNavCell(actor.x, actor.y);
+  const cellPath = findFullPathBFS(startCell.r, startCell.c, stand.r, stand.c);
 
-  const pts = [{ x: actor.x, y: actor.y + 8 }];
+  const rawPts = [{ x: actor.x, y: actor.y + 8 }];
   for (let i = 1; i < cellPath.length; i++) {
-    pts.push({
-      x: GRID_X + (cellPath[i].c + 0.5) * TILE,
-      y: GRID_Y + (cellPath[i].r + 0.5) * TILE
+    rawPts.push({
+      x: (cellPath[i].c + 0.5) * NAV_CELL,
+      y: (cellPath[i].r + 0.5) * NAV_CELL
     });
   }
-  pts.push({
-    x: targetSt.x + TILE / 2,
-    y: targetSt.y + TILE / 2
-  });
+  // Simplify nearly collinear waypoints so dotted trail stays smooth
+  const pts = [rawPts[0]];
+  for (let i = 1; i < rawPts.length - 1; i++) {
+    const prev = pts[pts.length - 1];
+    const curr = rawPts[i];
+    const next = rawPts[i + 1];
+    const dx1 = curr.x - prev.x, dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x, dy2 = next.y - curr.y;
+    if (Math.abs(dx1 * dy2 - dy1 * dx2) > 12 || Math.hypot(curr.x - prev.x, curr.y - prev.y) > 48) {
+      pts.push(curr);
+    }
+  }
+  if (rawPts.length > 1) pts.push(rawPts[rawPts.length - 1]);
+  pts.push({ x: targetSt.cx, y: targetSt.cy });
 
   ctx.save();
   ctx.lineCap = 'round';
@@ -1290,56 +1374,34 @@ export function drawStage1(ctx) {
   const tutInfo = tutActive && lead ? getTutorialStepInfo(lead) : null;
   const activeTargetSt = (tutActive && tutInfo?.targetSt) ? tutInfo.targetSt : nextTargetSt;
 
-  // Draw 3 table cluster sprites from Tables_Stage 1.png aligned to MAP_LAYOUT
+  // Draw 3 table cluster slices from Tables_Stage 1.png aligned to painted floor hazard boxes
   const leftUSlice = getSheetSlice('tablesSheet', 'left_u');
   const centerUSlice = getSheetSlice('tablesSheet', 'center_u');
   const rightLSlice = getSheetSlice('tablesSheet', 'right_l');
   const tablesReady = Boolean(leftUSlice?.ready && centerUSlice?.ready && rightLSlice?.ready);
+  const tCfg = STAGE1_LAYOUT.tables;
 
-  if (tablesReady) {
-    drawSliceBox(ctx, leftUSlice, GRID_X + 4 * TILE, GRID_Y + 3 * TILE - 4, 4 * TILE, 3 * TILE + 8, false);
-    drawSliceBox(ctx, centerUSlice, GRID_X + 10 * TILE, GRID_Y + 3 * TILE - 4, 4 * TILE, 3 * TILE + 8, false);
-    drawSliceBox(ctx, rightLSlice, GRID_X + 15 * TILE, GRID_Y + 3 * TILE - 4, 3 * TILE, 2.25 * TILE, false);
+  const drawClippedTable = (slice, box, clipYMin, clipYMax) => {
+    if (!slice?.ready) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, clipYMin, LOGICAL_W, clipYMax - clipYMin);
+    ctx.clip();
+    drawSliceBox(ctx, slice, box.dx, box.dy, box.dw, box.dh, false);
+    ctx.restore();
+  };
 
-    // Table Props: animated beacon, robotic arm, and monitor on the U-tables
-    const propBeacon = getAnimFrame('tableProps', 0);
-    const propArm = getAnimFrame('tableProps', 1);
-    const propMon = getAnimFrame('tableProps', 2);
-    if (isImageReady(propBeacon)) {
-      const bBounds = getAnimFrameBounds('tableProps', 0);
-      const bx = GRID_X + 4.35 * TILE - 12;
-      const by = GRID_Y + 3 * TILE - 22;
-      drawSpriteFitted(ctx, propBeacon, bBounds, bx, by, 24, 30, true);
-      const blink = 0.25 + 0.45 * Math.sin(now * 0.009);
-      ctx.save();
-      ctx.fillStyle = `rgba(251, 146, 60, ${blink})`;
-      ctx.beginPath();
-      ctx.arc(bx + 12, by + 10, 14, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-    if (isImageReady(propArm)) {
-      const aBounds = getAnimFrameBounds('tableProps', 1);
-      const swayX = Math.sin(now * 0.0025) * 3;
-      drawSpriteFitted(ctx, propArm, aBounds, GRID_X + 5.75 * TILE - 22 + swayX, GRID_Y + 3 * TILE - 34, 44, 46, true);
-    }
-    if (isImageReady(propMon)) {
-      const mBounds = getAnimFrameBounds('tableProps', 2);
-      drawSpriteFitted(ctx, propMon, mBounds, GRID_X + 12.6 * TILE - 18, GRID_Y + 3 * TILE - 32, 36, 40, true);
-    }
-  }
-
-  // Subtle floor pass-through indicator on Swing-Gate 'G' tiles when crew approaches
+  // Subtle floor pass-through indicator on Swing-Gate 'G' when crew approaches
   for (const g of state.stations) {
     if (g.type !== 'G') continue;
-    const nearActor = (state.players || []).some(pl => Math.hypot(pl.x - (g.x + TILE / 2), pl.y - (g.y + TILE / 2)) < 72);
+    const nearActor = (state.players || []).some(pl => Math.hypot(pl.x - g.cx, pl.y - g.cy) < 76);
     if (nearActor) {
       ctx.save();
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.roundRect(g.x + 6, g.y + 8, TILE - 12, TILE - 16, 8);
+      ctx.roundRect(g.x + 4, g.y + 4, g.w - 8, g.h - 8, 8);
       ctx.fill();
       ctx.stroke();
       ctx.restore();
@@ -1348,7 +1410,7 @@ export function drawStage1(ctx) {
       ctx.strokeStyle = '#38bdf8';
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 2;
-      ctx.strokeRect(g.x + 4, g.y + 16, TILE - 8, TILE - 32);
+      ctx.strokeRect(g.x + 4, g.y + 8, g.w - 8, g.h - 16);
       ctx.restore();
     }
   }
@@ -1358,106 +1420,143 @@ export function drawStage1(ctx) {
     drawStage1Trail(ctx, lead, activeTargetSt, tutActive);
   }
 
+  // On-floor target/hover highlight ring below stations
+  for (const s of state.stations) {
+    if (s.type === 'G' || s.type === 'L') continue;
+    const isHi = (facing === s);
+    const isNextGoal = (activeTargetSt === s && !isHi);
+    if (!isHi && !isNextGoal) continue;
+    const pulse = 0.55 + 0.45 * Math.sin(now * 0.008);
+    const rx = Math.max(22, Math.min(48, s.w * 0.48));
+    const ry = Math.max(10, Math.min(18, s.h * 0.22));
+    ctx.save();
+    ctx.fillStyle = isHi ? 'rgba(253, 224, 71, 0.24)' : `rgba(253, 224, 71, ${0.14 * pulse})`;
+    ctx.strokeStyle = isHi ? '#fde047' : `rgba(253, 224, 71, ${pulse})`;
+    ctx.lineWidth = isHi ? 3 : 2.2;
+    ctx.beginPath();
+    ctx.ellipse(s.cx, s.y + s.h - 2, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   const renderables = [
-    ...state.stations.filter(s => s.type !== 'L' && s.type !== 'G').map(s => ({ kind: 'station', y: s.y + TILE, obj: s })),
+    ...state.stations.filter(s => s.type !== 'L' && s.type !== 'G').map(s => ({ kind: 'station', y: s.y + s.h, obj: s })),
+    ...state.stations.filter(s => s.type === '#' && s.item).map(s => ({ kind: 'counterItem', y: s.y + s.h + 2, obj: s })),
     ...state.floorItems.map(fi => ({ kind: 'floor', y: fi.y + 8, obj: fi })),
     ...state.players.map((p, idx) => ({ kind: 'player', y: p.y + 15, obj: p, isLead: idx === state.activeCrewIndex }))
-  ].sort((a, b) => a.y - b.y);
+  ];
+
+  if (tablesReady) {
+    renderables.push(
+      { kind: 'tableClip', y: 350, slice: leftUSlice, box: tCfg.left_u, yMin: 0, yMax: tCfg.left_u.splitY },
+      { kind: 'tableClip', y: tCfg.left_u.dy + tCfg.left_u.dh, slice: leftUSlice, box: tCfg.left_u, yMin: tCfg.left_u.splitY, yMax: LOGICAL_H },
+      { kind: 'tableClip', y: 350, slice: centerUSlice, box: tCfg.center_u, yMin: 0, yMax: tCfg.center_u.splitY },
+      { kind: 'tableClip', y: tCfg.center_u.dy + tCfg.center_u.dh, slice: centerUSlice, box: tCfg.center_u, yMin: tCfg.center_u.splitY, yMax: LOGICAL_H },
+      { kind: 'tableClip', y: tCfg.right_l.dy + tCfg.right_l.dh, slice: rightLSlice, box: tCfg.right_l, yMin: 0, yMax: LOGICAL_H },
+      { kind: 'tableProps', y: 351 }
+    );
+  }
+
+  renderables.sort((a, b) => a.y - b.y);
 
   for (const ent of renderables) {
-    if (ent.kind === 'floor') {
+    if (ent.kind === 'tableClip') {
+      drawClippedTable(ent.slice, ent.box, ent.yMin, ent.yMax);
+    } else if (ent.kind === 'tableProps') {
+      const propBeacon = getAnimFrame('tableProps', 0);
+      const propArm = getAnimFrame('tableProps', 1);
+      const propMon = getAnimFrame('tableProps', 2);
+      const pr = tCfg.props;
+      if (isImageReady(propBeacon)) {
+        const bBounds = getAnimFrameBounds('tableProps', 0);
+        drawSpriteFitted(ctx, propBeacon, bBounds, pr.beacon.x, pr.beacon.y, pr.beacon.w, pr.beacon.h, true);
+        const blink = 0.25 + 0.45 * Math.sin(now * 0.009);
+        ctx.save();
+        ctx.fillStyle = `rgba(251, 146, 60, ${blink})`;
+        ctx.beginPath();
+        ctx.arc(pr.beacon.x + pr.beacon.w / 2, pr.beacon.y + 9, 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      if (isImageReady(propArm)) {
+        const aBounds = getAnimFrameBounds('tableProps', 1);
+        const swayX = Math.sin(now * 0.0025) * 3;
+        drawSpriteFitted(ctx, propArm, aBounds, pr.arm.x + swayX, pr.arm.y, pr.arm.w, pr.arm.h, true);
+      }
+      if (isImageReady(propMon)) {
+        const mBounds = getAnimFrameBounds('tableProps', 2);
+        drawSpriteFitted(ctx, propMon, mBounds, pr.monitor.x, pr.monitor.y, pr.monitor.w, pr.monitor.h, true);
+      }
+    } else if (ent.kind === 'floor') {
       drawItemBadge(ctx, ent.obj.x, ent.obj.y, ent.obj.item);
+    } else if (ent.kind === 'counterItem') {
+      const s = ent.obj;
+      drawItemBadge(ctx, s.itemX, s.itemY, s.item);
     } else if (ent.kind === 'station') {
       const s = ent.obj;
       const isHi = (facing === s);
       const isNextGoal = (activeTargetSt === s && !isHi);
-      const cx = s.x + TILE / 2;
-      const cy = s.y + TILE / 2;
-
-      // On-floor target/hover highlight ring so stations pop clearly over pixel art
-      if (isHi || isNextGoal) {
-        const pulse = 0.55 + 0.45 * Math.sin(now * 0.008);
-        ctx.save();
-        ctx.fillStyle = isHi ? 'rgba(253, 224, 71, 0.24)' : `rgba(253, 224, 71, ${0.14 * pulse})`;
-        ctx.strokeStyle = isHi ? '#fde047' : `rgba(253, 224, 71, ${pulse})`;
-        ctx.lineWidth = isHi ? 3 : 2.2;
-        ctx.beginPath();
-        ctx.ellipse(cx, s.y + TILE - 4, TILE * 0.52, TILE * 0.22, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-      }
-
       let drewSprite = false;
 
       if (s.type === 'CRATE') {
         const slice = getSheetSlice('cratesSheet', s.crateItem);
-        // Fit the crate to exactly its own tile: stacked crates touch but never overlap, so the
-        // name pill at the bottom of one crate is not covered by the crate below it.
-        if (drawSliceBox(ctx, slice, s.x, s.y, TILE, TILE, true)) {
+        if (drawSliceBox(ctx, slice, s.vx, s.vy, s.vw, s.vh, true)) {
           drewSprite = true;
-          drawSmallStationPill(ctx, cx, s.y + TILE - 6, RAW_ITEMS[s.crateItem].name); // pill spans s.y+41..s.y+54, inside this tile
         }
       } else if (s.type === 'W') {
         const activeWeld = Boolean(s.item && s.item.kind === 'raw');
         const frameIdx = activeWeld ? Math.floor(now / 110) % 3 : 0;
         const img = getAnimFrame('weldFrames', frameIdx);
         const bounds = getAnimFrameBounds('weldFrames', frameIdx);
-        if (drawSpriteFitted(ctx, img, bounds, s.x - 7, s.y - 12, TILE + 14, TILE + 14, true)) {
+        if (drawSpriteFitted(ctx, img, bounds, s.vx, s.vy, s.vw, s.vh, true)) {
           drewSprite = true;
-          drawSmallStationPill(ctx, cx, s.y + TILE - 2, 'WELD', 'rgba(3, 105, 161, 0.92)', '#e0f2fe');
         }
       } else if (s.type === 'A') {
         const activeCal = Boolean(s.item && s.item.kind === 'raw' && s.progress < 1);
         const frameIdx = activeCal ? Math.floor(now / 140) % 3 : 0;
         const img = getAnimFrame('calFrames', frameIdx);
         const bounds = getAnimFrameBounds('calFrames', frameIdx);
-        if (drawSpriteFitted(ctx, img, bounds, s.x - 2, s.y - 18, TILE + 4, TILE + 20, true)) {
+        if (drawSpriteFitted(ctx, img, bounds, s.vx, s.vy, s.vw, s.vh, true)) {
           drewSprite = true;
-          drawSmallStationPill(ctx, cx, s.y + TILE - 2, 'CAL', 'rgba(109, 40, 217, 0.92)', '#f3e8ff');
         }
       } else if (s.type === 'P') {
         const activeChg = Boolean(s.item && s.item.kind === 'raw' && s.progress < 1);
         const frameIdx = activeChg ? Math.floor(now / 170) % 3 : 0;
         const img = getAnimFrame('chgFrames', frameIdx);
         const bounds = getAnimFrameBounds('chgFrames', frameIdx);
-        if (drawSpriteFitted(ctx, img, bounds, s.x - 1, s.y - 18, TILE + 2, TILE + 20, true)) {
+        if (drawSpriteFitted(ctx, img, bounds, s.vx, s.vy, s.vw, s.vh, true)) {
           drewSprite = true;
-          drawSmallStationPill(ctx, cx, s.y + TILE - 2, 'CHARGE', 'rgba(21, 128, 61, 0.92)', '#dcfce7');
         }
       } else if (s.type === '>') {
         const frameIdx = Math.floor(now / 110) % 4;
         const img = getAnimFrame('conveyorFrames', frameIdx);
         const bounds = getAnimFrameBounds('conveyorFrames', frameIdx);
-        if (drawSpriteFitted(ctx, img, bounds, SUBMIT_BELT_LEFT, s.y - 10, SUBMIT_BELT_W, TILE + 12, true)) {
+        if (drawSpriteFitted(ctx, img, bounds, s.vx, s.vy, s.vw, s.vh, false)) {
           drewSprite = true;
-          drawSmallStationPill(ctx, SUBMIT_BELT_LEFT + SUBMIT_BELT_W * 0.42, s.y + TILE - 2, 'SUBMIT', 'rgba(15, 23, 42, 0.9)', '#38bdf8');
         }
       } else if (s.type === 'T') {
         const slice = getSheetSlice('logisticsSheet', 'tray_stack');
         if (slice?.ready) {
           ctx.save();
           if (s.traysCount <= 0) ctx.globalAlpha = 0.35;
-          drawSliceBox(ctx, slice, s.x - 2, s.y - 18, TILE + 4, TILE + 20, true);
+          drawSliceBox(ctx, slice, s.vx, s.vy, s.vw, s.vh, true);
           ctx.restore();
           drewSprite = true;
-          drawSmallStationPill(ctx, cx, s.y + TILE - 2, `TRAYS (${s.traysCount})`, 'rgba(15, 118, 110, 0.92)', '#ccfbf1');
         }
       } else if (s.type === 'X') {
         const slice = getSheetSlice('logisticsSheet', 'scrap_bin');
-        if (drawSliceBox(ctx, slice, s.x + 2, s.y - 12, TILE - 4, TILE + 14, true)) {
+        if (drawSliceBox(ctx, slice, s.vx, s.vy, s.vw, s.vh, true)) {
           drewSprite = true;
-          drawSmallStationPill(ctx, cx, s.y + TILE - 2, 'SCRAP', 'rgba(153, 27, 27, 0.92)', '#fee2e2');
         }
       } else if (s.type === 'F') {
         const slice = getSheetSlice('logisticsSheet', 'extinguisher');
         if (slice?.ready) {
           ctx.save();
           if (!s.hasExtinguisher) ctx.globalAlpha = 0.25;
-          drawSliceBox(ctx, slice, s.x + 4, s.y - 14, TILE - 8, TILE + 16, true);
+          drawSliceBox(ctx, slice, s.vx, s.vy, s.vw, s.vh, true);
           ctx.restore();
           drewSprite = true;
-          drawSmallStationPill(ctx, cx, s.y + TILE - 2, s.hasExtinguisher ? 'CO2' : 'EMPTY', 'rgba(185, 28, 28, 0.92)', '#fee2e2');
         }
       } else if (s.type === '#' && tablesReady) {
         drewSprite = true;
@@ -1465,7 +1564,7 @@ export function drawStage1(ctx) {
 
       if (!drewSprite) {
         ctx.fillStyle = '#151b28';
-        ctx.fillRect(s.x + 2, s.y + 10, TILE - 4, TILE - 6);
+        ctx.fillRect(s.x + 2, s.y + 8, s.w - 4, s.h - 6);
 
         let topCol = '#475569', label = '', lampCol = null;
         if (s.type === 'CRATE') {
@@ -1485,122 +1584,145 @@ export function drawStage1(ctx) {
         ctx.strokeStyle = isHi ? '#fde047' : '#0f172a';
         ctx.lineWidth = isHi ? 3.5 : 2.2;
         ctx.beginPath();
-        ctx.roundRect(s.x + 3, s.y - 5, TILE - 6, TILE - 6, 9);
+        ctx.roundRect(s.x + 2, s.y - 2, s.w - 4, s.h - 2, 8);
         ctx.fill(); ctx.stroke();
-
-        ctx.fillStyle = 'rgba(255,255,255,0.12)';
-        ctx.fillRect(s.x + 8, s.y - 2, TILE - 16, 4);
 
         if (lampCol) {
           ctx.fillStyle = lampCol;
-          ctx.beginPath(); ctx.arc(s.x + TILE - 12, s.y + 4, 4, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(s.x + s.w - 10, s.y + 6, 4, 0, Math.PI * 2); ctx.fill();
         }
 
         if (s.type === '>') {
           ctx.save();
-          ctx.beginPath(); ctx.roundRect(s.x + 5, s.y - 3, TILE - 10, TILE - 10, 7); ctx.clip();
+          ctx.beginPath(); ctx.roundRect(s.x + 4, s.y, s.w - 8, s.h - 6, 7); ctx.clip();
           ctx.fillStyle = '#38bdf8';
-          for (let bx = -24; bx < TILE + 24; bx += 22) {
-            ctx.fillRect(s.x + bx + state.conveyorOffset, s.y + 14, 9, 24);
+          for (let bx = -24; bx < s.w + 24; bx += 22) {
+            ctx.fillRect(s.x + bx + state.conveyorOffset, s.y + 10, 9, s.h - 20);
           }
           ctx.restore();
         }
 
         if (s.type === 'CRATE') {
-          drawHardwareCanvas(ctx, cx, s.y + 20, RAW_ITEMS[s.crateItem].shape, false, 0.95);
+          drawHardwareCanvas(ctx, s.cx, s.cy, RAW_ITEMS[s.crateItem].shape, false, 0.9);
         } else if (s.type === 'F' && s.hasExtinguisher) {
           ctx.fillStyle = '#ef4444'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.roundRect(s.x + 22, s.y + 6, 14, 24, 5); ctx.fill(); ctx.stroke();
-          ctx.fillStyle = '#e2e8f0'; ctx.fillRect(s.x + 26, s.y + 2, 6, 5);
+          ctx.beginPath(); ctx.roundRect(s.cx - 7, s.y + 6, 14, 24, 5); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#e2e8f0'; ctx.fillRect(s.cx - 3, s.y + 2, 6, 5);
         }
         if (label) {
           ctx.fillStyle = '#fff';
           ctx.font = 'bold 9px Fredoka, sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText(label, cx, s.y + TILE - 10);
+          ctx.fillText(label, s.cx, s.y + s.h - 8);
         }
       }
 
-      if (isHi) {
-        ctx.strokeStyle = '#fde047';
-        ctx.lineWidth = 2.6;
-        ctx.beginPath();
-        ctx.roundRect(s.x + 1, s.y - 5, TILE - 2, TILE + 2, 8);
-        ctx.stroke();
-      } else if (isNextGoal) {
-        const pulse = 0.55 + 0.45 * Math.sin(now * 0.007);
-        ctx.strokeStyle = `rgba(253, 224, 71, ${pulse})`;
-        ctx.lineWidth = 2.4;
-        ctx.beginPath();
-        ctx.roundRect(s.x + 1, s.y - 5, TILE - 2, TILE + 2, 8);
-        ctx.stroke();
-      }
-
-      if (s.item) drawItemBadge(ctx, cx, s.y + 16, s.item);
-
-      if (s.onFire) {
-        const sway = Math.sin(now * 0.015 + s.c * 1.7) * 5;
-        const pulse = 0.55 + 0.45 * Math.sin(now * 0.012);
-        const baseY = s.y + 24;
-
-        ctx.save();
-        ctx.fillStyle = `rgba(239, 68, 68, ${0.24 + pulse * 0.22})`;
-        ctx.beginPath(); ctx.roundRect(s.x, s.y - 8, TILE, TILE, 11); ctx.fill();
-        ctx.strokeStyle = `rgba(248, 113, 113, ${0.65 + pulse * 0.35})`;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(s.x - 1, s.y - 9, TILE + 2, TILE + 2);
-
-        const fireImg = getAnimFrame('fireSmokeFrames', Math.floor(now / 70) % 16);
-        if (isImageReady(fireImg)) {
-          ctx.drawImage(fireImg, s.x - 10, s.y - 42, TILE + 20, TILE + 46);
-        } else {
-          ctx.fillStyle = '#ea580c';
-          ctx.beginPath();
-          ctx.moveTo(cx - 18, baseY);
-          ctx.quadraticCurveTo(cx - 22, baseY - 18, cx - 8 + sway * 0.4, baseY - 30 - pulse * 6);
-          ctx.quadraticCurveTo(cx + 2, baseY - 22, cx + 6 + sway * 0.7, baseY - 38 - pulse * 8);
-          ctx.quadraticCurveTo(cx + 22, baseY - 20, cx + 18, baseY);
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.fillStyle = '#fbbf24';
-          ctx.beginPath();
-          ctx.moveTo(cx - 11, baseY);
-          ctx.quadraticCurveTo(cx - 13, baseY - 12, cx - 2 + sway * 0.5, baseY - 24 - pulse * 4);
-          ctx.quadraticCurveTo(cx + 12, baseY - 14, cx + 11, baseY);
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.fillStyle = '#fef9c3';
-          ctx.beginPath();
-          ctx.arc(cx + sway * 0.2, baseY - 6, 5.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        ctx.fillStyle = '#dc2626';
-        ctx.beginPath(); ctx.roundRect(cx - 22, s.y - 26, 44, 15, 5); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.font = 'bold 9.5px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
-        ctx.fillText('FIRE!', cx, s.y - 15);
-        ctx.restore();
-
-        if (s.fireProg > 0) {
-          ctx.fillStyle = '#0f172a'; ctx.fillRect(s.x + 5, s.y - 36, TILE - 10, 7);
-          ctx.fillStyle = '#38bdf8'; ctx.fillRect(s.x + 5, s.y - 36, (TILE - 10) * s.fireProg, 7);
-        }
-      } else if (s.item && s.progress > 0 && s.item.id !== 'burned') {
-        const bw = 46, bh = 7, bx = s.x + (TILE - bw) / 2, by = s.y - 14;
-        ctx.fillStyle = '#0f172a'; ctx.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
-        if (s.progress <= 1) {
-          ctx.fillStyle = s.progress >= 1 ? '#4ade80' : '#38bdf8';
-          ctx.fillRect(bx, by, bw * s.progress, bh);
-        } else {
-          const warn = Math.min(1, (s.progress - 1) / 1.15);
-          ctx.fillStyle = Math.floor(now / 120) % 2 === 0 ? '#ef4444' : '#fde047';
-          ctx.fillRect(bx, by, bw * warn, bh);
-        }
+      if (s.type !== '#' && s.item) {
+        drawItemBadge(ctx, s.itemX, s.itemY, s.item);
       }
     } else {
       drawChibiEngineer(ctx, ent.obj, ent.isLead);
+    }
+  }
+
+  // Station interaction/target outlines, compact pills (only when hovered or active goal), progress bars, and fires
+  for (const s of state.stations) {
+    if (s.type === 'G' || s.type === 'L') continue;
+    const isHi = (facing === s);
+    const isNextGoal = (activeTargetSt === s && !isHi);
+
+    if (isHi) {
+      ctx.save();
+      ctx.strokeStyle = '#fde047';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.roundRect(s.x + 1, s.y - 1, s.w - 2, s.h + 2, 8);
+      ctx.stroke();
+      ctx.restore();
+    } else if (isNextGoal) {
+      const pulse = 0.55 + 0.45 * Math.sin(now * 0.007);
+      ctx.save();
+      ctx.strokeStyle = `rgba(253, 224, 71, ${pulse})`;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.roundRect(s.x + 1, s.y - 1, s.w - 2, s.h + 2, 8);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (isHi || isNextGoal) {
+      const pillY = Math.min(LOGICAL_H - 8, s.y + s.h + 10);
+      if (s.type === 'CRATE') drawSmallStationPill(ctx, s.cx, pillY, RAW_ITEMS[s.crateItem].name);
+      else if (s.type === 'W') drawSmallStationPill(ctx, s.cx, pillY, 'WELD', 'rgba(3, 105, 161, 0.92)', '#e0f2fe');
+      else if (s.type === 'A') drawSmallStationPill(ctx, s.cx, pillY, 'CAL', 'rgba(109, 40, 217, 0.92)', '#f3e8ff');
+      else if (s.type === 'P') drawSmallStationPill(ctx, s.cx, pillY, 'CHARGE', 'rgba(21, 128, 61, 0.92)', '#dcfce7');
+      else if (s.type === '>') drawSmallStationPill(ctx, s.cx, pillY, 'SUBMIT', 'rgba(15, 23, 42, 0.9)', '#38bdf8');
+      else if (s.type === 'T') drawSmallStationPill(ctx, s.cx, pillY, `TRAYS (${s.traysCount})`, 'rgba(15, 118, 110, 0.92)', '#ccfbf1');
+      else if (s.type === 'X') drawSmallStationPill(ctx, s.cx, pillY, 'SCRAP', 'rgba(153, 27, 27, 0.92)', '#fee2e2');
+      else if (s.type === 'F') drawSmallStationPill(ctx, s.cx, pillY, s.hasExtinguisher ? 'CO2' : 'EMPTY', 'rgba(185, 28, 28, 0.92)', '#fee2e2');
+    }
+
+    if (s.onFire) {
+      const sway = Math.sin(now * 0.015 + s.c * 1.7) * 5;
+      const pulse = 0.55 + 0.45 * Math.sin(now * 0.012);
+      const baseY = s.y + s.h * 0.52;
+
+      ctx.save();
+      ctx.fillStyle = `rgba(239, 68, 68, ${0.24 + pulse * 0.22})`;
+      ctx.beginPath(); ctx.roundRect(s.x, s.y - 4, s.w, s.h + 4, 11); ctx.fill();
+      ctx.strokeStyle = `rgba(248, 113, 113, ${0.65 + pulse * 0.35})`;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(s.x - 1, s.y - 5, s.w + 2, s.h + 6);
+
+      const fireImg = getAnimFrame('fireSmokeFrames', Math.floor(now / 70) % 16);
+      if (isImageReady(fireImg)) {
+        ctx.drawImage(fireImg, s.cx - 36, s.y - 34, 72, 92);
+      } else {
+        ctx.fillStyle = '#ea580c';
+        ctx.beginPath();
+        ctx.moveTo(s.cx - 18, baseY);
+        ctx.quadraticCurveTo(s.cx - 22, baseY - 18, s.cx - 8 + sway * 0.4, baseY - 30 - pulse * 6);
+        ctx.quadraticCurveTo(s.cx + 2, baseY - 22, s.cx + 6 + sway * 0.7, baseY - 38 - pulse * 8);
+        ctx.quadraticCurveTo(s.cx + 22, baseY - 20, s.cx + 18, baseY);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.moveTo(s.cx - 11, baseY);
+        ctx.quadraticCurveTo(s.cx - 13, baseY - 12, s.cx - 2 + sway * 0.5, baseY - 24 - pulse * 4);
+        ctx.quadraticCurveTo(s.cx + 12, baseY - 14, s.cx + 11, baseY);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#fef9c3';
+        ctx.beginPath();
+        ctx.arc(s.cx + sway * 0.2, baseY - 6, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath(); ctx.roundRect(s.cx - 22, s.y - 22, 44, 15, 5); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9.5px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
+      ctx.fillText('FIRE!', s.cx, s.y - 11);
+      ctx.restore();
+
+      if (s.fireProg > 0) {
+        const bw = Math.max(40, s.w - 10);
+        ctx.fillStyle = '#0f172a'; ctx.fillRect(s.cx - bw / 2, s.y - 32, bw, 7);
+        ctx.fillStyle = '#38bdf8'; ctx.fillRect(s.cx - bw / 2, s.y - 32, bw * s.fireProg, 7);
+      }
+    } else if (s.item && s.progress > 0 && s.item.id !== 'burned') {
+      const bw = 46, bh = 7, bx = s.cx - bw / 2, by = Math.max(46, s.y - 12);
+      ctx.fillStyle = '#0f172a'; ctx.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
+      if (s.progress <= 1) {
+        ctx.fillStyle = s.progress >= 1 ? '#4ade80' : '#38bdf8';
+        ctx.fillRect(bx, by, bw * s.progress, bh);
+      } else {
+        const warn = Math.min(1, (s.progress - 1) / 1.15);
+        ctx.fillStyle = Math.floor(now / 120) % 2 === 0 ? '#ef4444' : '#fde047';
+        ctx.fillRect(bx, by, bw * warn, bh);
+      }
     }
   }
 
@@ -1627,7 +1749,7 @@ export function drawStage1(ctx) {
   for (const fd of state.flyingDeliveries) {
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 0, SUBMIT_INTAKE_X, LOGICAL_H); // hide the tray once it slides into the intake box
+    ctx.rect(0, 0, fd.intakeX ?? LOGICAL_W, LOGICAL_H);
     ctx.clip();
     drawItemBadge(ctx, fd.x, fd.y, { kind: 'tray', parts: fd.parts });
     ctx.restore();
@@ -1763,10 +1885,11 @@ export function drawStage1(ctx) {
       ctx.arc(lead.x, lead.y - 4, 44, 0, Math.PI * 2);
       // Cut transparent circle around guided target station
       if (tTarget) {
-        const tx = tTarget.x + TILE / 2;
-        const ty = tTarget.y + TILE / 2;
-        ctx.moveTo(tx + 54, ty);
-        ctx.arc(tx, ty, 54, 0, Math.PI * 2);
+        const tx = tTarget.vx + tTarget.vw / 2;
+        const ty = tTarget.vy + tTarget.vh / 2;
+        const tr = Math.max(46, Math.min(72, Math.max(tTarget.vw, tTarget.vh) * 0.62));
+        ctx.moveTo(tx + tr, ty);
+        ctx.arc(tx, ty, tr, 0, Math.PI * 2);
       }
       ctx.fill('evenodd');
 
@@ -1779,12 +1902,13 @@ export function drawStage1(ctx) {
       ctx.stroke();
 
       if (tTarget) {
-        const tx = tTarget.x + TILE / 2;
-        const ty = tTarget.y + TILE / 2;
+        const tx = tTarget.vx + tTarget.vw / 2;
+        const ty = tTarget.vy + tTarget.vh / 2;
+        const tr = Math.max(46, Math.min(72, Math.max(tTarget.vw, tTarget.vh) * 0.62)) + 1;
         ctx.strokeStyle = `rgba(253, 224, 71, ${pulse})`;
         ctx.lineWidth = 3.5;
         ctx.beginPath();
-        ctx.arc(tx, ty, 55, 0, Math.PI * 2);
+        ctx.arc(tx, ty, tr, 0, Math.PI * 2);
         ctx.stroke();
         drawStage1Trail(ctx, lead, tTarget, true);
       }
@@ -1793,7 +1917,7 @@ export function drawStage1(ctx) {
       const cardW = 540;
       const cardH = 104;
       const cardX = (LOGICAL_W - cardW) / 2;
-      const lowerOccupied = (tTarget && tTarget.r >= 5) || lead.y > LOGICAL_H - 180;
+      const lowerOccupied = (tTarget && (tTarget.y + tTarget.h > LOGICAL_H - 190)) || lead.y > LOGICAL_H - 190;
       const cardY = lowerOccupied ? 58 : LOGICAL_H - 126;
 
       ctx.fillStyle = 'rgba(15, 23, 42, 0.96)';
