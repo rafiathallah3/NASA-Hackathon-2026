@@ -1,8 +1,22 @@
-import { PROC_META, RECIPES, SCENARIOS, LAUNCH_VEHICLES, SCIENCE_OBJECTIVES, CML_LEVELS } from './config.js';
+import { PROC_META, RECIPES, SCENARIOS, LAUNCH_VEHICLES, SCIENCE_OBJECTIVES, CML_LEVELS, CREW_ROSTER } from './config.js';
 import { state, getScenario, getVehicle } from './state.js';
 import { getHardwareSVG } from './sprites.js';
-import { claimCrewSlot } from './net.js';
-import { iconize } from './icons.js';
+import {
+  claimCrewSlot,
+  netState,
+  isWsMultiplayer,
+  isWsHost,
+  isWsGuest,
+  connectAndCreateRoom,
+  connectAndJoinRoom,
+  leaveRoom,
+  claimWsSlot,
+  sendLobbyConfig,
+  buildInviteUrl,
+  getInitialUrlParams,
+  resolveDefaultWsUrl
+} from './net.js';
+import { iconize, iconHtml } from './icons.js';
 import { getItemSprite, getItemBounds, isImageReady } from './assets.js';
 import { getPixelBitmap } from './pixel.js';
 
@@ -123,6 +137,15 @@ export function hideMissionToast() {
 }
 
 export function selectActiveCrew(idx) {
+  if (isWsMultiplayer()) {
+    const occupant = netState.slots[idx];
+    if (occupant?.occupied && occupant.clientId !== netState.clientId) {
+      showMissionToast(`P${idx + 1} Claimed`, `${occupant.name} is currently piloting P${idx + 1}.`);
+      return;
+    }
+    claimCrewSlot(idx);
+    return;
+  }
   state.activeCrewIndex = idx;
   for (let i = 0; i < 4; i++) {
     const el = document.getElementById(`pchip-${i}`);
@@ -133,26 +156,55 @@ export function selectActiveCrew(idx) {
   }
 }
 
-export function cycleCoopMode() {
+export function syncCoopButtonHUD() {
   const btn = document.getElementById('btn-coop');
-  if (state.coopMode === '4P_AI') {
-    state.coopMode = 'LOCAL_2P';
+  if (!btn) return;
+  if (isWsMultiplayer() || state.coopMode === 'WS_4P') {
+    const slotTag = `P${(netState.mySlot ?? 0) + 1}`;
+    const ping = typeof netState.latencyMs === 'number' ? ` • ${netState.latencyMs}ms` : '';
+    btn.textContent = `WS: ${netState.roomCode || 'LIVE'} (${slotTag})${ping}`;
+    btn.className = 'btn-hud btn-bot net4p ws-live';
+    btn.title = isWsHost()
+      ? `Hosting WebSocket Room ${netState.roomCode}. Manage room in Mission Setup.`
+      : `Connected to Room ${netState.roomCode} as ${slotTag}.`;
+    return;
+  }
+  if (state.coopMode === 'LOCAL_2P') {
     btn.textContent = 'Crew: Local 2P + Bots';
     btn.className = 'btn-hud btn-bot local2p';
-  } else if (state.coopMode === 'LOCAL_2P') {
-    state.coopMode = 'NET_4P';
+  } else if (state.coopMode === 'NET_4P') {
     btn.textContent = 'Crew: Multi-Tab 4P';
     btn.className = 'btn-hud btn-bot net4p';
-    claimCrewSlot(state.activeCrewIndex);
-  } else if (state.coopMode === 'NET_4P') {
-    state.coopMode = 'SOLO';
+  } else if (state.coopMode === 'SOLO') {
     btn.textContent = 'Crew: Solo';
     btn.className = 'btn-hud btn-bot off';
   } else {
-    state.coopMode = '4P_AI';
     btn.textContent = 'Crew: 4P AI';
     btn.className = 'btn-hud btn-bot';
   }
+  btn.title = 'Cycle local crew / AI mode (use Mission Setup for Online WebSocket 4P)';
+}
+
+export function cycleCoopMode() {
+  if (isWsMultiplayer()) {
+    const roleTxt = isWsHost() ? 'Host' : 'Guest';
+    showMissionToast(
+      `Online Room ${netState.roomCode}`,
+      `Playing as ${roleTxt} (P${(netState.mySlot ?? 0) + 1}). Open Mission Setup to change slots or leave room.`
+    );
+    return;
+  }
+  if (state.coopMode === '4P_AI') {
+    state.coopMode = 'LOCAL_2P';
+  } else if (state.coopMode === 'LOCAL_2P') {
+    state.coopMode = 'NET_4P';
+    claimCrewSlot(state.activeCrewIndex);
+  } else if (state.coopMode === 'NET_4P') {
+    state.coopMode = 'SOLO';
+  } else {
+    state.coopMode = '4P_AI';
+  }
+  syncCoopButtonHUD();
 }
 
 export function setStageBanner(badge, title, desc, controlsHtml, { showTickets = false, showSkip = false, showNext = false } = {}) {
@@ -477,9 +529,43 @@ export function updateBottomHUD() {
   updateBlueprintHUD();
 }
 
+let lastMenuOnStart = null;
+let lobbyDraftName = '';
+let lobbyDraftWsUrl = '';
+let lobbyDraftRoomCode = '';
+
+function escapeAttr(val) {
+  return String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function refreshMenuLobbyIfOpen() {
+  syncCoopButtonHUD();
+  if (state.stage !== 'MENU' || typeof lastMenuOnStart !== 'function') return;
+  const modal = document.getElementById('modal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  const activeTag = document.activeElement?.id;
+  if (activeTag === 'ws-player-name' || activeTag === 'ws-relay-url' || activeTag === 'ws-room-code') {
+    // Preserve typed input when background ping updates fire
+    return;
+  }
+  showMenuModal(lastMenuOnStart);
+}
+
 export function showMenuModal(onStartGame) {
+  lastMenuOnStart = onStartGame;
   const modal = document.getElementById('modal');
   const content = document.getElementById('modal-content');
+
+  if (isWsGuest() && netState.missionConfig) {
+    state.selectedObjective = netState.missionConfig.selectedObjective || state.selectedObjective;
+    state.selectedScenario = netState.missionConfig.selectedScenario || state.selectedScenario;
+    state.selectedVehicle = netState.missionConfig.selectedVehicle || state.selectedVehicle;
+  }
+
   const scen = getScenario();
   const veh = getVehicle();
   const startBudget = Math.max(20, scen.budget - veh.cost);
@@ -489,11 +575,12 @@ export function showMenuModal(onStartGame) {
     state.selectedObjective = obj.id;
   }
 
+  const guestLocked = isWsGuest();
   const objButtons = objectives.map(o => {
     const reqNames = (o.requiredModules || []).map(getModuleShortName).join(' + ');
     const isSelected = (state.selectedObjective || obj?.id) === o.id;
     return `
-      <button type="button" class="opt-btn science-opt-btn ${isSelected ? 'selected' : ''}" data-objective="${o.id}" title="${o.summary || o.description || ''}">
+      <button type="button" class="opt-btn science-opt-btn ${isSelected ? 'selected' : ''}" data-objective="${o.id}" ${guestLocked ? 'disabled' : ''} title="${o.summary || o.description || ''}">
         <b>${o.title}</b>
         <small class="sci-loc">${o.targetLocation}</small>
         <small class="sci-req">Req: ${reqNames}</small>
@@ -502,22 +589,99 @@ export function showMenuModal(onStartGame) {
   }).join('');
 
   const scenButtons = Object.values(SCENARIOS).map(sc => `
-    <button type="button" class="opt-btn ${state.selectedScenario === sc.id ? 'selected' : ''}" data-scen="${sc.id}">
+    <button type="button" class="opt-btn ${state.selectedScenario === sc.id ? 'selected' : ''}" data-scen="${sc.id}" ${guestLocked ? 'disabled' : ''}>
       <b>${sc.name.split(' ')[0]} <span style="color:#38bdf8">[${sc.badge}]</span></b>
       <small>$${sc.budget}M budget • ${sc.eclipseDrainMul > 1 ? 'Heavy eclipse' : sc.eclipseDrainMul < 1 ? 'Mild eclipse' : 'Standard eclipse'}</small>
     </button>
   `).join('');
 
   const vehButtons = Object.values(LAUNCH_VEHICLES).map(vh => `
-    <button type="button" class="opt-btn ${state.selectedVehicle === vh.id ? 'selected' : ''}" data-veh="${vh.id}">
+    <button type="button" class="opt-btn ${state.selectedVehicle === vh.id ? 'selected' : ''}" data-veh="${vh.id}" ${guestLocked ? 'disabled' : ''}>
       <b>${vh.name}</b>
       <small>${vh.maxMass} kg cap • $${vh.cost}M</small>
     </button>
   `).join('');
 
   const objReqPreview = obj ? (obj.requiredModules || []).map(getModuleShortName).join(' + ') : '';
+  const urlParams = getInitialUrlParams();
+  const nameVal = lobbyDraftName || netState.playerName || 'Commander';
+  const wsUrlVal = lobbyDraftWsUrl || netState.wsUrl || resolveDefaultWsUrl() || '';
+  const roomCodeVal = lobbyDraftRoomCode || urlParams.room || '';
+  const isConnecting = netState.status === 'connecting';
+  const httpsNeedWss = typeof window !== 'undefined' && window.location?.protocol === 'https:' && !wsUrlVal;
 
-  content.innerHTML = `
+  let lobbyHtml = '';
+  if (isWsMultiplayer()) {
+    const humanCount = netState.slots.filter(s => s?.occupied).length;
+    const slotCards = CREW_ROSTER.map((cr, idx) => {
+      const slotInfo = netState.slots[idx];
+      const occupied = Boolean(slotInfo?.occupied);
+      const isMine = occupied && slotInfo.clientId === netState.clientId;
+      const statusText = occupied
+        ? `${slotInfo.name}${slotInfo.isHost ? ' (HOST)' : ''}${isMine ? ' (YOU)' : ''}`
+        : 'AI Bot (Click to Claim)';
+      return `
+        <button type="button" class="ws-slot-btn ${isMine ? 'mine' : occupied ? 'taken' : 'open'}" data-ws-slot="${idx}">
+          <span class="ws-slot-dot" style="background:${cr.color}"></span>
+          <span class="ws-slot-copy">
+            <b>${cr.id} ${cr.role}</b>
+            <small>${escapeAttr(statusText)}</small>
+          </span>
+        </button>
+      `;
+    }).join('');
+
+    lobbyHtml = `
+      <div class="ws-lobby-card ws-lobby-connected">
+        <div class="ws-lobby-head">
+          <div class="ws-room-pill">
+            ${iconHtml('dish')}
+            <span>ROOM <b>${escapeAttr(netState.roomCode)}</b></span>
+            <span class="ws-role-tag ${isWsHost() ? 'host' : 'guest'}">${isWsHost() ? 'HOST' : 'GUEST'}</span>
+            <span class="ws-meta">${humanCount}/4 Humans • ${typeof netState.latencyMs === 'number' ? `${netState.latencyMs}ms` : 'Online'}</span>
+          </div>
+          <div class="ws-lobby-head-actions">
+            <button id="btn-ws-copy" class="btn-secondary ws-btn-sm" type="button">${iconHtml('clipboard')} Copy Invite</button>
+            <button id="btn-ws-leave" class="btn-secondary ws-btn-sm ws-btn-danger" type="button">Leave Room</button>
+          </div>
+        </div>
+        <div class="ws-slots-grid">${slotCards}</div>
+        <div class="ws-lobby-note">Empty crew slots automatically run as AI squadmates. Host picks mission settings &amp; starts launch.</div>
+      </div>
+    `;
+  } else {
+    lobbyHtml = `
+      <div class="ws-lobby-card">
+        <div class="ws-form-row">
+          <label class="ws-field">
+            <span>Callsign</span>
+            <input id="ws-player-name" class="ws-input" type="text" maxlength="18" value="${escapeAttr(nameVal)}" placeholder="Commander" />
+          </label>
+          <label class="ws-field ws-field-wide">
+            <span>WebSocket Relay URL</span>
+            <input id="ws-relay-url" class="ws-input" type="text" value="${escapeAttr(wsUrlVal)}" placeholder="wss://your-relay.onrender.com (or ws://localhost:8787)" />
+          </label>
+        </div>
+        <div class="ws-actions-row">
+          <button id="btn-ws-host" class="btn-secondary ws-btn-host" type="button" ${isConnecting ? 'disabled' : ''}>
+            ${iconHtml('team')} ${isConnecting ? 'Connecting...' : 'Host Online Room'}
+          </button>
+          <div class="ws-join-group">
+            <input id="ws-room-code" class="ws-input ws-code-input" type="text" maxlength="6" value="${escapeAttr(roomCodeVal)}" placeholder="CODE" />
+            <button id="btn-ws-join" class="btn-secondary ws-btn-join" type="button" ${isConnecting ? 'disabled' : ''}>Join Room</button>
+          </div>
+        </div>
+        ${httpsNeedWss ? `<div class="ws-hint">${iconHtml('warn')} Hosted on HTTPS (Vercel): paste your deployed <b>wss://</b> WebSocket relay URL above (Render / Fly.io / Railway) to play online.</div>` : `<div class="ws-hint">Run <code>node server/ws-server.mjs</code> locally or point Relay URL to your hosted <code>wss://</code> server.</div>`}
+      </div>
+    `;
+  }
+
+  const errorHtml = netState.error ? `<div class="ws-error">${iconHtml('warn')} ${escapeAttr(netState.error)}</div>` : '';
+  const startLabel = isWsGuest()
+    ? 'Waiting for Host to Launch...'
+    : (isWsHost() ? `Start Online Mission (${netState.roomCode})` : 'Start Mission');
+
+  content.innerHTML = iconize(`
     <h1>Orbital Kitchen</h1>
     <p class="sub">Define your science goal, mission site, and rocket, then build modules in the Hangar.</p>
 
@@ -544,39 +708,110 @@ export function showMenuModal(onStartGame) {
       ${obj ? `<div class="trade-chip trade-chip-science">Science Goal <b>${obj.targetLocation}</b> (${objReqPreview})</div>` : ''}
     </div>
 
+    <div class="md-section">
+      <div class="md-section-label">4. Online 4P Co-Op (WebSocket)</div>
+      ${lobbyHtml}
+      ${errorHtml}
+    </div>
+
     <div class="modal-actions">
       <button id="btn-open-guide-modal" class="btn-secondary" type="button">How to Play</button>
-      <button id="btn-start-mission" class="btn-play" type="button">Start Mission</button>
+      <button id="btn-start-mission" class="btn-play" type="button" ${guestLocked ? 'disabled' : ''}>${startLabel}</button>
     </div>
-  `;
+  `);
 
-  content.querySelectorAll('[data-objective]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.selectedObjective = btn.dataset.objective;
-      state.currentCML = 2;
-      showMenuModal(onStartGame);
+  if (!guestLocked) {
+    content.querySelectorAll('[data-objective]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.selectedObjective = btn.dataset.objective;
+        state.currentCML = 2;
+        if (isWsHost()) sendLobbyConfig();
+        showMenuModal(onStartGame);
+      });
+    });
+
+    content.querySelectorAll('[data-scen]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.selectedScenario = btn.dataset.scen;
+        if (isWsHost()) sendLobbyConfig();
+        showMenuModal(onStartGame);
+      });
+    });
+
+    content.querySelectorAll('[data-veh]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.selectedVehicle = btn.dataset.veh;
+        if (isWsHost()) sendLobbyConfig();
+        showMenuModal(onStartGame);
+      });
+    });
+  }
+
+  const nameInput = document.getElementById('ws-player-name');
+  const urlInput = document.getElementById('ws-relay-url');
+  const codeInput = document.getElementById('ws-room-code');
+  nameInput?.addEventListener('input', () => { lobbyDraftName = nameInput.value; });
+  urlInput?.addEventListener('input', () => { lobbyDraftWsUrl = urlInput.value; });
+  codeInput?.addEventListener('input', () => {
+    codeInput.value = codeInput.value.toUpperCase();
+    lobbyDraftRoomCode = codeInput.value;
+  });
+
+  document.getElementById('btn-ws-host')?.addEventListener('click', () => {
+    lobbyDraftName = nameInput?.value || lobbyDraftName;
+    lobbyDraftWsUrl = urlInput?.value || lobbyDraftWsUrl;
+    connectAndCreateRoom({
+      wsUrl: lobbyDraftWsUrl,
+      playerName: lobbyDraftName
     });
   });
 
-  content.querySelectorAll('[data-scen]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.selectedScenario = btn.dataset.scen;
-      showMenuModal(onStartGame);
+  document.getElementById('btn-ws-join')?.addEventListener('click', () => {
+    lobbyDraftName = nameInput?.value || lobbyDraftName;
+    lobbyDraftWsUrl = urlInput?.value || lobbyDraftWsUrl;
+    lobbyDraftRoomCode = codeInput?.value || lobbyDraftRoomCode;
+    connectAndJoinRoom({
+      wsUrl: lobbyDraftWsUrl,
+      roomCode: lobbyDraftRoomCode,
+      playerName: lobbyDraftName
     });
   });
 
-  content.querySelectorAll('[data-veh]').forEach(btn => {
+  document.getElementById('btn-ws-leave')?.addEventListener('click', () => {
+    leaveRoom();
+  });
+
+  document.getElementById('btn-ws-copy')?.addEventListener('click', async () => {
+    const inviteUrl = buildInviteUrl();
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      showMissionToast('Invite Copied', `Share link for Room ${netState.roomCode} copied to clipboard.`);
+    } catch {
+      window.prompt('Copy invite link:', inviteUrl);
+    }
+  });
+
+  content.querySelectorAll('[data-ws-slot]').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.selectedVehicle = btn.dataset.veh;
-      showMenuModal(onStartGame);
+      const slot = Number(btn.dataset.wsSlot);
+      const occupant = netState.slots[slot];
+      if (occupant?.occupied && occupant.clientId !== netState.clientId) {
+        showMissionToast(`P${slot + 1} Occupied`, `${occupant.name} is already in P${slot + 1}.`);
+        return;
+      }
+      claimWsSlot(slot);
     });
   });
 
-  document.getElementById('btn-start-mission').addEventListener('click', onStartGame);
+  document.getElementById('btn-start-mission').addEventListener('click', () => {
+    if (!guestLocked && onStartGame) onStartGame();
+  });
   document.getElementById('btn-open-guide-modal').addEventListener('click', () => {
     document.getElementById('guide-modal').classList.remove('hidden');
   });
 
+  syncCoopButtonHUD();
   modal.classList.remove('hidden');
 }
 

@@ -1,7 +1,8 @@
 import { LOGICAL_W, LOGICAL_H } from '../config.js';
 import { state, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
-import { broadcastNet } from '../net.js';
+import { broadcastNet, isWsMultiplayer, isWsHost, broadcastHostEvent } from '../net.js';
+import { isAnyHumanKey, isAnyGroupKey } from '../sync.js';
 import { getAsset } from '../assets.js';
 import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
@@ -189,6 +190,9 @@ function triggerStage4GameOver(title, reason, onBackToMenu) {
   logBlackBox('STAGE 4', `REENTRY FAILURE: ${reason}`, 'warn');
   playTone(110, 'sawtooth', 0.45, 0.16);
   updateBottomHUD();
+  if (isWsHost()) {
+    broadcastHostEvent('STAGE_ABORT', { stage: 'STAGE4', title, reason });
+  }
 
   const modal = document.getElementById('modal');
   const mc = document.getElementById('modal-content');
@@ -248,24 +252,24 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
 
   if (r.phase === 'PLASMA') {
     if (
-      state.keys['KeyW'] || state.keys['ArrowUp'] ||
-      state.keys['KeyS'] || state.keys['ArrowDown'] ||
-      state.keys['KeyA'] || state.keys['ArrowLeft'] ||
-      state.keys['KeyD'] || state.keys['ArrowRight']
+      isAnyHumanKey('KeyW') || isAnyHumanKey('ArrowUp') ||
+      isAnyHumanKey('KeyS') || isAnyHumanKey('ArrowDown') ||
+      isAnyHumanKey('KeyA') || isAnyHumanKey('ArrowLeft') ||
+      isAnyHumanKey('KeyD') || isAnyHumanKey('ArrowRight')
     ) {
       r.inputTouched = true;
     }
 
     const drift = Math.sin(performance.now() * 0.0022) * 0.34 - 0.16;
     r.pitchAngle += drift * dt;
-    if (state.keys['KeyW'] || state.keys['ArrowUp']) r.pitchAngle += 0.95 * dt;
-    if (state.keys['KeyS'] || state.keys['ArrowDown']) r.pitchAngle -= 0.95 * dt;
+    if (isAnyHumanKey('KeyW') || isAnyHumanKey('ArrowUp')) r.pitchAngle += 0.95 * dt;
+    if (isAnyHumanKey('KeyS') || isAnyHumanKey('ArrowDown')) r.pitchAngle -= 0.95 * dt;
     r.pitchAngle = Math.max(-0.8, Math.min(0.8, r.pitchAngle));
 
     // Active Roll Bank shedding heat
     let rollInput = 0;
-    if (state.keys['KeyA'] || state.keys['ArrowLeft']) rollInput -= 1;
-    if (state.keys['KeyD'] || state.keys['ArrowRight']) rollInput += 1;
+    if (isAnyHumanKey('KeyA') || isAnyHumanKey('ArrowLeft')) rollInput -= 1;
+    if (isAnyHumanKey('KeyD') || isAnyHumanKey('ArrowRight')) rollInput += 1;
     r.rollBank += (rollInput * 0.45 - r.rollBank) * Math.min(1, dt * 6);
     const rollCooling = Math.abs(rollInput) > 0 ? 2.5 : 0;
 
@@ -335,7 +339,7 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
 
     // Coolant recharge; limited 1-time P2 emergency assist if actively flown
     r.coolantCharge = Math.min(1.0, r.coolantCharge + dt * 0.24);
-    if ((state.coopMode === '4P_AI' || state.coopMode === 'NET_4P') && r.inputTouched && r.aiVentsLeft > 0 && r.heat > 84 && r.coolantCharge >= 0.99) {
+    if ((state.coopMode === '4P_AI' || state.coopMode === 'NET_4P' || state.coopMode === 'WS_4P') && r.inputTouched && r.aiVentsLeft > 0 && r.heat > 84 && r.coolantCharge >= 0.99) {
       r.aiVentsLeft--;
       r.coolantCharge = 0;
       r.heat = Math.max(12, r.heat - 20);
@@ -379,17 +383,21 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
       playTone(580, 'triangle', 0.16, 0.12);
     }
   } else if (r.phase === 'CHUTES') {
-    // Allow J/L anytime OR switching to P4 [4] + A/D to steer the Recovery Carrier Ship!
-    const p4Steer = state.activeCrewIndex === 3;
+    // Allow J/L anytime OR P4 [4] + A/D to steer the Recovery Carrier Ship!
+    const p4Steer = !isWsMultiplayer() && state.activeCrewIndex === 3;
     let shipSteered = false;
-    if (state.keys['KeyJ']) { r.shipX -= 180 * dt; shipSteered = true; }
-    if (state.keys['KeyL']) { r.shipX += 180 * dt; shipSteered = true; }
+    if (isAnyHumanKey('KeyJ')) { r.shipX -= 180 * dt; shipSteered = true; }
+    if (isAnyHumanKey('KeyL')) { r.shipX += 180 * dt; shipSteered = true; }
     if (p4Steer && (state.keys['KeyA'] || state.keys['ArrowLeft'])) { r.shipX -= 180 * dt; shipSteered = true; }
     if (p4Steer && (state.keys['KeyD'] || state.keys['ArrowRight'])) { r.shipX += 180 * dt; shipSteered = true; }
+    if (isWsMultiplayer()) {
+      if (isAnyGroupKey([3], 'KeyA') || isAnyGroupKey([3], 'ArrowLeft')) { r.shipX -= 180 * dt; shipSteered = true; }
+      if (isAnyGroupKey([3], 'KeyD') || isAnyGroupKey([3], 'ArrowRight')) { r.shipX += 180 * dt; shipSteered = true; }
+    }
     if (shipSteered) {
       r.shipX = Math.max(200, Math.min(920, r.shipX));
       broadcastNet({ type: 'SHIP_SYNC', shipX: r.shipX });
-    } else if (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P') {
+    } else if (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P' || state.coopMode === 'WS_4P') {
       const diff = r.capsuleX - r.shipX;
       r.shipX += Math.sign(diff) * Math.min(Math.abs(diff), 64 * dt);
     } else {
@@ -413,8 +421,10 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
     r.windForce = Math.sin(performance.now() * 0.0017) * windAmp;
     r.capsuleX += r.windForce * dt;
     if (!p4Steer) {
-      if (state.keys['KeyA'] || state.keys['ArrowLeft']) r.capsuleX -= 185 * dt;
-      if (state.keys['KeyD'] || state.keys['ArrowRight']) r.capsuleX += 185 * dt;
+      const steerLeft = isWsMultiplayer() ? isAnyGroupKey([0, 1, 2], 'KeyA') || isAnyGroupKey([0, 1, 2], 'ArrowLeft') : (state.keys['KeyA'] || state.keys['ArrowLeft']);
+      const steerRight = isWsMultiplayer() ? isAnyGroupKey([0, 1, 2], 'KeyD') || isAnyGroupKey([0, 1, 2], 'ArrowRight') : (state.keys['KeyD'] || state.keys['ArrowRight']);
+      if (steerLeft) r.capsuleX -= 185 * dt;
+      if (steerRight) r.capsuleX += 185 * dt;
     }
     r.capsuleX = Math.max(140, Math.min(LOGICAL_W - 140, r.capsuleX));
 

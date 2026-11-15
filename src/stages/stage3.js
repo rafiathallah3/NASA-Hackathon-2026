@@ -1,7 +1,8 @@
 import { LOGICAL_W, LOGICAL_H, LUNAR_W, LUNAR_H, CREW_ROSTER, SCIENCE_OBJECTIVES } from '../config.js';
 import { state, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
-import { broadcastNet } from '../net.js';
+import { broadcastNet, isWsMultiplayer, isWsHost, getMyWsSlot, broadcastHostEvent } from '../net.js';
+import { isAnyHumanKey, isAnyGroupKey, hasHumanInSlots } from '../sync.js';
 import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
@@ -390,6 +391,9 @@ function triggerStage3AAbort(reason, onAbortToMenu) {
   logBlackBox('STAGE 3A', `LUNAR CRASH: ${reason}`, 'warn');
   playTone(95, 'sawtooth', 0.5, 0.16);
   updateBottomHUD();
+  if (isWsHost()) {
+    broadcastHostEvent('STAGE_ABORT', { stage: 'STAGE3A', title: 'Lunar Landing Failed: Game Over', reason });
+  }
 
   const modal = document.getElementById('modal');
   const mc = document.getElementById('modal-content');
@@ -477,11 +481,11 @@ export function updateStage3A(dt, onNextStage, onAbortToMenu) {
     const targetVz = l.z > 25 ? -36 : -12;
     l.vz += (targetVz - l.vz) * Math.min(1, dt * 4.5);
   } else {
-    l.thrusting = (state.keys['Space'] || state.keys['ArrowUp']) && l.fuel > 0;
-    l.hoverTrim = (state.keys['ShiftLeft'] || state.keys['ShiftRight'] || state.keys['KeyI']) && l.fuel > 0;
+    l.thrusting = (isAnyHumanKey('Space') || isAnyHumanKey('ArrowUp')) && l.fuel > 0;
+    l.hoverTrim = (isAnyHumanKey('ShiftLeft') || isAnyHumanKey('ShiftRight') || isAnyHumanKey('KeyI')) && l.fuel > 0;
 
     l.p2AssistActive = false;
-    if ((state.coopMode === '4P_AI' || state.coopMode === 'NET_4P') && l.z < 95 && l.vz < -20 && !l.thrusting && !l.hoverTrim && l.fuel > 10) {
+    if ((state.coopMode === '4P_AI' || state.coopMode === 'NET_4P' || state.coopMode === 'WS_4P') && l.z < 95 && l.vz < -20 && !l.thrusting && !l.hoverTrim && l.fuel > 10) {
       l.p2AssistActive = true;
       l.vz += 15 * dt;
     }
@@ -496,10 +500,10 @@ export function updateStage3A(dt, onNextStage, onAbortToMenu) {
     }
 
     let ax = 0, ay = 0;
-    if (state.keys['KeyA'] || state.keys['ArrowLeft']) ax -= 1;
-    if (state.keys['KeyD'] || state.keys['ArrowRight']) ax += 1;
-    if (state.keys['KeyW']) ay -= 1;
-    if (state.keys['KeyS']) ay += 1;
+    if (isAnyHumanKey('KeyA') || isAnyHumanKey('ArrowLeft')) ax -= 1;
+    if (isAnyHumanKey('KeyD') || isAnyHumanKey('ArrowRight')) ax += 1;
+    if (isAnyHumanKey('KeyW')) ay -= 1;
+    if (isAnyHumanKey('KeyS')) ay += 1;
 
     if (ax !== 0 || ay !== 0) {
       l.vx += ax * 60 * dt;
@@ -1310,6 +1314,82 @@ function updateCompanionRoverAI(rv, targetCrater, dt) {
   applyRoverVerticalAndDropPhysics(rv, prevElev, newElev, true, dt);
 }
 
+export function getRoverForSlot(slot = getMyWsSlot()) {
+  if (!isWsMultiplayer()) return state.rover;
+  return (slot === 1 || slot === 3) ? state.rover2 : state.rover;
+}
+
+export function updateStage3BCameraLocal(dt) {
+  const focusRover = getRoverForSlot(getMyWsSlot()) || state.rover;
+  if (!focusRover) return;
+  const camTargetX = Math.max(0, Math.min(LUNAR_W - LOGICAL_W, focusRover.x - LOGICAL_W / 2));
+  const camTargetY = Math.max(0, Math.min(LUNAR_H - LOGICAL_H, focusRover.y - LOGICAL_H / 2));
+  state.lunarCam.x += (camTargetX - state.lunarCam.x) * Math.min(1, dt * 6);
+  state.lunarCam.y += (camTargetY - state.lunarCam.y) * Math.min(1, dt * 6);
+}
+
+export function updateStage3BGuestLocal(dt) {
+  const mySlot = getMyWsSlot();
+  state.activeCrewIndex = mySlot;
+  const myRover = (mySlot === 1 || mySlot === 3) ? state.rover2 : state.rover;
+  const otherRover = myRover === state.rover ? state.rover2 : state.rover;
+  const targetCrater = state.lunarCraters.find(c => c.isTarget);
+
+  if (myRover && !myRover.boarded) {
+    updateSingleRover(myRover, {
+      up: state.keys['KeyW'] || state.keys['ArrowUp'] || state.keys['KeyI'],
+      down: state.keys['KeyS'] || state.keys['ArrowDown'] || state.keys['KeyK'],
+      left: state.keys['KeyA'] || state.keys['ArrowLeft'] || state.keys['KeyJ'],
+      right: state.keys['KeyD'] || state.keys['ArrowRight'] || state.keys['KeyL'],
+      hop: state.keys['ShiftLeft'] || state.keys['ShiftRight'],
+      drill: false
+    }, targetCrater, dt);
+
+    if (typeof myRover.netTx === 'number' && typeof myRover.netTy === 'number') {
+      const err = Math.hypot(myRover.netTx - myRover.x, myRover.netTy - myRover.y);
+      if (err > 110) {
+        myRover.x = myRover.netTx;
+        myRover.y = myRover.netTy;
+        if (typeof myRover.netTz === 'number') myRover.z = myRover.netTz;
+      } else if (err > 1.5) {
+        const blend = Math.min(1, dt * 10);
+        myRover.x += (myRover.netTx - myRover.x) * blend;
+        myRover.y += (myRover.netTy - myRover.y) * blend;
+      }
+      if (typeof myRover.netTz === 'number') {
+        myRover.z += (myRover.netTz - (myRover.z || 0)) * Math.min(1, dt * 12);
+      }
+    }
+  }
+
+  if (otherRover) {
+    if (typeof otherRover.netTx === 'number' && typeof otherRover.netTy === 'number') {
+      otherRover.x += (otherRover.vx || 0) * dt * 0.35;
+      otherRover.y += (otherRover.vy || 0) * dt * 0.35;
+      const dx = otherRover.netTx - otherRover.x;
+      const dy = otherRover.netTy - otherRover.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 150) {
+        otherRover.x = otherRover.netTx;
+        otherRover.y = otherRover.netTy;
+      } else if (dist > 0.25) {
+        const blend = Math.min(1, dt * 16);
+        otherRover.x += dx * blend;
+        otherRover.y += dy * blend;
+      }
+      if (typeof otherRover.netTz === 'number') {
+        otherRover.z = (otherRover.z || 0) + (otherRover.netTz - (otherRover.z || 0)) * Math.min(1, dt * 16);
+      }
+      const spd = Math.hypot(otherRover.vx || 0, otherRover.vy || 0);
+      if (spd > 2 || dist > 0.8) {
+        otherRover.wheelSpin = (otherRover.wheelSpin || 0) + Math.max(spd, dist * 12) * dt * 0.08;
+      }
+    }
+  }
+
+  updateStage3BCameraLocal(dt);
+}
+
 export function updateStage3B(dt, onNextStage) {
   if (state.stageTimer <= 0) {
     if (!state.sampleCollected) {
@@ -1321,31 +1401,55 @@ export function updateStage3B(dt, onNextStage) {
 
   const targetCrater = state.lunarCraters.find(c => c.isTarget);
 
-  updateSingleRover(state.rover, {
-    up: state.keys['KeyW'] || state.keys['ArrowUp'],
-    down: state.keys['KeyS'] || state.keys['ArrowDown'],
-    left: state.keys['KeyA'] || state.keys['ArrowLeft'],
-    right: state.keys['KeyD'] || state.keys['ArrowRight'],
-    hop: state.keys['ShiftLeft'] || (state.coopMode !== 'LOCAL_2P' && state.keys['ShiftRight']),
-    drill: state.keys['Space'] || state.keys['KeyE']
-  }, targetCrater, dt);
-
-  if (state.coopMode === 'LOCAL_2P') {
-    updateSingleRover(state.rover2, {
-      up: state.keys['KeyI'],
-      down: state.keys['KeyK'],
-      left: state.keys['KeyJ'],
-      right: state.keys['KeyL'],
-      hop: state.keys['ShiftRight'],
-      drill: state.keys['Enter']
+  if (isWsMultiplayer()) {
+    updateSingleRover(state.rover, {
+      up: isAnyGroupKey([0, 2], 'KeyW') || isAnyGroupKey([0, 2], 'ArrowUp'),
+      down: isAnyGroupKey([0, 2], 'KeyS') || isAnyGroupKey([0, 2], 'ArrowDown'),
+      left: isAnyGroupKey([0, 2], 'KeyA') || isAnyGroupKey([0, 2], 'ArrowLeft'),
+      right: isAnyGroupKey([0, 2], 'KeyD') || isAnyGroupKey([0, 2], 'ArrowRight'),
+      hop: isAnyGroupKey([0, 2], 'ShiftLeft') || isAnyGroupKey([0, 2], 'ShiftRight'),
+      drill: isAnyGroupKey([0, 2], 'Space') || isAnyGroupKey([0, 2], 'KeyE')
     }, targetCrater, dt);
-    broadcastNet({
-      type: 'ROVER2_SYNC',
-      x: state.rover2.x, y: state.rover2.y, z: state.rover2.z,
-      facingX: state.rover2.facingX, facingY: state.rover2.facingY
-    });
-  } else if (state.coopMode === '4P_AI') {
-    updateCompanionRoverAI(state.rover2, targetCrater, dt);
+
+    if (hasHumanInSlots([1, 3])) {
+      updateSingleRover(state.rover2, {
+        up: isAnyGroupKey([1, 3], 'KeyW') || isAnyGroupKey([1, 3], 'ArrowUp') || isAnyGroupKey([1, 3], 'KeyI'),
+        down: isAnyGroupKey([1, 3], 'KeyS') || isAnyGroupKey([1, 3], 'ArrowDown') || isAnyGroupKey([1, 3], 'KeyK'),
+        left: isAnyGroupKey([1, 3], 'KeyA') || isAnyGroupKey([1, 3], 'ArrowLeft') || isAnyGroupKey([1, 3], 'KeyJ'),
+        right: isAnyGroupKey([1, 3], 'KeyD') || isAnyGroupKey([1, 3], 'ArrowRight') || isAnyGroupKey([1, 3], 'KeyL'),
+        hop: isAnyGroupKey([1, 3], 'ShiftLeft') || isAnyGroupKey([1, 3], 'ShiftRight'),
+        drill: isAnyGroupKey([1, 3], 'Space') || isAnyGroupKey([1, 3], 'KeyE') || isAnyGroupKey([1, 3], 'Enter')
+      }, targetCrater, dt);
+    } else {
+      updateCompanionRoverAI(state.rover2, targetCrater, dt);
+    }
+  } else {
+    updateSingleRover(state.rover, {
+      up: state.keys['KeyW'] || state.keys['ArrowUp'],
+      down: state.keys['KeyS'] || state.keys['ArrowDown'],
+      left: state.keys['KeyA'] || state.keys['ArrowLeft'],
+      right: state.keys['KeyD'] || state.keys['ArrowRight'],
+      hop: state.keys['ShiftLeft'] || (state.coopMode !== 'LOCAL_2P' && state.keys['ShiftRight']),
+      drill: state.keys['Space'] || state.keys['KeyE']
+    }, targetCrater, dt);
+
+    if (state.coopMode === 'LOCAL_2P') {
+      updateSingleRover(state.rover2, {
+        up: state.keys['KeyI'],
+        down: state.keys['KeyK'],
+        left: state.keys['KeyJ'],
+        right: state.keys['KeyL'],
+        hop: state.keys['ShiftRight'],
+        drill: state.keys['Enter']
+      }, targetCrater, dt);
+      broadcastNet({
+        type: 'ROVER2_SYNC',
+        x: state.rover2.x, y: state.rover2.y, z: state.rover2.z,
+        facingX: state.rover2.facingX, facingY: state.rover2.facingY
+      });
+    } else if (state.coopMode === '4P_AI') {
+      updateCompanionRoverAI(state.rover2, targetCrater, dt);
+    }
   }
 
   if (state.coopMode !== 'SOLO') {
@@ -1362,11 +1466,8 @@ export function updateStage3B(dt, onNextStage) {
     }
   }
 
-  // Smooth scrolling camera follows player rover LTV-1 across the 2400x1350 lunar sector
-  const camTargetX = Math.max(0, Math.min(LUNAR_W - LOGICAL_W, state.rover.x - LOGICAL_W / 2));
-  const camTargetY = Math.max(0, Math.min(LUNAR_H - LOGICAL_H, state.rover.y - LOGICAL_H / 2));
-  state.lunarCam.x += (camTargetX - state.lunarCam.x) * Math.min(1, dt * 6);
-  state.lunarCam.y += (camTargetY - state.lunarCam.y) * Math.min(1, dt * 6);
+  // Smooth scrolling camera follows active rover across the 2400x1350 lunar sector
+  updateStage3BCameraLocal(dt);
 
   const r1AtPadWithNew = state.rover.hasSample && !state.rover.sampleStowed && Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 115;
   const r2AtPadWithNew = state.rover2.hasSample && !state.rover2.sampleStowed && Math.hypot(state.rover2.x - state.lander.padX, state.rover2.y - state.lander.padY) < 115;
@@ -1457,7 +1558,7 @@ export function updateStage3C(dt, onNextStage) {
 
   const ml = state.moonLaunch;
   if (ml.phase === 'LIFTOFF') {
-    ml.thrusting = (state.keys['KeyW'] || state.keys['ArrowUp'] || state.keys['Space']);
+    ml.thrusting = (isAnyHumanKey('KeyW') || isAnyHumanKey('ArrowUp') || isAnyHumanKey('Space'));
     if (ml.thrusting) {
       ml.velocityY += 85 * dt;
       if (Math.random() < 0.4) playTone(125 + Math.random() * 35, 'sawtooth', 0.06, 0.05);
@@ -1466,9 +1567,9 @@ export function updateStage3C(dt, onNextStage) {
     }
 
     ml.velTilt += Math.sin(performance.now() * 0.0031) * 0.48 * dt;
-    if (state.keys['KeyA'] || state.keys['ArrowLeft']) ml.velTilt -= 1.55 * dt;
-    if (state.keys['KeyD'] || state.keys['ArrowRight']) ml.velTilt += 1.55 * dt;
-    if (state.coopMode === '4P_AI' || state.coopMode === 'NET_4P') ml.velTilt -= ml.tilt * 0.6 * dt;
+    if (isAnyHumanKey('KeyA') || isAnyHumanKey('ArrowLeft')) ml.velTilt -= 1.55 * dt;
+    if (isAnyHumanKey('KeyD') || isAnyHumanKey('ArrowRight')) ml.velTilt += 1.55 * dt;
+    if (state.coopMode === '4P_AI' || state.coopMode === 'NET_4P' || state.coopMode === 'WS_4P') ml.velTilt -= ml.tilt * 0.6 * dt;
     ml.tilt = Math.max(-0.45, Math.min(0.45, ml.tilt + ml.velTilt * dt));
     ml.velTilt *= 0.94;
 
