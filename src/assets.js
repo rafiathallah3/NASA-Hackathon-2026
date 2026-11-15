@@ -57,19 +57,19 @@ export const ITEM_BOUNDS = {
 
 const ANIM_PATHS = {
   weldFrames: [
-    'Assets/Stage 1/Processing Machine Animation/Blue Welding Workbench (1).png',
-    'Assets/Stage 1/Processing Machine Animation/Blue Welding Workbench (2).png',
-    'Assets/Stage 1/Processing Machine Animation/Blue Welding Workbench (3).png'
+    'Assets/Stage 1/Processing Machine Animation/Blue Welding Workbench_1.png',
+    'Assets/Stage 1/Processing Machine Animation/Blue Welding Workbench_2.png',
+    'Assets/Stage 1/Processing Machine Animation/Blue Welding Workbench_3.png'
   ],
   calFrames: [
-    'Assets/Stage 1/Processing Machine Animation/Purple Calibration Rig (1).png',
-    'Assets/Stage 1/Processing Machine Animation/Purple Calibration Rig (2).png',
-    'Assets/Stage 1/Processing Machine Animation/Purple Calibration Rig (3).png'
+    'Assets/Stage 1/Processing Machine Animation/Purple Calibration Rig_1.png',
+    'Assets/Stage 1/Processing Machine Animation/Purple Calibration Rig_2.png',
+    'Assets/Stage 1/Processing Machine Animation/Purple Calibration Rig_3.png'
   ],
   chgFrames: [
-    'Assets/Stage 1/Processing Machine Animation/Green Battery Charge Tower.png',
-    'Assets/Stage 1/Processing Machine Animation/Gemini_Generated_Image_7p2opg7p2opg7p2o_0008.png',
-    'Assets/Stage 1/Processing Machine Animation/Gemini_Generated_Image_7p2opg7p2opg7p2o_0009.png'
+    'Assets/Stage 1/Processing Machine Animation/Green Battery Charge Tower_1.png',
+    'Assets/Stage 1/Processing Machine Animation/Green Battery Charge Tower_2.png',
+    'Assets/Stage 1/Processing Machine Animation/Green Battery Charge Tower_3.png'
   ],
   conveyorFrames: [
     'Assets/Stage 1/Conveyor/Conveyor (1).png',

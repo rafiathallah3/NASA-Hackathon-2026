@@ -228,12 +228,7 @@ export function drawItemBadge(ctx, x, y, item) {
   } else {
     const isRaw = item.kind === 'raw';
     const meta = isRaw ? RAW_ITEMS[item.id] : PROC_META[item.id];
-    ctx.fillStyle = item.id === 'burned' ? '#334155' : (isRaw ? '#fef3c7' : '#dcfce7');
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.arc(x, y, 17, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
+    // Items are drawn bare (no backing circle/outline) so the sprite art reads on its own.
     if (!drawSpriteItem(ctx, item.id, x, y, 27)) {
       drawHardwareCanvas(ctx, x, y, meta?.shape || 'tank', !isRaw && item.id !== 'burned', 0.78);
     }

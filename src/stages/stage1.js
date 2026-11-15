@@ -6,6 +6,14 @@ import { addFloatText, drawItemBadge, drawChibiEngineer, drawHardwareCanvas } fr
 import { getAsset, getAnimFrame, getAnimFrameBounds, getSheetSlice, isImageReady } from '../assets.js';
 import { renderTicketsHUD, updateTicketBarsOnly, updateBottomHUD, setStageBanner, showMissionToast, getActiveTargetRecipe, isProcPartReadyInHangar, isUiTourActive } from '../hud.js';
 
+// SUBMIT belt art is anchored to the right hangar wall (not to its tile) so the gray intake
+// box touches the wall. Delivered trays ride the belt and disappear into that box instead of
+// flying past the wall and out of the canvas.
+const SUBMIT_BELT_W = 97;                                        // conveyor sprite aspect at TILE + 12 tall
+const SUBMIT_BELT_RIGHT = GRID_X + COLS * TILE + 12;             // wall face (1076)
+const SUBMIT_BELT_LEFT = SUBMIT_BELT_RIGHT - SUBMIT_BELT_W;
+const SUBMIT_INTAKE_X = SUBMIT_BELT_LEFT + SUBMIT_BELT_W * 0.82; // left face of the intake box
+
 export function buildStage1Map() {
   state.stations = [];
   for (let r = 0; r < ROWS; r++) {
@@ -306,7 +314,7 @@ export function handleStage1Interact(p) {
         state.screenShake = Math.max(state.screenShake || 0, 0.15);
 
         state.orders = state.orders.filter(o => o.uid !== matched.uid);
-        state.flyingDeliveries.push({ x: st.x + 20, y: st.y + 34, parts: [...p.holding.parts] });
+        state.flyingDeliveries.push({ x: SUBMIT_BELT_LEFT + 16, y: st.y + 34, parts: [...p.holding.parts] });
         p.holding = null;
         state.trayReturnQueue.push(2.5);
         spawnOrder(rec.id);
@@ -1005,7 +1013,7 @@ export function updateStage1(dt) {
   state.conveyorOffset = (state.conveyorOffset + dt * 45) % 24;
   for (let i = state.flyingDeliveries.length - 1; i >= 0; i--) {
     state.flyingDeliveries[i].x += dt * 150;
-    if (state.flyingDeliveries[i].x > 1180) state.flyingDeliveries.splice(i, 1);
+    if (state.flyingDeliveries[i].x > SUBMIT_INTAKE_X + 30) state.flyingDeliveries.splice(i, 1);
   }
   for (let i = state.hangarSparks.length - 1; i >= 0; i--) {
     const sp = state.hangarSparks[i];
@@ -1072,7 +1080,7 @@ function getTutorialStepInfo(lead) {
         ? 'Place Circuit on a Blue WELD bench (SPACE), then HOLD SPACE until finished.'
         : state.stations.some(s => s.type === 'W' && s.item?.id === 'circuit')
           ? 'Stand at the Blue WELD bench and HOLD SPACE until the Circuit finishes welding.'
-          : 'Grab a Circuit from the top-left crate beside the lockers, place it on Blue WELD, and HOLD SPACE.',
+          : 'Grab a Circuit from the top crate on the left wall, place it on Blue WELD, and HOLD SPACE.',
       find: () => lead?.holding?.id === 'circuit'
         ? (state.stations.find(s => s.type === 'W' && !s.item) || state.stations.find(s => s.type === 'W'))
         : (state.stations.find(s => s.type === 'W' && s.item?.id === 'circuit') || state.stations.find(s => s.crateItem === 'circuit'))
@@ -1384,9 +1392,11 @@ export function drawStage1(ctx) {
 
       if (s.type === 'CRATE') {
         const slice = getSheetSlice('cratesSheet', s.crateItem);
-        if (drawSliceBox(ctx, slice, s.x - 3, s.y - 8, TILE + 6, TILE + 10, true)) {
+        // Fit the crate to exactly its own tile: stacked crates touch but never overlap, so the
+        // name pill at the bottom of one crate is not covered by the crate below it.
+        if (drawSliceBox(ctx, slice, s.x, s.y, TILE, TILE, true)) {
           drewSprite = true;
-          drawSmallStationPill(ctx, cx, s.y + TILE - 2, RAW_ITEMS[s.crateItem].name);
+          drawSmallStationPill(ctx, cx, s.y + TILE - 6, RAW_ITEMS[s.crateItem].name); // pill spans s.y+41..s.y+54, inside this tile
         }
       } else if (s.type === 'W') {
         const activeWeld = Boolean(s.item && s.item.kind === 'raw');
@@ -1419,9 +1429,9 @@ export function drawStage1(ctx) {
         const frameIdx = Math.floor(now / 110) % 4;
         const img = getAnimFrame('conveyorFrames', frameIdx);
         const bounds = getAnimFrameBounds('conveyorFrames', frameIdx);
-        if (drawSpriteFitted(ctx, img, bounds, s.x - 2, s.y - 10, TILE * 2, TILE + 12, true)) {
+        if (drawSpriteFitted(ctx, img, bounds, SUBMIT_BELT_LEFT, s.y - 10, SUBMIT_BELT_W, TILE + 12, true)) {
           drewSprite = true;
-          drawSmallStationPill(ctx, s.x + TILE * 0.72, s.y + TILE - 2, 'SUBMIT', 'rgba(15, 23, 42, 0.9)', '#38bdf8');
+          drawSmallStationPill(ctx, SUBMIT_BELT_LEFT + SUBMIT_BELT_W * 0.42, s.y + TILE - 2, 'SUBMIT', 'rgba(15, 23, 42, 0.9)', '#38bdf8');
         }
       } else if (s.type === 'T') {
         const slice = getSheetSlice('logisticsSheet', 'tray_stack');
@@ -1615,7 +1625,12 @@ export function drawStage1(ctx) {
   }
 
   for (const fd of state.flyingDeliveries) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, SUBMIT_INTAKE_X, LOGICAL_H); // hide the tray once it slides into the intake box
+    ctx.clip();
     drawItemBadge(ctx, fd.x, fd.y, { kind: 'tray', parts: fd.parts });
+    ctx.restore();
   }
 
   // Single Compact Active Target Recipe Bar along Top Gantry
