@@ -3,7 +3,7 @@ import { state, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet, isWsMultiplayer, isWsHost, getMyWsSlot, broadcastHostEvent } from '../net.js';
 import { isAnyHumanKey, isAnyGroupKey, hasHumanInSlots } from '../sync.js';
-import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
+import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield, drawSpinningEarth, drawPixelMoon, drawRoverMountedCrew } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
 import { drawCraft, craftBox, CRAFT_GEO } from '../spacecraft.js';
@@ -1627,7 +1627,7 @@ export function updateStage3C(dt, onNextStage) {
 // 2.5D LUNAR RENDERERS (3A, 3B, 3C WITH CAMERA + RADAR MAP)
 // ============================================================================
 function getLunarHorizonY() {
-  return Math.max(76, SKY_HORIZON_WORLD_Y - state.lunarCam.y);
+  return Math.max(0, SKY_HORIZON_WORLD_Y - state.lunarCam.y);
 }
 
 function draw25DLunarWorld(ctx) {
@@ -1635,64 +1635,59 @@ function draw25DLunarWorld(ctx) {
   const cy = state.lunarCam.y;
   const horizonY = getLunarHorizonY();
 
-  ctx.fillStyle = '#060a14';
-  ctx.fillRect(0, 0, LOGICAL_W, horizonY);
+  if (horizonY > 0) {
+    ctx.fillStyle = '#060a14';
+    ctx.fillRect(0, 0, LOGICAL_W, horizonY);
 
-  // Stationary seeded starfield clipped cleanly above horizon (never jumps vertically or aligns in grids)
-  drawStarfield(ctx, LUNAR_STARS, LOGICAL_W, 300, {
-    offsetX: cx * 0.04,
-    maxY: horizonY - 6,
-    nowSec: performance.now() * 0.001
-  });
+    // Stationary seeded starfield clipped cleanly above horizon (never jumps vertically or aligns in grids)
+    drawStarfield(ctx, LUNAR_STARS, LOGICAL_W, 300, {
+      offsetX: cx * 0.04,
+      maxY: horizonY - 6,
+      nowSec: performance.now() * 0.001
+    });
 
-  // Earth in lunar sky with atmospheric halo
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, LOGICAL_W, horizonY);
-  ctx.clip();
-  const earthX = 920 - cx * 0.05;
-  const earthY = Math.max(38, Math.min(horizonY - 36, 72 - cy * 0.03));
-  ctx.beginPath(); ctx.arc(earthX, earthY, 32, 0, Math.PI * 2);
-  ctx.fillStyle = '#1d4ed8'; ctx.fill();
-  ctx.fillStyle = '#22c55e';
-  ctx.beginPath(); ctx.arc(earthX - 8, earthY - 8, 10, 0, Math.PI * 2); ctx.arc(earthX + 10, earthY + 6, 9, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.45)';
-  ctx.beginPath(); ctx.ellipse(earthX - 5, earthY - 13, 14, 4, 0.3, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(147, 197, 253, 0.55)'; ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.arc(earthX, earthY, 34, 0, Math.PI * 2); ctx.stroke();
+    // Animated spinning Earth in lunar sky with atmospheric halo
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, LOGICAL_W, horizonY);
+    ctx.clip();
+    const earthX = 920 - cx * 0.05;
+    const earthY = Math.max(38, Math.min(horizonY - 36, 72 - cy * 0.03));
+    drawSpinningEarth(ctx, earthX, earthY, 32, performance.now() * 0.001, { halo: true });
 
-  // Far mountain & stepped highland mesa silhouette
-  ctx.fillStyle = '#161e30';
-  ctx.beginPath();
-  ctx.moveTo(0, horizonY);
-  for (let x = 0; x <= LOGICAL_W; x += 28) {
-    const wx = x + cx * 0.22;
-    const mesa = Math.sin(wx * 0.0042) > 0.35 ? 12 : 0;
-    ctx.lineTo(x, horizonY - 28 - mesa - Math.sin(wx * 0.0065) * 16 - Math.cos(wx * 0.014) * 9);
+    // Far mountain & stepped highland mesa silhouette
+    ctx.fillStyle = '#161e30';
+    ctx.beginPath();
+    ctx.moveTo(0, horizonY);
+    for (let x = 0; x <= LOGICAL_W; x += 28) {
+      const wx = x + cx * 0.22;
+      const mesa = Math.sin(wx * 0.0042) > 0.35 ? 12 : 0;
+      ctx.lineTo(x, horizonY - 28 - mesa - Math.sin(wx * 0.0065) * 16 - Math.cos(wx * 0.014) * 9);
+    }
+    ctx.lineTo(LOGICAL_W, horizonY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Foreground Moon cliff ridge locked to horizonY with faceted sunlit rock crest
+    ctx.fillStyle = '#232e44';
+    ctx.beginPath();
+    ctx.moveTo(0, horizonY);
+    for (let x = 0; x <= LOGICAL_W + 18; x += 18) {
+      const wx = x + cx * 0.42;
+      const ridgePeak =
+        Math.abs(Math.sin(wx * 0.0068 + 1.1)) * 18 +
+        Math.sin(wx * 0.021) * 7 +
+        Math.cos(wx * 0.049) * 3.5;
+      ctx.lineTo(x, horizonY - 11 - ridgePeak);
+    }
+    ctx.lineTo(LOGICAL_W, horizonY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.34)';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.restore();
   }
-  ctx.lineTo(LOGICAL_W, horizonY);
-  ctx.closePath();
-  ctx.fill();
-
-  // Foreground Moon cliff ridge locked to horizonY with faceted sunlit rock crest
-  ctx.fillStyle = '#232e44';
-  ctx.beginPath();
-  ctx.moveTo(0, horizonY);
-  for (let x = 0; x <= LOGICAL_W + 18; x += 18) {
-    const wx = x + cx * 0.42;
-    const ridgePeak =
-      Math.abs(Math.sin(wx * 0.0068 + 1.1)) * 18 +
-      Math.sin(wx * 0.021) * 7 +
-      Math.cos(wx * 0.049) * 3.5;
-    ctx.lineTo(x, horizonY - 11 - ridgePeak);
-  }
-  ctx.lineTo(LOGICAL_W, horizonY);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(226, 232, 240, 0.34)';
-  ctx.lineWidth = 1.6;
-  ctx.stroke();
-  ctx.restore();
 
   const plainGrad = ctx.createLinearGradient(0, horizonY, 0, LOGICAL_H);
   plainGrad.addColorStop(0, '#475569');
@@ -1701,12 +1696,14 @@ function draw25DLunarWorld(ctx) {
   ctx.fillStyle = plainGrad;
   ctx.fillRect(0, horizonY, LOGICAL_W, LOGICAL_H - horizonY);
 
-  // Horizon atmospheric terminator seam so terrain reads cleanly behind distant mountains
-  const seam = ctx.createLinearGradient(0, horizonY, 0, horizonY + 28);
-  seam.addColorStop(0, 'rgba(15, 23, 42, 0.45)');
-  seam.addColorStop(1, 'rgba(15, 23, 42, 0)');
-  ctx.fillStyle = seam;
-  ctx.fillRect(0, horizonY, LOGICAL_W, 28);
+  if (horizonY > 0) {
+    // Horizon atmospheric terminator seam so terrain reads cleanly behind distant mountains
+    const seam = ctx.createLinearGradient(0, horizonY, 0, horizonY + 28);
+    seam.addColorStop(0, 'rgba(15, 23, 42, 0.45)');
+    seam.addColorStop(1, 'rgba(15, 23, 42, 0)');
+    ctx.fillStyle = seam;
+    ctx.fillRect(0, horizonY, LOGICAL_W, 28);
+  }
 }
 
 function drawSingleCrater(ctx, cr, offsetY = 0) {
@@ -2347,8 +2344,7 @@ function drawCliffRamp(ctx, ramp) {
   ctx.restore();
 }
 
-function drawLowCliffBasin(ctx, b, ramps, craters, minWorldY) {
-  if (b.y2 + 30 < minWorldY) return;
+function drawLowCliffBasin(ctx, b, ramps, craters) {
   const depth = ELEV_LIFT_PX;
   const geom = getCliffGeometry(b, ramps, true);
   const pts = geom.pts;
@@ -2793,11 +2789,11 @@ function drawHighCliffPlateau(ctx, p, ramps, craters) {
 
 function drawLunarCratersAndPad(ctx) {
   const horizonY = getLunarHorizonY();
-  const minWorldY = state.lunarCam.y + horizonY;
+  const minWorldY = SKY_HORIZON_WORLD_Y;
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(state.lunarCam.x, minWorldY, LOGICAL_W, LOGICAL_H - horizonY + 24);
+  ctx.rect(state.lunarCam.x, state.lunarCam.y + horizonY, LOGICAL_W, LOGICAL_H - horizonY + 24);
   ctx.clip();
 
   // Stationary regolith mare patches & scattered pebbles (replaces flat floating 2D grid)
@@ -2820,7 +2816,7 @@ function drawLunarCratersAndPad(ctx) {
   for (const b of cliffs.basins || []) {
     const basinRamps = (cliffs.ramps || []).filter(r => r.cliffId === b.id);
     const basinCraters = state.lunarCraters.filter(cr => isPointInRoundedRect(cr.x, cr.y, b));
-    drawLowCliffBasin(ctx, b, basinRamps, basinCraters, minWorldY);
+    drawLowCliffBasin(ctx, b, basinRamps, basinCraters);
   }
 
   for (const cr of state.lunarCraters) {
@@ -3238,22 +3234,10 @@ function draw25DSingleRover(ctx, rv, crewA, crewB) {
   ctx.fillStyle = '#e2e8f0';
   ctx.beginPath(); ctx.arc(-20, -26, 5, 0.2 * Math.PI, 0.9 * Math.PI); ctx.fill();
 
-  // Seat 1
-  ctx.fillStyle = crewA.color;
-  ctx.strokeStyle = '#0f172a';
-  ctx.beginPath(); ctx.roundRect(1, -21, 13, 12, 5); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#f8fafc';
-  ctx.beginPath(); ctx.arc(7, -25, 7.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = crewA.visor;
-  ctx.fillRect(7 + rv.facingX * 2 - 3, -28, 7, 4.5);
-
-  // Seat 2
-  ctx.fillStyle = crewB.color;
-  ctx.beginPath(); ctx.roundRect(-14, -21, 13, 12, 5); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#f8fafc';
-  ctx.beginPath(); ctx.arc(-8, -25, 7.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = crewB.visor;
-  ctx.fillRect(-8 + rv.facingX * 2 - 3, -28, 7, 4.5);
+  // Standing customized EVA crew characters on top of the rover chassis facing rover travel direction
+  const [idxA, idxB] = rv.id === 'LTV-2' ? [1, 3] : [0, 2];
+  drawRoverMountedCrew(ctx, idxB, -9, -9, dirAngle, 0.68, crewB.color);
+  drawRoverMountedCrew(ctx, idxA, 9, -9, dirAngle, 0.68, crewA.color);
 
   if (rv.hasSample) {
     ctx.fillStyle = '#4ade80';
@@ -3477,7 +3461,7 @@ function drawStage3BDepthItem(ctx, item, targetCrater) {
 export function drawStage3B(ctx) {
   draw25DLunarWorld(ctx);
 
-  const minWorldY = state.lunarCam.y + getLunarHorizonY();
+  const minWorldY = SKY_HORIZON_WORLD_Y;
 
   ctx.save();
   ctx.translate(-state.lunarCam.x, -state.lunarCam.y);
@@ -3765,124 +3749,19 @@ export function drawStage3C(ctx) {
     const moonY = 345;
     const moonR = Math.max(38, 86 - ml.progress * 44);
 
-    // Realistic shaded Lunar sphere (departed)
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
-    const moonGrad = ctx.createRadialGradient(
-      moonX - moonR * 0.35, moonY - moonR * 0.35, moonR * 0.1,
-      moonX, moonY, moonR * 1.05
-    );
-    moonGrad.addColorStop(0, '#cbd5e1');
-    moonGrad.addColorStop(0.55, '#64748b');
-    moonGrad.addColorStop(1, '#1e293b');
-    ctx.fillStyle = moonGrad;
-    ctx.fill();
-    ctx.clip();
-    // Subtle mare basins & craters clipped inside Moon limb
-    ctx.fillStyle = 'rgba(30, 41, 59, 0.38)';
-    ctx.beginPath();
-    ctx.ellipse(moonX - moonR * 0.22, moonY - moonR * 0.14, moonR * 0.34, moonR * 0.24, -0.3, 0, Math.PI * 2);
-    ctx.ellipse(moonX + moonR * 0.18, moonY + moonR * 0.16, moonR * 0.26, moonR * 0.2, 0.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(203, 213, 225, 0.25)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(moonX - moonR * 0.32, moonY + moonR * 0.28, moonR * 0.12, 0, Math.PI * 2);
-    ctx.arc(moonX + moonR * 0.26, moonY - moonR * 0.26, moonR * 0.09, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+    // Pixel Moon sprite (departed)
+    drawPixelMoon(ctx, moonX, moonY, moonR, { halo: true });
 
     ctx.fillStyle = '#cbd5e1';
     ctx.font = 'bold 12px Fredoka, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('MOON (DEPARTED)', moonX, moonY + moonR + 24);
 
-    // Realistic shaded Planet Earth framed cleanly inside right viewport (zero clipping)
+    // Animated spinning Planet Earth framed cleanly inside right viewport
     const earthX = 900;
     const earthY = 325;
     const earthR = 54 + ml.progress * 44; // max radius 98 -> right edge 998 < 1120
-
-    // Outer atmospheric blue scattering aura
-    const atmoHalo = ctx.createRadialGradient(earthX, earthY, earthR * 0.85, earthX, earthY, earthR * 1.38);
-    atmoHalo.addColorStop(0, 'rgba(56, 189, 248, 0.36)');
-    atmoHalo.addColorStop(0.55, 'rgba(56, 189, 248, 0.12)');
-    atmoHalo.addColorStop(1, 'rgba(56, 189, 248, 0)');
-    ctx.fillStyle = atmoHalo;
-    ctx.beginPath();
-    ctx.arc(earthX, earthY, earthR * 1.38, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(earthX, earthY, earthR, 0, Math.PI * 2);
-    const oceanGrad = ctx.createRadialGradient(
-      earthX - earthR * 0.38, earthY - earthR * 0.35, earthR * 0.08,
-      earthX + earthR * 0.15, earthY + earthR * 0.15, earthR * 1.15
-    );
-    oceanGrad.addColorStop(0, '#38bdf8');
-    oceanGrad.addColorStop(0.45, '#1d4ed8');
-    oceanGrad.addColorStop(0.85, '#1e3a8a');
-    oceanGrad.addColorStop(1, '#091124');
-    ctx.fillStyle = oceanGrad;
-    ctx.fill();
-    ctx.clip();
-
-    // Sculpted continents (North Pacific / Americas + Pacific Islands / Asia-Australia contours)
-    ctx.fillStyle = '#22c55e';
-    ctx.beginPath();
-    ctx.moveTo(earthX - earthR * 0.55, earthY - earthR * 0.62);
-    ctx.bezierCurveTo(earthX - earthR * 0.08, earthY - earthR * 0.72, earthX + earthR * 0.16, earthY - earthR * 0.38, earthX + earthR * 0.02, earthY - earthR * 0.08);
-    ctx.bezierCurveTo(earthX - earthR * 0.08, earthY + earthR * 0.08, earthX - earthR * 0.34, earthY + earthR * 0.04, earthX - earthR * 0.45, earthY - earthR * 0.16);
-    ctx.bezierCurveTo(earthX - earthR * 0.64, earthY - earthR * 0.3, earthX - earthR * 0.68, earthY - earthR * 0.52, earthX - earthR * 0.55, earthY - earthR * 0.62);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = '#16a34a';
-    ctx.beginPath();
-    ctx.moveTo(earthX + earthR * 0.04, earthY + earthR * 0.04);
-    ctx.bezierCurveTo(earthX + earthR * 0.42, earthY - earthR * 0.02, earthX + earthR * 0.54, earthY + earthR * 0.35, earthX + earthR * 0.22, earthY + earthR * 0.62);
-    ctx.bezierCurveTo(earthX + earthR * 0.05, earthY + earthR * 0.66, earthX - earthR * 0.06, earthY + earthR * 0.34, earthX + earthR * 0.04, earthY + earthR * 0.04);
-    ctx.closePath();
-    ctx.fill();
-
-    // Subtle arid highland tint inside continents
-    ctx.fillStyle = 'rgba(234, 179, 8, 0.32)';
-    ctx.beginPath();
-    ctx.ellipse(earthX - earthR * 0.25, earthY - earthR * 0.32, earthR * 0.14, earthR * 0.09, -0.4, 0, Math.PI * 2);
-    ctx.ellipse(earthX + earthR * 0.22, earthY + earthR * 0.26, earthR * 0.12, earthR * 0.08, 0.3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Polar ice cap highlight
-    ctx.fillStyle = 'rgba(241, 245, 249, 0.72)';
-    ctx.beginPath();
-    ctx.ellipse(earthX, earthY - earthR * 0.94, earthR * 0.48, earthR * 0.14, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Wispy orbital cloud bands gently drifting
-    const cloudShift = Math.sin(nowSec * 0.4) * earthR * 0.04;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.38)';
-    ctx.beginPath();
-    ctx.ellipse(earthX - earthR * 0.26 + cloudShift, earthY - earthR * 0.12, earthR * 0.44, earthR * 0.07, -0.18, 0, Math.PI * 2);
-    ctx.ellipse(earthX + earthR * 0.12 - cloudShift, earthY + earthR * 0.18, earthR * 0.5, earthR * 0.065, -0.12, 0, Math.PI * 2);
-    ctx.ellipse(earthX - earthR * 0.05 + cloudShift, earthY - earthR * 0.52, earthR * 0.36, earthR * 0.055, -0.1, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Night-side terminator shadow crescent on bottom-right
-    const nightShade = ctx.createLinearGradient(earthX - earthR * 0.35, earthY - earthR * 0.35, earthX + earthR * 0.88, earthY + earthR * 0.85);
-    nightShade.addColorStop(0, 'rgba(2, 6, 23, 0)');
-    nightShade.addColorStop(0.58, 'rgba(2, 6, 23, 0.12)');
-    nightShade.addColorStop(1, 'rgba(2, 6, 23, 0.78)');
-    ctx.fillStyle = nightShade;
-    ctx.fillRect(earthX - earthR, earthY - earthR, earthR * 2, earthR * 2);
-    ctx.restore();
-
-    // Crisp atmospheric Fresnel rim + Entry Interface corridor marker arc
-    ctx.strokeStyle = 'rgba(125, 211, 252, 0.68)';
-    ctx.lineWidth = 3.5;
-    ctx.beginPath();
-    ctx.arc(earthX, earthY, earthR + 1.5, 0, Math.PI * 2);
-    ctx.stroke();
+    drawSpinningEarth(ctx, earthX, earthY, earthR, nowSec, { halo: true });
 
     const eiPointX = earthX - earthR - 14;
     const eiPointY = earthY - 12;
@@ -3934,7 +3813,7 @@ export function drawStage3C(ctx) {
     ctx.stroke();
     ctx.lineCap = 'butt';
 
-    // Detailed Orion Crew + Service Module aligned along curve tangent
+    // Apollo Command Module (Apollo Rocket_0013.png: commandBody + commandFlame) aligned along curve tangent
     const t = ml.progress;
     const omt = 1 - t;
     const cx = omt * omt * p0.x + 2 * omt * t * p1.x + t * t * p2.x;
@@ -3943,66 +3822,17 @@ export function drawStage3C(ctx) {
     const ty = 2 * omt * (p1.y - p0.y) + 2 * t * (p2.y - p1.y);
     const craftAngle = Math.atan2(ty, tx);
 
+    const CM_S = 0.42;
+    const cmBox = craftBox('commandBody', { scale: CM_S });
+    const cmCx = (cmBox.l + cmBox.r) / 2;
+    const cmCy = (cmBox.t + cmBox.b) / 2;
+    const flameSy = (ml.teiBurnDone ? 1.2 : 0.78) + (Math.floor(nowSec * 14) % 3) * 0.14;
+
     ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(craftAngle);
-    if (ml.teiBurnDone) {
-      const flameLen = 28 + Math.random() * 14;
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
-      ctx.beginPath();
-      ctx.moveTo(-22, -6);
-      ctx.lineTo(-22 - flameLen, 0);
-      ctx.lineTo(-22, 6);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#e0f2fe';
-      ctx.beginPath();
-      ctx.moveTo(-22, -3);
-      ctx.lineTo(-22 - flameLen * 0.55, 0);
-      ctx.lineTo(-22, 3);
-      ctx.closePath();
-      ctx.fill();
-    }
-    // Solar array wings
-    ctx.fillStyle = '#1e3a8a';
-    ctx.strokeStyle = '#60a5fa';
-    ctx.lineWidth = 1.2;
-    ctx.fillRect(-14, -24, 11, 14);
-    ctx.strokeRect(-14, -24, 11, 14);
-    ctx.fillRect(-14, 10, 11, 14);
-    ctx.strokeRect(-14, 10, 11, 14);
-    // Engine nozzle & Service Module cylinder
-    ctx.fillStyle = '#334155';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(-16, -5);
-    ctx.lineTo(-23, -8);
-    ctx.lineTo(-23, 8);
-    ctx.lineTo(-16, 5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = '#cbd5e1';
-    ctx.beginPath();
-    ctx.roundRect(-16, -8, 18, 16, 3);
-    ctx.fill();
-    ctx.stroke();
-    // Conical Orion Crew Capsule + NASA accent
-    ctx.fillStyle = '#f8fafc';
-    ctx.beginPath();
-    ctx.moveTo(2, -10);
-    ctx.lineTo(20, -4.5);
-    ctx.lineTo(20, 4.5);
-    ctx.lineTo(2, 10);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = '#1d4ed8';
-    ctx.fillRect(3, -8, 3, 16);
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(10, -3.5, 5, 3);
-    ctx.fillRect(10, 0.5, 5, 3);
+    ctx.translate(snapEven(cx), snapEven(cy));
+    ctx.rotate(craftAngle + Math.PI / 2);
+    drawCraft(ctx, 'commandFlame', -cmCx, -cmCy, { scale: CM_S, sy: flameSy });
+    drawCraft(ctx, 'commandBody', -cmCx, -cmCy, { scale: CM_S });
     ctx.restore();
 
     if (!ml.teiBurnDone) {

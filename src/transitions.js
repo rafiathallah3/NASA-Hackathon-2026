@@ -2,7 +2,7 @@ import { LOGICAL_W, LOGICAL_H } from './config.js';
 import { state } from './state.js';
 import { playTone } from './audio.js';
 import { setStageBanner } from './hud.js';
-import { createStarfield, drawStarfield } from './sprites.js';
+import { createStarfield, drawStarfield, drawSpinningEarth, drawPixelMoon, drawRoverMountedCrew } from './sprites.js';
 import { drawCraft, craftBox, drawLaunchPad, CRAFT_GEO, PAD_GEO } from './spacecraft.js';
 
 const TRANSITION_STARS = createStarfield(110, LOGICAL_W, LOGICAL_H, 42199);
@@ -119,12 +119,13 @@ export function updateTransition(dt) {
   const ease = smootherstep(t);
 
   if (tr.kind === 'ORBITAL_INSERTION') {
-    const p0 = { x: 110, y: 455 }, p1 = { x: 340, y: 270 }, p2 = { x: 680, y: 205 }, p3 = { x: 965, y: 255 };
-    const pos = cubicBezierPt(p0, p1, p2, p3, ease);
-    const ang = cubicBezierTan(p0, p1, p2, p3, ease);
-    const ex = pos.x - Math.cos(ang) * 28;
-    const ey = pos.y - Math.sin(ang) * 28;
-    if (tr.particles.length < 70) {
+    // Emit TLI main-engine exhaust only while the S-IVB / SLA stack is burning (ease < 0.26)
+    if (ease < 0.26 && tr.particles.length < 70) {
+      const p0 = { x: 140, y: 430 }, p1 = { x: 350, y: 255 }, p2 = { x: 670, y: 195 }, p3 = { x: 920, y: 240 };
+      const pos = cubicBezierPt(p0, p1, p2, p3, ease);
+      const ang = cubicBezierTan(p0, p1, p2, p3, ease);
+      const ex = pos.x - Math.cos(ang) * 46;
+      const ey = pos.y - Math.sin(ang) * 46;
       tr.particles.push({
         x: ex + (Math.random() - 0.5) * 4,
         y: ey + (Math.random() - 0.5) * 4,
@@ -149,6 +150,23 @@ export function updateTransition(dt) {
       size: 6 + Math.random() * 6,
       grow: 10,
       color: 'rgba(226, 232, 240, 0.45)'
+    });
+  } else if (tr.kind === 'LUNAR_LIFTOFF_PREP' && t >= 0.32 && tr.particles.length < 55) {
+    const liftT = smootherstep((t - 0.32) / 0.68);
+    const liftY = liftT * 250;
+    const landerX = 380;
+    const groundY = 455;
+    const seamY = groundY - Math.round(CRAFT_GEO.landerSeamY * 0.62) - liftY;
+    tr.particles.push({
+      x: landerX + (Math.random() - 0.5) * 20,
+      y: seamY + 8,
+      vx: (Math.random() - 0.5) * 75,
+      vy: 55 + Math.random() * 65,
+      life: 0.5 + Math.random() * 0.25,
+      maxLife: 0.75,
+      size: 3.5 + Math.random() * 3.5,
+      grow: 5,
+      color: Math.random() < 0.45 ? '#fde047' : (Math.random() < 0.6 ? '#fb923c' : 'rgba(226, 232, 240, 0.65)')
     });
   } else if (tr.kind === 'ENTRY_INTERFACE') {
     const p0 = { x: 185, y: 225 }, p1 = { x: 410, y: 255 }, p2 = { x: 645, y: 315 }, p3 = { x: 875, y: 390 };
@@ -180,7 +198,7 @@ function craftCentre(id, opts) {
   return { x: (b.l + b.r) / 2, y: (b.t + b.b) / 2, box: b };
 }
 
-function drawDetailedTransitionRover(ctx, bodyColor, rollAngle) {
+function drawDetailedTransitionRover(ctx, bodyColor, rollAngle, crewIdxA = 0, crewIdxB = 2) {
   ctx.save();
 
   // Headlight beam casting forward
@@ -214,23 +232,12 @@ function drawDetailedTransitionRover(ctx, bodyColor, rollAngle) {
   ctx.arc(-22, -37, 5, Math.PI * 0.25, Math.PI * 1.25);
   ctx.fill();
 
-  // Two seated NASA EVA astronauts in helmets & gold visors
-  for (const ax of [-6, 10]) {
-    ctx.fillStyle = '#f8fafc';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.roundRect(ax - 5, -28, 10, 10, 3);
-    ctx.fill();
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(ax, -32, 5.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = '#38bdf8';
-    ctx.beginPath();
-    ctx.roundRect(ax - 1, -34, 5, 4, 1.5);
-    ctx.fill();
+  // Standing customized EVA crew characters on top of the rover chassis (facing right = 0 rad)
+  if (crewIdxB >= 0) {
+    drawRoverMountedCrew(ctx, crewIdxB, -9, -19, 0, 0.68);
+  }
+  if (crewIdxA >= 0) {
+    drawRoverMountedCrew(ctx, crewIdxA, 9, -19, 0, 0.68);
   }
 
   // Rocker-bogie suspension frame & main rover chassis
@@ -351,20 +358,11 @@ export function drawTransition(ctx) {
     ctx.textAlign = 'center';
     ctx.fillText(countdown, LOGICAL_W / 2, 200);
   } else if (tr.kind === 'ORBITAL_INSERTION') {
-    const p0 = { x: 110, y: 455 }, p1 = { x: 340, y: 270 }, p2 = { x: 680, y: 205 }, p3 = { x: 965, y: 255 };
+    const p0 = { x: 140, y: 430 }, p1 = { x: 350, y: 255 }, p2 = { x: 670, y: 195 }, p3 = { x: 920, y: 240 };
 
-    // Shaded Earth limb + atmospheric halo bottom-left
-    ctx.save();
-    const earthGrad = ctx.createRadialGradient(130, 560, 40, 140, 690, 370);
-    earthGrad.addColorStop(0, '#3b82f6');
-    earthGrad.addColorStop(0.65, '#1d4ed8');
-    earthGrad.addColorStop(1, '#0f172a');
-    ctx.fillStyle = earthGrad;
-    ctx.beginPath(); ctx.arc(140, 690, 350, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
-    ctx.lineWidth = 10;
-    ctx.stroke();
-    ctx.restore();
+    // Departing animated spinning Earth on the bottom-left & destination Pixel Moon on the right
+    drawSpinningEarth(ctx, 130, 470, 96, nowSec, { halo: true });
+    drawPixelMoon(ctx, 985, 235, 58, { halo: true });
 
     // Planned orbital dashed path + illuminated flown trail
     ctx.save();
@@ -391,87 +389,158 @@ export function drawTransition(ctx) {
     const pos = cubicBezierPt(p0, p1, p2, p3, ease);
     const ang = cubicBezierTan(p0, p1, p2, p3, ease);
 
-    // Burn with the adapter closed -> panels open -> panels peel away, leaving the command module docked
-    // to the lander for the translunar coast.
-    const SC = 0.3;
-    const phase = ease < 0.28 ? 'csmSla' : ease < 0.4 ? 'csmSlaOpen' : 'docked';
-    const body = craftCentre(phase, { scale: SC });
-    const sep = clamp01((ease - 0.4) / 0.5);
-    const sepEase = smootherstep(sep);
-
+    // Full Apollo Transposition, Docking & Extraction sequence:
+    // 1) 0008 csmSla (TLI burn with tail plume)
+    // 2) 0009 csmSlaOpen (engine cutoff, SLA petals crack open)
+    // 3) 0010 command + 0011 lander (CSM separates, flips 180 deg, and docks with LM while SLA petals drift back)
+    // 4) 0012 docked (CSM + LM coasting cleanly toward the Moon — no plume on lander legs)
+    const SC = 0.36;
     ctx.save();
     ctx.translate(snapEven(pos.x), snapEven(pos.y));
     ctx.rotate(ang); // +x = direction of flight
 
-    // Engine plume trailing from the tail
-    ctx.save();
-    ctx.translate(-body.box.h / 2, 0);
-    drawLayeredPlume(ctx, 52, 8, nowSec);
-    ctx.restore();
+    if (ease < 0.26) {
+      const body = craftCentre('csmSla', { scale: SC });
+      ctx.save();
+      ctx.translate(-body.box.h / 2, 0);
+      drawLayeredPlume(ctx, 54, 9, nowSec);
+      ctx.restore();
 
-    // Separation puff when the stack swaps from adapter to docked configuration
-    if (ease >= 0.4 && ease < 0.52) {
-      const k = (ease - 0.4) / 0.12;
-      ctx.fillStyle = `rgba(241, 245, 249, ${0.55 * (1 - k)})`;
-      ctx.beginPath(); ctx.arc(0, 0, 16 + k * 40, 0, Math.PI * 2); ctx.fill();
-    }
+      ctx.save();
+      ctx.rotate(Math.PI / 2);
+      ctx.translate(-body.x, -body.y);
+      drawCraft(ctx, 'csmSla', 0, 0, { scale: SC });
+      ctx.restore();
+    } else if (ease < 0.44) {
+      const openT = clamp01((ease - 0.26) / 0.18);
+      const body = craftCentre('csmSlaOpen', { scale: SC });
+      if (openT < 0.45) {
+        ctx.fillStyle = `rgba(241, 245, 249, ${0.5 * (1 - openT / 0.45)})`;
+        ctx.beginPath(); ctx.arc(0, 0, 14 + openT * 42, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.save();
+      ctx.rotate(Math.PI / 2);
+      ctx.translate(-body.x, -body.y);
+      drawCraft(ctx, 'csmSlaOpen', 0, 0, { scale: SC });
+      ctx.restore();
+    } else if (ease < 0.74) {
+      const tdT = clamp01((ease - 0.44) / 0.30);
+      const tdEase = smootherstep(tdT);
+      const lm = craftCentre('lander', { scale: SC });
+      const cm = craftCentre('command', { scale: SC });
 
-    // Sprite space: nose (up) -> flight direction, craft centred on `pos`
-    ctx.save();
-    ctx.rotate(Math.PI / 2);
-    ctx.translate(-body.x, -body.y);
-    drawCraft(ctx, phase, 0, 0, { scale: SC });
-    if (sep > 0) {
+      // Peeling SLA petals drifting behind as the CSM turns around to dock
+      ctx.save();
+      ctx.rotate(Math.PI / 2);
       for (const [id, side] of [['slaPetalL', -1], ['slaPetalR', 1]]) {
         const pc = craftCentre(id, { scale: SC });
         ctx.save();
-        ctx.globalAlpha = Math.max(0, 1 - sep * 0.85);
-        ctx.translate(pc.x + side * sepEase * 46, pc.y + sepEase * 30);
-        ctx.rotate(side * sepEase * 1.0);
+        ctx.globalAlpha = Math.max(0, 1 - tdT * 0.95);
+        ctx.translate( side * (16 + tdEase * 48), 18 + tdEase * 44);
+        ctx.rotate(side * (0.25 + tdEase * 0.95));
         drawCraft(ctx, id, -pc.x, -pc.y, { scale: SC });
         ctx.restore();
       }
+      ctx.restore();
+
+      // Lunar Lander (0011) waiting in adapter attitude (ascent stage facing +x toward CSM)
+      const lmShiftX = -18 + tdEase * 10;
+      ctx.save();
+      ctx.translate(snapEven(lmShiftX), 0);
+      ctx.rotate(Math.PI / 2);
+      drawCraft(ctx, 'lander', -lm.x, -lm.y, { scale: SC });
+      ctx.restore();
+
+      // Command Module (0010) pulls forward, pitches 180 deg, and backs into docking capture
+      const flipT = clamp01(tdT / 0.65);
+      const dockT = clamp01((tdT - 0.55) / 0.45);
+      const cmShiftX = 42 - smootherstep(dockT) * 14;
+      const cmRot = Math.PI / 2 + smootherstep(flipT) * Math.PI;
+      ctx.save();
+      ctx.translate(snapEven(cmShiftX), 0);
+      ctx.rotate(cmRot);
+      drawCraft(ctx, 'command', -cm.x, -cm.y, { scale: SC });
+      ctx.restore();
+    } else {
+      const dockFlash = clamp01(1 - (ease - 0.74) / 0.10);
+      if (dockFlash > 0) {
+        ctx.fillStyle = `rgba(186, 230, 253, ${0.55 * dockFlash})`;
+        ctx.beginPath(); ctx.arc(4, 0, 14 + (1 - dockFlash) * 28, 0, Math.PI * 2); ctx.fill();
+      }
+      // Docked stack (0012): rotated -PI/2 so the CSM Service Module is at the rear (-x) and Lander leads (+x),
+      // ensuring no engine plume ever fires out of the Lander's legs.
+      const docked = craftCentre('docked', { scale: SC });
+      ctx.save();
+      ctx.rotate(-Math.PI / 2);
+      ctx.translate(-docked.x, -docked.y);
+      drawCraft(ctx, 'docked', 0, 0, { scale: SC });
+      ctx.restore();
     }
-    ctx.restore();
     ctx.restore();
   } else if (tr.kind === 'LUNAR_UNDOCK') {
-    // Shaded Moon surface rising below
-    const moonGrad = ctx.createRadialGradient(LOGICAL_W * 0.45, 760, 120, LOGICAL_W / 2, 920, 520);
-    moonGrad.addColorStop(0, '#64748b');
-    moonGrad.addColorStop(1, '#1e293b');
-    ctx.fillStyle = moonGrad;
-    ctx.beginPath(); ctx.arc(LOGICAL_W / 2, 920, 480, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = 'rgba(203, 213, 225, 0.3)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    // Pixel Moon rising below the orbital undocking trajectory
+    drawPixelMoon(ctx, LOGICAL_W / 2, 760, 360, { halo: true });
 
-    // Command module pulls away upper-left on its engine, nose first
-    const cmPos = cubicBezierPt({ x: 520, y: 235 }, { x: 450, y: 218 }, { x: 375, y: 205 }, { x: 300, y: 198 }, ease);
-    const CM_S = 0.6;
-    const cm = craftCentre('command', { scale: CM_S });
-    ctx.save();
-    ctx.translate(snapEven(cmPos.x), snapEven(cmPos.y));
-    ctx.rotate(-Math.PI / 2 - 0.08 * ease);
-    if (ease < 0.6) {
-      drawCraft(ctx, 'commandFlame', -cm.x, -cm.y, { scale: CM_S, sy: 0.9 + (Math.floor(nowSec * 14) % 3) * 0.15 });
-      drawCraft(ctx, 'commandBody', -cm.x, -cm.y, { scale: CM_S });
+    const S = 0.44;
+    if (ease < 0.22) {
+      // Phase 1: Docked CSM + Lander (0012) in low lunar orbit before undocking release
+      const dockPos = { x: 525, y: 252 };
+      const dc = craftCentre('docked', { scale: S });
+      ctx.save();
+      ctx.translate(snapEven(dockPos.x), snapEven(dockPos.y));
+      ctx.rotate(-Math.PI / 2 + 0.08);
+      drawCraft(ctx, 'docked', -dc.x, -dc.y, { scale: S });
+      ctx.restore();
+
+      if (ease >= 0.16) {
+        const puff = (ease - 0.16) / 0.06;
+        ctx.fillStyle = `rgba(226, 232, 240, ${0.55 * (1 - puff * 0.5)})`;
+        ctx.beginPath();
+        ctx.arc(525, 252, 10 + puff * 18, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else {
-      drawCraft(ctx, 'command', -cm.x, -cm.y, { scale: CM_S });
-    }
-    ctx.restore();
+      // Phase 2: Clean separation from 0012 (docked) -> 0013 (Command Module burn) + 0014/0011 (Lunar Lander)
+      const sepT = clamp01((ease - 0.22) / 0.78);
+      const sepEase = smootherstep(sepT);
 
-    // Lunar lander arcing down toward the Shackleton rim on its descent engine
-    const l0 = { x: 540, y: 270 }, l1 = { x: 590, y: 298 }, l2 = { x: 645, y: 350 }, l3 = { x: 675, y: 416 };
-    const lPos = cubicBezierPt(l0, l1, l2, l3, ease);
-    const LM_T = 0.4;
-    const plume = { scale: 0.45, sx: 0.8, sy: 1.0 + (Math.floor(nowSec * 14) % 3) * 0.15 };
-    ctx.save();
-    ctx.translate(snapEven(lPos.x), snapEven(lPos.y));
-    ctx.rotate(0.14 * (1 - ease));
-    drawCraft(ctx, 'commandFlame', 0, snapEven(CRAFT_GEO.landerBellY * LM_T) - craftBox('commandFlame', plume).t, plume);
-    drawCraft(ctx, 'lander', 0, 0, { scale: LM_T });
-    ctx.restore();
+      // Command Module (0013 burn -> 0010 coast) pulls away upper-left
+      const cmPos = cubicBezierPt(
+        { x: 500, y: 246 },
+        { x: 438, y: 224 },
+        { x: 368, y: 206 },
+        { x: 295, y: 196 },
+        sepEase
+      );
+      const cm = craftCentre('command', { scale: S });
+      ctx.save();
+      ctx.translate(snapEven(cmPos.x), snapEven(cmPos.y));
+      ctx.rotate(-Math.PI / 2 - 0.08 * sepEase);
+      if (sepT < 0.68) {
+        drawCraft(ctx, 'commandFlame', -cm.x, -cm.y, { scale: S, sy: 0.9 + (Math.floor(nowSec * 14) % 3) * 0.15 });
+        drawCraft(ctx, 'commandBody', -cm.x, -cm.y, { scale: S });
+      } else {
+        drawCraft(ctx, 'command', -cm.x, -cm.y, { scale: S });
+      }
+      ctx.restore();
+
+      // Lunar Lander (0014 landerUndock -> 0011 lander with powered descent burn) arcs down toward the Moon
+      const l0 = { x: 548, y: 266 }, l1 = { x: 596, y: 298 }, l2 = { x: 646, y: 348 }, l3 = { x: 678, y: 414 };
+      const lPos = cubicBezierPt(l0, l1, l2, l3, sepEase);
+      const plume = { scale: S, sx: 0.8, sy: 0.95 + (Math.floor(nowSec * 14) % 3) * 0.15 };
+      ctx.save();
+      ctx.translate(snapEven(lPos.x), snapEven(lPos.y));
+      ctx.rotate(0.16 * (1 - sepEase));
+      if (sepT >= 0.28) {
+        drawCraft(ctx, 'commandFlame', 0, snapEven(CRAFT_GEO.landerBellY * S) - craftBox('commandFlame', plume).t, plume);
+      }
+      drawCraft(ctx, sepT < 0.35 ? 'landerUndock' : 'lander', 0, 0, { scale: S });
+      ctx.restore();
+    }
   } else if (tr.kind === 'ROVER_DEPLOY') {
+    // Spinning Earth hanging in the lunar sky
+    drawSpinningEarth(ctx, 920, 115, 34, nowSec, { halo: true });
+
     const groundY = 445;
     const surfaceGrad = ctx.createLinearGradient(0, groundY, 0, LOGICAL_H);
     surfaceGrad.addColorStop(0, '#475569');
@@ -511,80 +580,107 @@ export function drawTransition(ctx) {
     const rollT = smootherstep(Math.max(0, (t - 0.18) / 0.82));
     const r1x = 328 + rollT * 360;
     const r2x = 278 + rollT * 245;
-    for (const [rx, col] of [[r1x, '#f59e0b'], [r2x, '#38bdf8']]) {
+    for (const [rx, col, cA, cB] of [[r1x, '#f59e0b', 0, 2], [r2x, '#38bdf8', 1, 3]]) {
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.beginPath();
       ctx.ellipse(rx, groundY + 2, 30, 6, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.save();
       ctx.translate(rx, groundY);
-      drawDetailedTransitionRover(ctx, col, rollT * 14);
+      drawDetailedTransitionRover(ctx, col, rollT * 14, cA, cB);
       ctx.restore();
     }
+  } else if (tr.kind === 'LUNAR_LIFTOFF_PREP') {
+    // Cutscene 4 (Stage 3B -> 3C): Lunar Surface Liftoff Prep — Ascent stage blasts off from Descent stage on pad
+    drawSpinningEarth(ctx, 920, 115, 34, nowSec, { halo: true });
+
+    const groundY = 455;
+    const surfaceGrad = ctx.createLinearGradient(0, groundY, 0, LOGICAL_H);
+    surfaceGrad.addColorStop(0, '#475569');
+    surfaceGrad.addColorStop(1, '#1e293b');
+    ctx.fillStyle = surfaceGrad;
+    ctx.fillRect(0, groundY, LOGICAL_W, LOGICAL_H - groundY);
+
+    ctx.strokeStyle = 'rgba(203, 213, 225, 0.25)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, groundY);
+    ctx.lineTo(LOGICAL_W, groundY);
+    ctx.stroke();
+
+    // Parked empty LTV-1 & LTV-2 rovers watching liftoff from Point A perimeter
+    for (const [rx, col] of [[650, '#f59e0b'], [745, '#38bdf8']]) {
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath();
+      ctx.ellipse(rx, groundY + 2, 30, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.save();
+      ctx.translate(rx, groundY);
+      drawDetailedTransitionRover(ctx, col, 0, -1, -1);
+      ctx.restore();
+    }
+
+    const landerX = 380;
+    const LM_T = 0.62;
+    const halfW = Math.round(CRAFT_GEO.landerHalfW * LM_T);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(landerX, groundY + 2, halfW - 2, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (t < 0.32) {
+      drawCraft(ctx, 'lander', landerX, groundY, { scale: LM_T });
+    } else {
+      const liftT = smootherstep((t - 0.32) / 0.68);
+      const liftY = snapEven(liftT * 250);
+
+      // Pyrotechnic separation flash on the descent stage deck
+      if (t < 0.46) {
+        const flashA = 1 - (t - 0.32) / 0.14;
+        const seamY = groundY - snapEven(CRAFT_GEO.landerSeamY * LM_T);
+        ctx.fillStyle = `rgba(254, 240, 138, ${0.75 * flashA})`;
+        ctx.beginPath();
+        ctx.ellipse(landerX, seamY, 44 + (1 - flashA) * 32, 12 + (1 - flashA) * 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Descent stage remains on the lunar pad
+      drawCraft(ctx, 'landerDescent', landerX, groundY, { scale: LM_T });
+
+      // Ascent stage climbs vertically with its ascent engine firing underneath
+      const seamAscY = groundY - liftY - snapEven(CRAFT_GEO.landerSeamY * LM_T);
+      const plume = { scale: 0.48, sx: 0.75, sy: 0.85 + (Math.floor(nowSec * 16) % 3) * 0.16 };
+      drawCraft(ctx, 'commandFlame', landerX, seamAscY - craftBox('commandFlame', plume).t, plume);
+      drawCraft(ctx, 'landerAscent', landerX, groundY - liftY, { scale: LM_T });
+    }
   } else if (tr.kind === 'ENTRY_INTERFACE') {
-    // Shaded Earth limb below with continents, drifting clouds, and glowing atmosphere
+    // Animated spinning Earth limb below with glowing ionized atmospheric entry boundary
     const earthCx = LOGICAL_W / 2;
-    const earthCy = 1120;
-    const earthRadius = 680;
+    const earthCy = 890;
+    const earthRadius = 460;
 
     // Outer thermosphere atmospheric scatter aura
-    const atmoGlow = ctx.createRadialGradient(earthCx, earthCy, earthRadius - 10, earthCx, earthCy, earthRadius + 55);
+    const atmoGlow = ctx.createRadialGradient(earthCx, earthCy, earthRadius - 12, earthCx, earthCy, earthRadius + 52);
     atmoGlow.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
     atmoGlow.addColorStop(0.55, 'rgba(251, 146, 60, 0.25)');
     atmoGlow.addColorStop(1, 'rgba(249, 115, 22, 0)');
     ctx.fillStyle = atmoGlow;
     ctx.beginPath();
-    ctx.arc(earthCx, earthCy, earthRadius + 55, Math.PI * 1.12, Math.PI * 1.88);
+    ctx.arc(earthCx, earthCy, earthRadius + 52, Math.PI * 1.08, Math.PI * 1.92);
     ctx.fill();
 
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(earthCx, earthCy, earthRadius, Math.PI * 1.14, Math.PI * 1.86);
-    const oceanGrad = ctx.createRadialGradient(earthCx - 120, 460, 40, earthCx, 760, 560);
-    oceanGrad.addColorStop(0, '#38bdf8');
-    oceanGrad.addColorStop(0.42, '#0284c7');
-    oceanGrad.addColorStop(0.82, '#1e3a8a');
-    oceanGrad.addColorStop(1, '#091124');
-    ctx.fillStyle = oceanGrad;
-    ctx.fill();
-    ctx.clip();
-
-    // Sculpted Pacific coast & island arch landmasses along the curved Earth limb
-    ctx.fillStyle = '#16a34a';
-    ctx.beginPath();
-    ctx.moveTo(180, 560);
-    ctx.bezierCurveTo(260, 470, 390, 455, 475, 515);
-    ctx.bezierCurveTo(510, 540, 440, 610, 355, 620);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = '#22c55e';
-    ctx.beginPath();
-    ctx.moveTo(710, 540);
-    ctx.bezierCurveTo(790, 480, 920, 485, 990, 565);
-    ctx.bezierCurveTo(950, 625, 795, 635, 710, 540);
-    ctx.closePath();
-    ctx.fill();
-
-    // Subtle wispy clouds curving over horizon
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.34)';
-    ctx.beginPath();
-    ctx.ellipse(380 - ease * 35, 495, 115, 16, -0.14, 0, Math.PI * 2);
-    ctx.ellipse(690 - ease * 25, 478, 130, 18, 0.08, 0, Math.PI * 2);
-    ctx.ellipse(540 - ease * 40, 542, 150, 20, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    drawSpinningEarth(ctx, earthCx, earthCy, earthRadius, nowSec, { halo: false });
 
     // Glowing ionized atmospheric entry boundary arc
     ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
     ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.arc(earthCx, earthCy, earthRadius + 1, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.arc(earthCx, earthCy, earthRadius + 2, Math.PI * 1.12, Math.PI * 1.88);
     ctx.stroke();
     ctx.strokeStyle = 'rgba(249, 115, 22, 0.55)';
     ctx.lineWidth = 8;
     ctx.beginPath();
-    ctx.arc(earthCx, earthCy, earthRadius + 14, Math.PI * 1.17, Math.PI * 1.83);
+    ctx.arc(earthCx, earthCy, earthRadius + 14, Math.PI * 1.14, Math.PI * 1.86);
     ctx.stroke();
 
     const p0 = { x: 185, y: 225 }, p1 = { x: 410, y: 255 }, p2 = { x: 645, y: 315 }, p3 = { x: 875, y: 390 };
@@ -601,46 +697,50 @@ export function drawTransition(ctx) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Jettisoned service module tumbling cleanly behind along the tangent
-    const SM_S = 0.4;
+    // Jettisoned service module (matched scale 0.46) separating and tumbling behind along the entry tangent
+    const SM_S = 0.46;
     const sm = craftCentre('serviceModule', { scale: SM_S });
+    const sepDist = 64 + ease * 135;
     ctx.save();
-    ctx.translate(snapEven(pos.x - 95 - ease * 115), snapEven(pos.y - 34 - ease * 42));
-    ctx.rotate(-ease * 2.1);
+    ctx.translate(
+      snapEven(pos.x - Math.cos(ang) * sepDist - 12),
+      snapEven(pos.y - Math.sin(ang) * sepDist + 14 * ease)
+    );
+    ctx.rotate(ang - Math.PI / 2 - ease * 1.8);
     drawCraft(ctx, 'serviceModule', -sm.x, -sm.y, { scale: SM_S });
     ctx.restore();
 
-    // Crew capsule, heatshield (local +y) facing the direction of travel, wrapped in its plasma
-    const CAP_S = 0.3;
-    const cap = craftCentre('chuteCapsule', { scale: CAP_S });
+    // Command Module (0010 at matched 0.46 scale) oriented blunt-heatshield-first (+y local -> +ang flight vector)
+    const CM_S = 0.46;
+    const cap = craftCentre('command', { scale: CM_S });
     const capH = cap.box.h / 2;
     ctx.save();
     ctx.translate(snapEven(pos.x), snapEven(pos.y));
     ctx.rotate(ang - Math.PI / 2);
 
     // Multi-layered ionization bow shock halo around the heatshield
-    const plasmaGlow = ctx.createRadialGradient(0, capH, 6, 0, capH, 72);
+    const plasmaGlow = ctx.createRadialGradient(0, capH, 6, 0, capH, 68);
     plasmaGlow.addColorStop(0, 'rgba(254, 240, 138, 0.85)');
     plasmaGlow.addColorStop(0.45, 'rgba(251, 146, 60, 0.65)');
     plasmaGlow.addColorStop(1, 'rgba(249, 115, 22, 0)');
     ctx.fillStyle = plasmaGlow;
     ctx.beginPath();
-    ctx.arc(0, capH, 72, 0, Math.PI * 2);
+    ctx.arc(0, capH, 68, 0, Math.PI * 2);
     ctx.fill();
 
     // Bow shock wave arc leading the blunt shield
     ctx.strokeStyle = 'rgba(254, 240, 138, 0.88)';
     ctx.lineWidth = 3.5;
     ctx.beginPath();
-    ctx.arc(0, capH - 24, 46, Math.PI * 0.15, Math.PI * 0.85);
+    ctx.arc(0, capH - 20, 42, Math.PI * 0.15, Math.PI * 0.85);
     ctx.stroke();
 
-    drawCraft(ctx, 'chuteCapsule', -cap.x, -cap.y, { scale: CAP_S });
+    drawCraft(ctx, 'command', -cap.x, -cap.y, { scale: CM_S });
 
     // Glowing superheated ablative heatshield base
-    ctx.fillStyle = 'rgba(234, 88, 12, 0.7)';
+    ctx.fillStyle = 'rgba(234, 88, 12, 0.72)';
     ctx.beginPath();
-    ctx.ellipse(0, capH - 3, cap.box.w * 0.46, 7, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, capH - 2, cap.box.w * 0.46, 6, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   } else {

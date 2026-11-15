@@ -250,7 +250,7 @@ export const STAGE1_LAYOUT = {
     center_u: { dx: 598, dy: 306, dw: 256, dh: 193, splitY: 444 },
     right_l:  { dx: 926, dy: 302, dw: 168, dh: 124 },
     props: {
-      beacon:  { x: 266, y: 286, w: 22, h: 28 },
+      beacon:  { x: 288, y: 292, w: 22, h: 28 },
       arm:     { x: 332, y: 268, w: 46, h: 48 },
       monitor: { x: 794, y: 278, w: 36, h: 40 }
     }

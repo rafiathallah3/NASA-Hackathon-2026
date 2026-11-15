@@ -264,13 +264,13 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
   a.sepWindowOpen = (state.stageTimer <= 5.5 && state.stageTimer >= 1.5);
   if (a.separated) {
     a.sepTime += dt;
-    a.boosterDropY += dt * 120;
-    a.srbSpreadX += dt * 55;
-    a.srbRot += dt * 0.65;
+    a.boosterDropY += dt * 115;
+    a.srbSpreadX = 0;
+    a.srbRot = 0;
   }
 
   // Exhaust smoke puffs + engine stall/damage fire sparks anchored to active nozzle
-  const isStall = a.thrust < 0.25;
+  const isStall = a.thrust < 0.25 || (a.separated && a.sepTime < 0.45);
   const engineBurning = a.integrity < 55 || a.thrust > 0.93;
   const sinT = Math.sin(a.tilt);
   const cosT = Math.cos(a.tilt);
@@ -695,21 +695,30 @@ function drawAscentRocket(ctx, a, nowMs, layer) {
 
   if (layer === 'body') {
     if (a.separated) {
-      // Spent first stage: retros still lit for a beat, then it tumbles away and fades out.
-      const half = 56;
+      // Spent first stage drops straight inline behind the upper stage:
+      // 0003 + 0005 retro burn -> 0006 upper stage ignition + 0007 spent booster
+      const retroPhase = a.sepTime < 0.45;
       ctx.save();
-      ctx.globalAlpha = Math.max(0.25, 1 - a.boosterDropY / 260);
-      ctx.translate(snap2(a.sepDir * a.srbSpreadX), snap2(tipY + STAGE_JOIN + a.boosterDropY + half));
-      ctx.rotate(a.sepDir * a.srbRot);
-      drawCraft(ctx, a.sepTime < 0.4 ? 'boosterBurn' : 'boosterSpent', 0, -half, opts);
+      ctx.globalAlpha = Math.max(0.2, 1 - a.boosterDropY / 280);
+      drawCraft(
+        ctx,
+        retroPhase ? 'boosterBurn' : 'boosterSpent',
+        0,
+        snap2(tipY + STAGE_JOIN + a.boosterDropY),
+        opts
+      );
       ctx.restore();
-      drawCraft(ctx, stalled ? 'upperIdle' : 'upperBody', 0, tipY, opts);
+      drawCraft(ctx, (stalled || retroPhase) ? 'upperIdle' : 'upperBody', 0, tipY, opts);
     } else {
       drawCraft(ctx, stalled ? 'stackIdle' : 'stackBody', 0, tipY, opts);
     }
   } else {
     if (!stalled) {
-      drawCraft(ctx, a.separated ? 'upperFlame' : 'stackFlame', 0, tipY, { ...opts, sy: flameSy });
+      if (!a.separated) {
+        drawCraft(ctx, 'stackFlame', 0, tipY, { ...opts, sy: flameSy });
+      } else if (a.sepTime >= 0.45) {
+        drawCraft(ctx, 'upperFlame', 0, tipY, { ...opts, sy: flameSy });
+      }
     }
     if (a.integrity < 55 || a.thrust > 0.93) {
       const nozzle = a.separated ? NOZZLE_UPPER : NOZZLE_FULL;

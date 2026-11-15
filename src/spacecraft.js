@@ -45,6 +45,7 @@ export const CRAFT = {
   docked:        { a: 'craftDocked',       x: 26,  y: 109, w: 275, h: 336, ax: 162,   ay: 109, k: 1.0 },
   // Lunar lander (footpad-line anchored; ascent + descent crops reassemble the frame)
   lander:        { a: 'craftLanderA',      x: 30,  y: 185, w: 266, h: 183, ax: 162.5, ay: 364, k: 1.0 },
+  landerUndock:  { a: 'craftLanderB',      x: 32,  y: 184, w: 262, h: 185, ax: 162.5, ay: 364, k: 1.0 },
   landerAscent:  { a: 'craftLanderA',      x: 99,  y: 185, w: 134, h: 84,  ax: 162.5, ay: 364, k: 1.0 },
   landerDescent: { a: 'craftLanderA',      x: 30,  y: 269, w: 266, h: 99,  ax: 162.5, ay: 364, k: 1.0 },
   // Triple main chutes (cable-ring anchored): canopies above, capsule below

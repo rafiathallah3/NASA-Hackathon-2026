@@ -369,6 +369,136 @@ export function drawChibiEngineer(ctx, p, isLead = false) {
   drawCrewTag(ctx, p, p.x, dy - 2, isLead);
 }
 
+// Standing idle crew character mounted on a lunar rover (Stage 3B & Rover Deploy transition).
+// Uses the crew member's customised look with EVA helmet enabled, scaled to fit the rover deck.
+export function drawRoverMountedCrew(ctx, crewIndex, x, y, facingAngle = 0, scale = 0.68, fallbackColor = '#f8fafc') {
+  const facing = crewFacing(facingAngle);
+  const [row, col] = (CREW_ANIM.charIdle[facing] || CREW_ANIM.charIdle.right).idle;
+  const img = getAsset('charIdle');
+  const spriteH = CREW_SPRITE_H * scale;
+  const spriteW = CREW_SPRITE_W * scale;
+  const dx = snap2(x - spriteW / 2);
+  const dy = snap2(y - spriteH);
+
+  const member = state.crew?.[crewIndex] || state.players?.[crewIndex];
+  const baseLook = member?.look || { skin: crewIndex % 4, hair: crewIndex % 6, hairColor: crewIndex % 6, badge: crewIndex % 8, helmet: true };
+  const evaLook = baseLook.helmet ? baseLook : { ...baseLook, helmet: true };
+  const custom = getCrewSheet(evaLook, 'charIdle') || (member?.look ? getCrewSheet(member.look, 'charIdle') : null);
+
+  if (custom) {
+    const headroom = (spriteH * AVATAR_HEADROOM) / CREW_CROP_H;
+    ctx.drawImage(
+      custom.canvas,
+      col * custom.frameW, row * custom.frameH, custom.frameW, custom.frameH,
+      dx, dy - headroom, spriteW, spriteH + headroom
+    );
+  } else if (isImageReady(img)) {
+    ctx.drawImage(
+      img,
+      col * CREW_FRAME_W, row * CREW_FRAME_H + CREW_CROP_TOP, CREW_FRAME_W, CREW_CROP_H,
+      dx, dy, spriteW, spriteH
+    );
+  } else {
+    ctx.fillStyle = fallbackColor;
+    ctx.fillRect(snap2(x - 6), snap2(y - 22), 12, 20);
+  }
+}
+
+const EARTH_SPIN_COLS = 10;
+const EARTH_SPIN_FRAMES = 94;
+const EARTH_SPIN_CELL = 48;
+
+// Animated rotating pixel-art Earth from Assets/Planet/earthspin-sheet.png (10x10 grid, 94 frames of 48x48).
+export function drawSpinningEarth(ctx, cx, cy, radius, nowSec = performance.now() * 0.001, opts = {}) {
+  const r = Math.max(4, Math.round(radius));
+  const ox = snap2(cx);
+  const oy = snap2(cy);
+  const size = snap2(r * 2);
+
+  if (opts.halo !== false) {
+    ctx.save();
+    const haloR = snap2(r * (opts.haloScale ?? 1.28));
+    const halo = ctx.createRadialGradient(ox, oy, r * 0.82, ox, oy, haloR);
+    halo.addColorStop(0, opts.haloInner || 'rgba(56, 189, 248, 0.34)');
+    halo.addColorStop(0.55, 'rgba(56, 189, 248, 0.12)');
+    halo.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(ox, oy, haloR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const sheet = getAsset('earthSpinSheet');
+  if (isImageReady(sheet)) {
+    const fps = opts.fps ?? 12;
+    const frame = ((Math.floor(nowSec * fps) % EARTH_SPIN_FRAMES) + EARTH_SPIN_FRAMES) % EARTH_SPIN_FRAMES;
+    const col = frame % EARTH_SPIN_COLS;
+    const row = Math.floor(frame / EARTH_SPIN_COLS);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+      sheet,
+      col * EARTH_SPIN_CELL,
+      row * EARTH_SPIN_CELL,
+      EARTH_SPIN_CELL,
+      EARTH_SPIN_CELL,
+      ox - size / 2,
+      oy - size / 2,
+      size,
+      size
+    );
+    ctx.restore();
+    return true;
+  }
+
+  ctx.save();
+  ctx.fillStyle = '#1d4ed8';
+  ctx.beginPath();
+  ctx.arc(ox, oy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  return false;
+}
+
+// Pixel-art Moon from Assets/Planet/pixel_moon.png (330x330).
+export function drawPixelMoon(ctx, cx, cy, radius, opts = {}) {
+  const r = Math.max(4, Math.round(radius));
+  const ox = snap2(cx);
+  const oy = snap2(cy);
+  const size = snap2(r * 2);
+
+  if (opts.halo) {
+    ctx.save();
+    const haloR = snap2(r * 1.22);
+    const halo = ctx.createRadialGradient(ox, oy, r * 0.85, ox, oy, haloR);
+    halo.addColorStop(0, 'rgba(203, 213, 225, 0.24)');
+    halo.addColorStop(1, 'rgba(203, 213, 225, 0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(ox, oy, haloR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const img = getAsset('pixelMoon');
+  if (isImageReady(img)) {
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, ox - size / 2, oy - size / 2, size, size);
+    ctx.restore();
+    return true;
+  }
+
+  ctx.save();
+  ctx.fillStyle = '#64748b';
+  ctx.beginPath();
+  ctx.arc(ox, oy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  return false;
+}
+
 
 // Notched pixel panel (matches the DOM .px frames): 2px ink outline with open
 // corners, flat body, 2px top highlight and bottom shade. Coordinates snap to

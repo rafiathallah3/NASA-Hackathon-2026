@@ -211,7 +211,7 @@ export function paintFlagTile(canvas, badge) {
 
 /* ------------------------------------------------------------- in-game sheets */
 
-const sheetCache = createLru(16);
+const sheetCache = createLru(24);
 
 // Full 8x2 customised sheet for in-game drawing (same row/col layout as the stock sheet).
 // Draw frame [row, col] from `canvas` at (col * frameW, row * frameH, frameW, frameH); the frame
@@ -244,9 +244,16 @@ export function prewarmCrewSheets(crew) {
   for (const member of crew || []) {
     for (const sheetKey of SHEET_KEYS) {
       const key = `${lookKey(member.look)}|${sheetKey}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      jobs.push([member.look, sheetKey]);
+      if (!seen.has(key)) {
+        seen.add(key);
+        jobs.push([member.look, sheetKey]);
+      }
+    }
+    const helmetLook = { ...(member.look || {}), helmet: true };
+    const helmetKey = `${lookKey(helmetLook)}|charIdle`;
+    if (!seen.has(helmetKey)) {
+      seen.add(helmetKey);
+      jobs.push([helmetLook, 'charIdle']);
     }
   }
   const step = () => {

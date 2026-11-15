@@ -2,8 +2,8 @@ import { LOGICAL_W, LOGICAL_H } from '../config.js';
 import { state, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet, isWsMultiplayer, isWsHost, broadcastHostEvent } from '../net.js';
-import { isAnyHumanKey, isAnyGroupKey } from '../sync.js';
-import { getAsset } from '../assets.js';
+import { isAnyHumanKey } from '../sync.js';
+import { getAsset, isImageReady } from '../assets.js';
 import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
@@ -56,10 +56,8 @@ export function startStage4EarthReturn() {
     chuteScale: 0,
     capsuleX: 520,
     capsuleY: 135,
-    shipX: 660,
+    shipX: 560,
     shipDir: 1,
-    heliX: 900,
-    heliY: 220,
     splashTimer: 0,
     collarScale: 0,
     wavePhase: 0,
@@ -91,9 +89,9 @@ export function startStage4EarthReturn() {
 
   setStageBanner(
     'STAGE 4: EARTH RETURN',
-    'Step 1: Atmospheric Entry • Step 2: Triple Chutes • Step 3: Carrier Recovery',
-    'Phase 1: [W/S] Keep needle in green, [A/D] roll cool, [SPACE] vent cryo | Phase 2: [SPACE] chutes, [J/L] move carrier',
-    `<kbd>W</kbd>/<kbd>S</kbd> Entry Angle &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Roll/Steer &nbsp;•&nbsp; <kbd>SPACE</kbd> Cryo Vent / Chutes &nbsp;•&nbsp; <kbd>J</kbd>/<kbd>L</kbd> Carrier`,
+    'Step 1: Atmospheric Entry • Step 2: Triple Chutes • Step 3: Ocean Splashdown',
+    'Phase 1: [W/S] Keep needle in green, [A/D] roll cool, [SPACE] vent cryo | Phase 2: [SPACE] chutes, [A/D] steer to splashdown zone',
+    `<kbd>W</kbd>/<kbd>S</kbd> Entry Angle &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Roll / Steer Capsule &nbsp;•&nbsp; <kbd>SPACE</kbd> Cryo Vent / Chutes`,
     { showTickets: false, showSkip: false, showNext: true }
   );
   playTone(260, 'triangle', 0.3, 0.12);
@@ -216,7 +214,7 @@ function triggerStage4GameOver(title, reason, onBackToMenu) {
         <div class="config-panel" style="text-align:left;margin-bottom:20px;">
           <div><b style="color:#fde047;">[W / S]</b> Keep the pitch needle inside the <b style="color:#4ade80;">GREEN</b> corridor</div>
           <div style="margin-top:6px;"><b style="color:#fde047;">[SPACE]</b> Vent Cryo Heatshield in Phase 1 &amp; deploy Main Chutes in Phase 2</div>
-          <div style="margin-top:6px;"><b style="color:#fde047;">[A / D]</b> Roll-cool during Plasma &amp; steer capsule toward the carrier beam</div>
+          <div style="margin-top:6px;"><b style="color:#fde047;">[A / D]</b> Roll-cool during Plasma &amp; steer capsule into the Ocean Splashdown Zone</div>
         </div>
         <div class="modal-actions" style="justify-content:center;">
           <button id="btn-menu-stage4" class="btn-secondary" type="button">Mission Setup</button>
@@ -250,11 +248,6 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
     r.splashTimer += dt;
     r.collarScale = Math.min(1, r.collarScale + dt * 2.4);
     r.capsuleY = 514 + Math.sin(r.wavePhase) * 3.5;
-    // Rescue helicopter flies over the splashed capsule & lowers hoist
-    const targetHeliX = r.capsuleX;
-    const targetHeliY = 390;
-    r.heliX += (targetHeliX - r.heliX) * Math.min(1, dt * 2.2);
-    r.heliY += (targetHeliY - r.heliY) * Math.min(1, dt * 2.2);
     if (r.splashTimer >= 2.3) {
       onNextStage();
     }
@@ -394,32 +387,8 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
       playTone(580, 'triangle', 0.16, 0.12);
     }
   } else if (r.phase === 'CHUTES') {
-    // Allow J/L anytime OR P4 [4] + A/D to steer the Recovery Carrier Ship!
-    const p4Steer = !isWsMultiplayer() && state.activeCrewIndex === 3;
-    let shipSteered = false;
-    if (isAnyHumanKey('KeyJ')) { r.shipX -= 180 * dt; shipSteered = true; }
-    if (isAnyHumanKey('KeyL')) { r.shipX += 180 * dt; shipSteered = true; }
-    if (p4Steer && (state.keys['KeyA'] || state.keys['ArrowLeft'])) { r.shipX -= 180 * dt; shipSteered = true; }
-    if (p4Steer && (state.keys['KeyD'] || state.keys['ArrowRight'])) { r.shipX += 180 * dt; shipSteered = true; }
-    if (isWsMultiplayer()) {
-      if (isAnyGroupKey([3], 'KeyA') || isAnyGroupKey([3], 'ArrowLeft')) { r.shipX -= 180 * dt; shipSteered = true; }
-      if (isAnyGroupKey([3], 'KeyD') || isAnyGroupKey([3], 'ArrowRight')) { r.shipX += 180 * dt; shipSteered = true; }
-    }
-    if (shipSteered) {
-      r.shipX = Math.max(200, Math.min(920, r.shipX));
-      broadcastNet({ type: 'SHIP_SYNC', shipX: r.shipX });
-    } else if (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P' || state.coopMode === 'WS_4P') {
-      const diff = r.capsuleX - r.shipX;
-      r.shipX += Math.sign(diff) * Math.min(Math.abs(diff), 64 * dt);
-    } else {
-      r.shipX += r.shipDir * 60 * dt;
-      if (r.shipX > 890) r.shipDir = -1;
-      if (r.shipX < 340) r.shipDir = 1;
-    }
-
-    // Rescue helicopter circles above the recovery carrier
-    r.heliX = r.shipX + Math.sin(r.wavePhase * 0.4) * 120;
-    r.heliY = 395 + Math.cos(r.wavePhase * 0.7) * 12;
+    // Ocean Splashdown Target Zone gently drifts with ocean swells
+    r.shipX = 560 + Math.sin(r.wavePhase * 0.35) * 45;
 
     if (r.chutesDeployed) {
       r.chuteScale = Math.min(1, r.chuteScale + dt * 2.5);
@@ -431,12 +400,10 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
     const windAmp = r.chuteTimingBonus ? 26 : 44;
     r.windForce = Math.sin(performance.now() * 0.0017) * windAmp;
     r.capsuleX += r.windForce * dt;
-    if (!p4Steer) {
-      const steerLeft = isWsMultiplayer() ? isAnyGroupKey([0, 1, 2], 'KeyA') || isAnyGroupKey([0, 1, 2], 'ArrowLeft') : (state.keys['KeyA'] || state.keys['ArrowLeft']);
-      const steerRight = isWsMultiplayer() ? isAnyGroupKey([0, 1, 2], 'KeyD') || isAnyGroupKey([0, 1, 2], 'ArrowRight') : (state.keys['KeyD'] || state.keys['ArrowRight']);
-      if (steerLeft) r.capsuleX -= 185 * dt;
-      if (steerRight) r.capsuleX += 185 * dt;
-    }
+    const steerLeft = isAnyHumanKey('KeyA') || isAnyHumanKey('ArrowLeft');
+    const steerRight = isAnyHumanKey('KeyD') || isAnyHumanKey('ArrowRight');
+    if (steerLeft) r.capsuleX -= 185 * dt;
+    if (steerRight) r.capsuleX += 185 * dt;
     r.capsuleX = Math.max(140, Math.min(LOGICAL_W - 140, r.capsuleX));
 
     r.capsuleY = 120 + ((24 - Math.max(0, r.altitude)) / 24) * 392;
@@ -454,24 +421,24 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
       r.phase = 'SPLASHED';
       r.splashTimer = 0;
       state.screenShake = 0.25;
-      const distToShip = Math.abs(r.capsuleX - r.shipX);
+      const distToZone = Math.abs(r.capsuleX - r.shipX);
 
       const perfSummary = `peak ${(r.peakG ?? 1).toFixed(1)}G, peak heat ${Math.round(r.peakHeat)}%, vault ${(r.peakVaultTempC ?? -80).toFixed(1)}°C, purity ${r.samplePurity ?? 100}%`;
-      if (distToShip <= 85) {
-        r.grade = 'BULLSEYE 4P CARRIER RECOVERY (+250⭐)';
+      if (distToZone <= 85) {
+        r.grade = 'BULLSEYE OCEAN SPLASHDOWN (+250⭐)';
         state.score += 250;
-        addFloatText(r.capsuleX, 455, 'BULLSEYE CARRIER SPLASHDOWN! +250⭐', '#4ade80');
-        logBlackBox('STAGE 4', `Bullseye carrier splashdown (${Math.round(distToShip)}m offset, ${perfSummary}).`, 'good');
-      } else if (distToShip <= 175) {
+        addFloatText(r.capsuleX, 455, 'BULLSEYE OCEAN SPLASHDOWN! +250⭐', '#4ade80');
+        logBlackBox('STAGE 4', `Bullseye ocean splashdown (${Math.round(distToZone)}m offset, ${perfSummary}).`, 'good');
+      } else if (distToZone <= 175) {
         r.grade = 'SAFE OCEAN SPLASHDOWN (+160⭐)';
         state.score += 160;
         addFloatText(r.capsuleX, 455, 'SAFE OCEAN SPLASHDOWN! +160⭐', '#38bdf8');
-        logBlackBox('STAGE 4', `Safe ocean splashdown (${Math.round(distToShip)}m from carrier, ${perfSummary}).`, 'good');
+        logBlackBox('STAGE 4', `Safe ocean splashdown (${Math.round(distToZone)}m from target zone, ${perfSummary}).`, 'good');
       } else {
-        r.grade = 'DISTANT SPLASHDOWN: HELO RECOVERY (+90⭐)';
+        r.grade = 'OFF-TARGET OCEAN SPLASHDOWN (+90⭐)';
         state.score += 90;
-        addFloatText(r.capsuleX, 455, 'SPLASHDOWN: RESCUE HELO INBOUND! +90⭐', '#fbbf24');
-        logBlackBox('STAGE 4', `Distant splashdown (${Math.round(distToShip)}m from carrier, ${perfSummary}).`, 'warn');
+        addFloatText(r.capsuleX, 455, 'OFF-TARGET OCEAN SPLASHDOWN! +90⭐', '#fbbf24');
+        logBlackBox('STAGE 4', `Distant ocean splashdown (${Math.round(distToZone)}m from target zone, ${perfSummary}).`, 'warn');
       }
       showMissionToast('Splashdown Complete', r.grade);
 
@@ -493,28 +460,55 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
   updateBottomHUD();
 }
 
-function drawHelicopter(ctx, x, y, hoistLen = 0, capX = x, capY = y) {
+function drawOceanAndSkyBackdrop(ctx, wavePhase) {
+  const layer1 = getAsset('oceanSky1');
+  const layer2 = getAsset('oceanSky2');
+  const layer3 = getAsset('oceanSky3');
+  const layer4 = getAsset('oceanSky4');
+
   ctx.save();
-  ctx.translate(x, y);
-  // Hoist cable when recovering splashed capsule
-  if (hoistLen > 0) {
-    ctx.strokeStyle = '#fde047';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, 14);
-    ctx.lineTo((capX - x) * hoistLen, (capY - y - 18) * hoistLen);
-    ctx.stroke();
+  ctx.imageSmoothingEnabled = false;
+
+  if (isImageReady(layer1)) {
+    ctx.drawImage(layer1, 0, 0, LOGICAL_W, LOGICAL_H);
+    if (isImageReady(layer2)) {
+      // Layer 2 mid-cloud silhouettes clipped cleanly above the horizon line (y = 382)
+      const drift2 = snapEven(Math.sin(wavePhase * 0.18) * 10);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, LOGICAL_W, 380);
+      ctx.clip();
+      ctx.globalAlpha = 0.55;
+      ctx.drawImage(layer2, drift2, 0, LOGICAL_W, LOGICAL_H);
+      ctx.restore();
+    }
+    if (isImageReady(layer3)) {
+      const drift3 = snapEven(Math.sin(wavePhase * 0.28) * 16);
+      ctx.drawImage(layer3, drift3, 0, LOGICAL_W, LOGICAL_H);
+    }
+  } else if (isImageReady(layer4)) {
+    ctx.drawImage(layer4, 0, 0, LOGICAL_W, LOGICAL_H);
+  } else {
+    const daySky = ctx.createLinearGradient(0, 0, 0, 384);
+    daySky.addColorStop(0, '#0369a1');
+    daySky.addColorStop(0.6, '#38bdf8');
+    daySky.addColorStop(1, '#e0f2fe');
+    ctx.fillStyle = daySky;
+    ctx.fillRect(0, 0, LOGICAL_W, 384);
+    ctx.fillStyle = '#0369a1';
+    ctx.fillRect(0, 384, LOGICAL_W, LOGICAL_H - 384);
   }
-  // Tail boom & rotor
-  ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.roundRect(-24, -10, 48, 20, 9); ctx.fill(); ctx.stroke();
-  ctx.fillRect(20, -5, 24, 6);
-  ctx.fillStyle = '#f97316'; ctx.fillRect(-12, -3, 24, 6);
-  ctx.fillStyle = '#38bdf8'; ctx.beginPath(); ctx.roundRect(-20, -7, 14, 10, 4); ctx.fill();
-  // Spinning top rotor blur
-  const bladeW = 36 + Math.sin(performance.now() * 0.08) * 18;
-  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(-bladeW, -15); ctx.lineTo(bladeW, -15); ctx.stroke();
+
+  // Subtle animated splashdown waterline wave glints at y = 514
+  ctx.strokeStyle = 'rgba(186, 230, 253, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let x = 0; x <= LOGICAL_W; x += 24) {
+    const wy = 514 + Math.sin(x * 0.03 + wavePhase) * 3;
+    if (x === 0) ctx.moveTo(x, wy);
+    else ctx.lineTo(x, wy);
+  }
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -717,59 +711,43 @@ export function drawStage4(ctx) {
       ctx.fillText(r.pitchAngle < 0 ? '⚠️ TOO STEEP: PRESS [W]!' : '⚠️ TOO SHALLOW: PRESS [S]!', LOGICAL_W / 2, 101);
     }
   } else {
-    // Daylight Ocean Recovery Sky
-    const daySky = ctx.createLinearGradient(0, 0, 0, 515);
-    daySky.addColorStop(0, '#0369a1');
-    daySky.addColorStop(0.6, '#38bdf8');
-    daySky.addColorStop(1, '#e0f2fe');
-    ctx.fillStyle = daySky;
-    ctx.fillRect(0, 0, LOGICAL_W, 515);
+    // Layered Ocean & Sky Pixel-Art Backdrop (Assets/Ocean and sky/1..4.png)
+    drawOceanAndSkyBackdrop(ctx, r.wavePhase);
 
-    // Sweeping Recovery Carrier Spotlights
-    ctx.fillStyle = 'rgba(253, 224, 71, 0.12)';
-    const beamSweep = Math.sin(r.wavePhase * 0.6) * 45;
-    ctx.beginPath();
-    ctx.moveTo(r.shipX - 35, 505); ctx.lineTo(r.shipX - 140 + beamSweep, 0); ctx.lineTo(r.shipX - 30 + beamSweep, 0);
-    ctx.closePath(); ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(r.shipX + 35, 505); ctx.lineTo(r.shipX + 30 - beamSweep, 0); ctx.lineTo(r.shipX + 140 - beamSweep, 0);
-    ctx.closePath(); ctx.fill();
+    // Floating Ocean Splashdown Target Zone Beacon on the Water Surface
+    const sx = r.shipX;
+    const distToZone = Math.abs(r.capsuleX - sx);
+    const inBullseye = distToZone <= 85;
 
-    // Fluffy clouds
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
-    ctx.beginPath();
-    ctx.arc(240, 150, 32, 0, Math.PI * 2); ctx.arc(275, 145, 42, 0, Math.PI * 2); ctx.arc(315, 152, 30, 0, Math.PI * 2);
-    ctx.arc(780, 190, 28, 0, Math.PI * 2); ctx.arc(815, 185, 38, 0, Math.PI * 2); ctx.arc(850, 192, 26, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Animated Ocean Waves
-    ctx.fillStyle = '#0369a1';
-    ctx.fillRect(0, 510, LOGICAL_W, LOGICAL_H - 510);
-
-    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 3;
-    ctx.beginPath();
-    for (let x = 0; x <= LOGICAL_W; x += 20) {
-      const wy = 514 + Math.sin(x * 0.03 + r.wavePhase) * 4;
-      if (x === 0) ctx.moveTo(x, wy); else ctx.lineTo(x, wy);
-    }
-    ctx.stroke();
-
-    // NASA Recovery Carrier Ship & Visual Landing Zone Beacon
-    const sx = r.shipX, sy = 516 + Math.sin(r.wavePhase * 0.8) * 3;
-    const distToShip = Math.abs(r.capsuleX - sx);
-    const inBullseye = distToShip <= 85;
-
-    // Carrier Landing Zone Beacon on the Ocean Surface
     ctx.save();
-    ctx.strokeStyle = inBullseye ? 'rgba(74, 222, 128, 0.9)' : 'rgba(56, 189, 248, 0.7)';
-    ctx.fillStyle = inBullseye ? 'rgba(34, 197, 94, 0.18)' : 'rgba(56, 189, 248, 0.1)';
+    ctx.strokeStyle = inBullseye ? 'rgba(74, 222, 128, 0.92)' : 'rgba(56, 189, 248, 0.8)';
+    ctx.fillStyle = inBullseye ? 'rgba(34, 197, 94, 0.22)' : 'rgba(56, 189, 248, 0.14)';
     ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.ellipse(sx, 514, 85, 11, 0, 0, Math.PI * 2);
+    ctx.ellipse(sx, 514, 85, 12, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // Vertical Recovery Corridor Guide Lines
+    // Inner bullseye ring + floating marker buoys on left/right edges of splashdown zone
+    ctx.strokeStyle = inBullseye ? 'rgba(134, 239, 172, 0.7)' : 'rgba(186, 230, 253, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(sx, 514, 42, 6, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    for (const side of [-1, 1]) {
+      const bx = snapEven(sx + side * 85);
+      const by = 514 + Math.sin(r.wavePhase + side) * 2;
+      ctx.fillStyle = inBullseye ? '#4ade80' : '#f97316';
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(bx, by, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Vertical Splashdown Corridor Guide Lines
     ctx.setLineDash([6, 6]);
     ctx.strokeStyle = inBullseye ? 'rgba(74, 222, 128, 0.55)' : 'rgba(253, 224, 71, 0.38)';
     ctx.lineWidth = 1.5;
@@ -779,29 +757,19 @@ export function drawStage4(ctx) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Live Horizontal Offset Badge above Carrier
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
+    // Live Horizontal Offset Badge on Ocean Target Zone
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
     ctx.strokeStyle = inBullseye ? '#4ade80' : '#fbbf24';
     ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.roundRect(sx - 78, 456, 156, 22, 6); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(sx - 92, 534, 184, 22, 6); ctx.fill(); ctx.stroke();
     ctx.fillStyle = inBullseye ? '#4ade80' : '#fde047';
     ctx.font = 'bold 10px Fredoka, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(inBullseye ? `🎯 BULLSEYE LOCK (${Math.round(distToShip)}m)` : `📡 CARRIER OFFSET: ${Math.round(distToShip)}m`, sx, 471);
-    ctx.restore();
-
-    ctx.save();
-    ctx.translate(sx, sy);
-    ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.moveTo(-92, -10); ctx.lineTo(92, -10); ctx.lineTo(74, 15); ctx.lineTo(-74, 15); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#f97316';
-    ctx.fillRect(-62, -15, 96, 5);
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(32, -38, 28, 28);
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(36, -32, 16, 7);
-    ctx.fillStyle = '#e0f2fe'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('P4 NASA RECOVERY CARRIER', 0, 34);
+    ctx.fillText(
+      inBullseye ? `🎯 SPLASHDOWN ZONE LOCK (${Math.round(distToZone)}m)` : `🌊 SPLASHDOWN ZONE OFFSET: ${Math.round(distToZone)}m`,
+      sx,
+      549
+    );
     ctx.restore();
 
     // Left-side Parachute Altitude & Deployment Window Gauge (24km -> 0km)
@@ -879,15 +847,11 @@ export function drawStage4(ctx) {
       ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 260, 12, 520, 38, 10); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#e0f2fe'; ctx.font = 'bold 12px Fredoka, sans-serif'; ctx.textAlign = 'center';
       const windDir = r.windForce >= 0 ? 'WIND ➡️' : '⬅️ WIND';
-      ctx.fillText(`PHASE 2: ${windDir} | [A/D] Steer Capsule to Ship Beam • [J/L] Steer P4 Carrier`, LOGICAL_W / 2, 35);
+      ctx.fillText(`PHASE 2: ${windDir} | [SPACE] Main Chutes • [A/D] Steer Capsule to Splashdown Zone`, LOGICAL_W / 2, 35);
     }
 
     // Crew capsule (cable ring on top; the canopies above hang from the same ring)
     drawCraft(ctx, 'chuteCapsule', cx, ringY, { scale: CHUTE_SCALE });
-
-    // Rescue Helicopter hovering & lowering hoist during SPLASHED
-    const hoistProg = r.phase === 'SPLASHED' ? Math.min(1, r.splashTimer / 1.4) : 0;
-    drawHelicopter(ctx, r.heliX, r.heliY, hoistProg, cx, cy);
   }
 
   for (const pt of state.lunarParticles) {
@@ -919,12 +883,11 @@ export function drawStage4(ctx) {
       ? [
           { key: 'W / S', label: 'Green Entry Corridor' },
           { key: 'SPACE', label: 'Cryo Heat Vent' },
-          { key: 'I / K', label: 'P2 Heatshield' }
+          { key: 'A / D', label: 'Roll Cool Shield' }
         ]
       : [
-          { key: 'SPACE', label: 'Deploy 3 Chutes' },
-          { key: 'A / D', label: 'Steer Capsule' },
-          { key: 'J / L', label: 'Move Recovery Ship' }
+          { key: 'SPACE', label: 'Deploy 3 Chutes (8-18km)' },
+          { key: 'A / D', label: 'Steer into Splashdown Zone' }
         ]
   );
 }

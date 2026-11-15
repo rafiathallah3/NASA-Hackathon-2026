@@ -21,6 +21,14 @@ const ASSET_PATHS = {
   spaceStars: 'Assets/background/layered/bg-stars.png',
   asteroidLg: 'Assets/asteroids/asteroid.png',
   asteroidSm: 'Assets/asteroids/asteroid-small.png',
+  earthSpinSheet: 'Assets/Planet/earthspin-sheet.png',
+  pixelMoon: 'Assets/Planet/pixel_moon.png',
+
+  // Stage 4 Ocean & Sky Layers
+  oceanSky1: 'Assets/Ocean and sky/1.png',
+  oceanSky2: 'Assets/Ocean and sky/2.png',
+  oceanSky3: 'Assets/Ocean and sky/3.png',
+  oceanSky4: 'Assets/Ocean and sky/4.png',
 
   // Stage 2 Spacecraft Deck & Props
   stage2Bg: 'Assets/Stage2/Stage2_Map_Bg.png',
@@ -40,6 +48,7 @@ const ASSET_PATHS = {
   craftLanderA: 'Assets/rocket/Apollo Rocket_0011.png',      // lunar lander on its legs
   craftDocked: 'Assets/rocket/Apollo Rocket_0012.png',       // command module docked on the lander
   craftCommandBurn: 'Assets/rocket/Apollo Rocket_0013.png',  // command module + engine flame
+  craftLanderB: 'Assets/rocket/Apollo Rocket_0014.png',      // lunar lander undocking (footpad/probe variant)
   craftChutes: 'Assets/rocket/Apollo Rocket_0016.png',       // triple main parachutes + capsule
   launchPad: 'Assets/rocket/Launch Pad.png'                  // mobile launcher: tower, swing arms, crawler
 };

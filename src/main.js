@@ -202,7 +202,7 @@ function toStage3B() {
 function toStage3C() {
   hideMissionToast();
   startTransition({
-    kind: 'LUNAR_UNDOCK',
+    kind: 'LUNAR_LIFTOFF_PREP',
     badge: 'LUNAR LIFTOFF PREP',
     title: 'SAMPLES STOWED IN ASCENT CAPSULE',
     subtitle: 'Separating from descent base for orbital return burn...',
@@ -218,7 +218,7 @@ function toStage4() {
     kind: 'ENTRY_INTERFACE',
     badge: 'EARTH ENTRY INTERFACE',
     title: 'SKIP-REENTRY CORRIDOR OVER PACIFIC OCEAN',
-    subtitle: 'Roll capsule to cool heatshield & align with Carrier USS Midway!',
+    subtitle: 'Roll capsule to cool heatshield & steer into the Pacific Ocean splashdown zone!',
     nextStage: 'STAGE 4: EARTH REENTRY & SPLASHDOWN',
     duration: 5.0,
     onComplete: startStage4EarthReturn
