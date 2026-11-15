@@ -8,6 +8,7 @@
   <script type="importmap">
     {
       "imports": {
+        "./src/assets.js": "./src/assets.js?v=8",
         "./src/audio.js": "./src/audio.js?v=8",
         "./src/config.js": "./src/config.js?v=8",
         "./src/dilemmas.js": "./src/dilemmas.js?v=8",
@@ -33,43 +34,48 @@
   <div id="tickets-bar"></div>
   <div id="stage-banner">
     <span class="badge" id="sb-badge">STAGE 1B</span>
-    <div>
+    <div class="sb-copy">
       <h2 id="sb-title">Rocket Liftoff &amp; Ascent</h2>
       <p id="sb-desc">Control vertical thrust &amp; horizontal pitch stabilizer, then decouple!</p>
     </div>
+    <div class="sb-status-pill" id="sb-status-pill">TELEMETRY LIVE</div>
   </div>
   <div id="hud-right">
-    <div class="squad-bar" id="squad-bar" title="Press 1-4 or click to switch active crewmate">
-      <div class="p-chip active" id="pchip-0" data-slot="0">
-        <div class="dot" style="background:#3b82f6"></div>
-        <span>P1</span><small>Launch</small>
+    <div class="hud-cmd-row hud-cmd-row-top">
+      <div class="squad-bar" id="squad-bar" title="Press 1-4 or click to switch active crewmate">
+        <div class="p-chip active" id="pchip-0" data-slot="0">
+          <div class="dot" style="background:#3b82f6"></div>
+          <span>P1</span><small>Launch</small>
+        </div>
+        <div class="p-chip" id="pchip-1" data-slot="1">
+          <div class="dot" style="background:#f97316"></div>
+          <span>P2</span><small>Space</small>
+        </div>
+        <div class="p-chip" id="pchip-2" data-slot="2">
+          <div class="dot" style="background:#a855f7"></div>
+          <span>P3</span><small>Science</small>
+        </div>
+        <div class="p-chip" id="pchip-3" data-slot="3">
+          <div class="dot" style="background:#10b981"></div>
+          <span>P4</span><small>Ground</small>
+        </div>
       </div>
-      <div class="p-chip" id="pchip-1" data-slot="1">
-        <div class="dot" style="background:#f97316"></div>
-        <span>P2</span><small>Space</small>
+      <button id="btn-coop" class="btn-hud btn-bot" type="button">Crew: 4P AI</button>
+      <div class="pill-box score-pill">
+        <span class="pill-icon">⭐</span>
+        <span id="score-display" class="star-val">0</span>
       </div>
-      <div class="p-chip" id="pchip-2" data-slot="2">
-        <div class="dot" style="background:#a855f7"></div>
-        <span>P3</span><small>Science</small>
-      </div>
-      <div class="p-chip" id="pchip-3" data-slot="3">
-        <div class="dot" style="background:#10b981"></div>
-        <span>P4</span><small>Ground</small>
+      <div id="clock-pill" class="pill-box clock-free">
+        <span class="pill-icon">🛠️</span>
+        <span id="clock-display" class="clock-val">FREE BUILD</span>
       </div>
     </div>
-    <button id="btn-coop" class="btn-hud btn-bot" type="button">Crew: 4P AI</button>
-    <button id="btn-guide" class="btn-hud btn-guide" type="button" title="Mission Guide & Controls">Guide</button>
-    <button id="btn-mute" class="btn-hud btn-guide" type="button" title="Toggle Sound">🔊</button>
-    <button id="btn-pause" class="btn-hud btn-pause" type="button" title="Pause / Resume Game (ESC)">⏸ Pause</button>
-    <button id="btn-skip" class="btn-hud btn-launch" type="button" title="Launch rocket when your parts are ready">🚀 LAUNCH MISSION</button>
-    <button id="btn-next" class="btn-hud btn-next" type="button">Next Stage</button>
-    <div class="pill-box">
-      <span style="font-size:18px">⭐</span>
-      <span id="score-display" class="star-val">0</span>
-    </div>
-    <div id="clock-pill" class="pill-box clock-free">
-      <span style="font-size:16px">🛠️</span>
-      <span id="clock-display" class="clock-val">FREE BUILD</span>
+    <div class="hud-cmd-row hud-cmd-row-bottom">
+      <button id="btn-guide" class="btn-hud btn-guide" type="button" title="Mission Guide & Controls">Guide</button>
+      <button id="btn-mute" class="btn-hud btn-guide" type="button" title="Toggle Sound">🔊</button>
+      <button id="btn-pause" class="btn-hud btn-pause" type="button" title="Pause / Resume Game (ESC)">⏸ Pause</button>
+      <button id="btn-skip" class="btn-hud btn-launch locked" type="button" title="Build at least 2 modules (and your Science REQ payloads) before launch">🚀 LAUNCH (0/2 REQ)</button>
+      <button id="btn-next" class="btn-hud btn-next" type="button">Next Stage</button>
     </div>
   </div>
 </div>
@@ -115,29 +121,53 @@
 <div id="guide-modal" class="modal-backdrop hidden">
   <div class="modal-card">
     <h1>How to Play Orbital Kitchen</h1>
-    <p class="sub">Build rocket modules in the hangar, fix ship alerts in flight, gather lunar samples, and bring the capsule home.</p>
+    <p class="sub">Follow the Corner UI Spotlight Tour, assemble NASA payloads in the hangar, survive transit surges, explore 2.5D lunar cliffs, and return safely to Earth.</p>
     <div class="guide-grid">
       <div class="guide-card">
         <b>1. Hangar Build &amp; Launch (Stage 1)</b>
-        Grab parts from left crates (<kbd>SPACE</kbd>). Process them on matching stations (<b>Weld</b>: hold <kbd>SPACE</kbd>, <b>Calibrate</b> / <b>Charge</b>: automatic). Place both parts on a <b>Tray</b> and deliver to <b>Submit</b>, then hold <kbd>W</kbd>/<kbd>S</kbd>, <kbd>A</kbd>/<kbd>D</kbd>, and <kbd>SPACE</kbd> at Max-Q liftoff.
+        Advance the Corner UI &amp; Hangar Tours with <kbd>SPACE</kbd> or <kbd>ENTER</kbd> (<kbd>TAB</kbd> skips). Grab raw parts (<kbd>SPACE</kbd>), process on stations (<b>Weld</b>: hold <kbd>SPACE</kbd>, <b>Calibrate</b> / <b>Charge</b>: auto), plate onto a <b>Tray</b>, and deliver to <b>Submit</b>. Build at least <b>2 modules</b> (aim for both <kbd>REQ</kbd> payloads) to unlock <b>LAUNCH READY</b>, then fly <kbd>W</kbd>/<kbd>S</kbd>, <kbd>A</kbd>/<kbd>D</kbd>, and <kbd>SPACE</kbd> at Max-Q.
       </div>
       <div class="guide-card">
-        <b>2. Cruiser Systems (Stage 2)</b>
-        Walk between the five ship rooms (<kbd>WASD</kbd>) and clear at least <b>3</b> red console alerts before arrival. Grab the <b>Wrench</b> in the Engine Room before fixing Hull Breach bolts.
+        <b>2. Cruiser Systems &amp; Surges (Stage 2)</b>
+        Navigate the 5 ship bays (<kbd>WASD</kbd>) and clear <b>4+</b> console alerts before arrival. Watch for <b>Solar Flare / Micrometeoroid Surges</b> that lock bulkhead doors—press <kbd>SPACE</kbd> at a locked door to override it, and grab the <b>Wrench</b> in Engineering to tighten Hull Breach bolts.
       </div>
       <div class="guide-card">
-        <b>3. Moon Landing &amp; Rovers (Stage 3)</b>
-        Steer with <kbd>WASD</kbd> and fire landing thrusters (<kbd>SPACE</kbd>) to land gently on <b>Point A</b>. Then drive the rover to scan ridges, complete 3 EVA tasks, and drill a core sample at <b>Point B Crater</b> before returning to Point A.
+        <b>3. Moon Landing &amp; 2.5D Cliffs (Stage 3)</b>
+        Touch down gently on <b>Point A</b> (<kbd>WASD</kbd> + <kbd>SPACE</kbd>). Drive rovers across <b>High Cliffs</b> (use ramps or <kbd>SHIFT</kbd> RCS Hop; sunlit plateaus recharge battery) and <b>Low Cliff Basins</b> (higher power draw; hold <kbd>SHIFT</kbd> to cushion drops), finish 3 EVA tasks, and drill <b>Point B Crater</b> before returning to Point A.
       </div>
       <div class="guide-card">
         <b>4. Lunar Liftoff &amp; Earth Return (Stage 4)</b>
-        Launch from the Moon, hit <kbd>SPACE</kbd> inside the green TEI burn window, keep Earth entry pitch in green (<kbd>W</kbd>/<kbd>S</kbd>), open chutes between 8 and 18 km (<kbd>SPACE</kbd>), and steer (<kbd>A</kbd>/<kbd>D</kbd> + <kbd>J</kbd>/<kbd>L</kbd>) to the carrier.
+        Launch from the Moon, fire <kbd>SPACE</kbd> inside the green TEI burn window, hold Earth entry pitch in green (<kbd>W</kbd>/<kbd>S</kbd>) and vent coolant (<kbd>SPACE</kbd>), open chutes at <b>8–18 km</b> (<kbd>SPACE</kbd>), and steer (<kbd>A</kbd>/<kbd>D</kbd> + <kbd>J</kbd>/<kbd>L</kbd>) onto the recovery carrier.
       </div>
     </div>
-    <p class="sub" style="margin-bottom:14px;">Controls: <kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Use / Pick / Place &nbsp;•&nbsp; <kbd>SHIFT</kbd> Dash &nbsp;•&nbsp; <kbd>F</kbd> Throw &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Switch Crew</p>
+    <p class="sub" style="margin-bottom:14px;">Controls: <kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Interact / Override &nbsp;•&nbsp; <kbd>SHIFT</kbd> Dash / RCS Hop &nbsp;•&nbsp; <kbd>F</kbd> Throw &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Crew &nbsp;•&nbsp; <kbd>ESC</kbd> Pause</p>
     <div class="modal-actions">
       <button id="btn-replay-guide" class="btn-secondary" type="button">Replay Stage 1 Guide</button>
       <button id="btn-close-guide" class="btn-play" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- CORNER UI SPOTLIGHT TOUR OVERLAY -->
+<div id="ui-tour-overlay" class="ui-tour-overlay hidden" role="dialog" aria-modal="true" aria-label="Mission Control UI Tour">
+  <svg id="ui-tour-svg" class="ui-tour-svg" width="1280" height="720" viewBox="0 0 1280 720" preserveAspectRatio="none">
+    <path id="ui-tour-mask-path" fill="rgba(4, 8, 18, 0.78)" fill-rule="evenodd" d=""></path>
+  </svg>
+  <div id="ui-tour-ring" class="ui-tour-ring"></div>
+  <div id="ui-tour-card" class="ui-tour-card">
+    <div class="ui-tour-top">
+      <span id="ui-tour-step-badge" class="ui-tour-badge">UI TOUR 1 / 5</span>
+      <span id="ui-tour-corner-tag" class="ui-tour-corner">TOP-LEFT DOCK</span>
+    </div>
+    <h3 id="ui-tour-title">Order Tickets &amp; Science REQ</h3>
+    <p id="ui-tour-desc"></p>
+    <div class="ui-tour-footer">
+      <span class="ui-tour-keys"><kbd>Space</kbd> / <kbd>Enter</kbd> Continue &nbsp;•&nbsp; <kbd>Tab</kbd> Skip</span>
+      <div class="ui-tour-actions">
+        <button id="btn-tour-back" class="ui-tour-btn ui-tour-btn-ghost" type="button">Back</button>
+        <button id="btn-tour-skip" class="ui-tour-btn ui-tour-btn-ghost" type="button">Skip [Tab]</button>
+        <button id="btn-tour-next" class="ui-tour-btn ui-tour-btn-primary" type="button">Continue</button>
+      </div>
     </div>
   </div>
 </div>

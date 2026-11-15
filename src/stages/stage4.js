@@ -2,7 +2,8 @@ import { LOGICAL_W, LOGICAL_H } from '../config.js';
 import { state, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
-import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
+import { getAsset } from '../assets.js';
+import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
 
@@ -52,6 +53,7 @@ export function startStage4EarthReturn() {
     wavePhase: 0,
     windForce: 0,
     aborted: false,
+    abortAtMs: 0,
     abortReason: '',
     inputTouched: false,
     heatRateMul: 1.0 * massHeatMul,
@@ -167,7 +169,23 @@ export function handleStage4CoolantPurge() {
 function triggerStage4GameOver(title, reason, onBackToMenu) {
   const r = state.reentry;
   r.aborted = true;
+  r.abortAtMs = performance.now();
   r.abortReason = reason;
+  state.screenShake = 0.35;
+  const burstY = r.phase === 'PLASMA' ? 265 : r.capsuleY;
+  for (let i = 0; i < 22; i++) {
+    const ang = (i / 22) * Math.PI * 2;
+    const spd = 70 + Math.random() * 140;
+    state.lunarParticles.push({
+      x: r.capsuleX + Math.cos(ang) * 12,
+      y: burstY + Math.sin(ang) * 12,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      life: 0.75,
+      size: 4 + Math.random() * 4.5,
+      color: i % 2 === 0 ? '#ef4444' : '#fde047'
+    });
+  }
   logBlackBox('STAGE 4', `REENTRY FAILURE: ${reason}`, 'warn');
   playTone(110, 'sawtooth', 0.45, 0.16);
   updateBottomHUD();
@@ -488,6 +506,30 @@ export function drawStage4(ctx) {
     skyGrad.addColorStop(1, '#0284c7');
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+    // Layered deep-space backdrop & stars above Earth's upper atmosphere
+    const spaceBack = getAsset('spaceBack');
+    const spaceStars = getAsset('spaceStars');
+    const spacePlanet = getAsset('spacePlanet');
+    const skyShift = (performance.now() * 0.018) % LOGICAL_W;
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    if (spaceBack && spaceBack.complete && spaceBack.naturalWidth > 0) {
+      ctx.globalAlpha = 0.65;
+      ctx.drawImage(spaceBack, -skyShift, 0, LOGICAL_W, LOGICAL_H * 0.78);
+      ctx.drawImage(spaceBack, LOGICAL_W - skyShift, 0, LOGICAL_W, LOGICAL_H * 0.78);
+    }
+    if (spaceStars && spaceStars.complete && spaceStars.naturalWidth > 0) {
+      const starShift = (performance.now() * 0.032) % LOGICAL_W;
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(spaceStars, -starShift, 0, LOGICAL_W, 340);
+      ctx.drawImage(spaceStars, LOGICAL_W - starShift, 0, LOGICAL_W, 340);
+    }
+    if (spacePlanet && spacePlanet.complete && spacePlanet.naturalWidth > 0) {
+      ctx.globalAlpha = 0.42;
+      ctx.drawImage(spacePlanet, 0, LOGICAL_H - 420, LOGICAL_W, 420);
+    }
+    ctx.restore();
 
     // Stars above ionosphere (seeded organic distribution)
     drawStarfield(ctx, REENTRY_STARS, LOGICAL_W, 280, {
@@ -843,6 +885,21 @@ export function drawStage4(ctx) {
     ctx.fillStyle = pt.color;
     ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
+  }
+
+  if (r.aborted && r.abortAtMs > 0) {
+    const expY = r.phase === 'PLASMA' ? 265 : r.capsuleY;
+    const elapsedSec = (performance.now() - r.abortAtMs) / 1000;
+    const bursts = [
+      { dx: 0, dy: 0, delay: 0, dur: 0.85, size: 152 },
+      { dx: 24, dy: -16, delay: 0.16, dur: 0.75, size: 112 }
+    ];
+    for (const b of bursts) {
+      const p = (elapsedSec - b.delay) / b.dur;
+      if (p >= 0 && p <= 1) {
+        drawExplosionSprite(ctx, r.capsuleX + b.dx, expY + b.dy, p, b.size);
+      }
+    }
   }
 
   drawCanvasControlBar(

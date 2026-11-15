@@ -2,7 +2,8 @@ import { LOGICAL_W, LOGICAL_H, SHIP_W, SHIP_H, CREW_ROSTER } from '../config.js'
 import { state, getScenario, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
-import { addFloatText, drawChibiEngineer, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
+import { getAsset } from '../assets.js';
+import { addFloatText, drawChibiEngineer, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
 
@@ -40,41 +41,87 @@ const WALLS = [
 ];
 
 const DOORS = [
-  { x: 610, y: 270, vertical: true },
-  { x: 1270, y: 270, vertical: true },
-  { x: 350, y: 430, vertical: false },
-  { x: 940, y: 430, vertical: false },
-  { x: 1540, y: 430, vertical: false },
-  { x: 430, y: 530, vertical: false },
-  { x: 1370, y: 530, vertical: false },
-  { x: 910, y: 730, vertical: true }
+  { id: 'REACTOR_BRIDGE', x: 610,  y: 270, vertical: true,  span: 120, locked: false, lockTimer: 0, overrideProg: 0, overriding: false },
+  { id: 'BRIDGE_SCILAB',  x: 1270, y: 270, vertical: true,  span: 120, locked: false, lockTimer: 0, overrideProg: 0, overriding: false },
+  { id: 'REACTOR_HALL',   x: 350,  y: 430, vertical: false, span: 120, locked: false, lockTimer: 0, overrideProg: 0, overriding: false },
+  { id: 'BRIDGE_HALL',    x: 940,  y: 430, vertical: false, span: 120, locked: false, lockTimer: 0, overrideProg: 0, overriding: false },
+  { id: 'SCILAB_HALL',    x: 1540, y: 430, vertical: false, span: 120, locked: false, lockTimer: 0, overrideProg: 0, overriding: false },
+  { id: 'ENGINE_HALL',    x: 430,  y: 530, vertical: false, span: 140, locked: false, lockTimer: 0, overrideProg: 0, overriding: false },
+  { id: 'COMMS_HALL',     x: 1370, y: 530, vertical: false, span: 140, locked: false, lockTimer: 0, overrideProg: 0, overriding: false },
+  { id: 'ENGINE_COMMS',   x: 910,  y: 730, vertical: true,  span: 120, locked: false, lockTimer: 0, overrideProg: 0, overriding: false }
 ];
+
+function getDoorCollider(d) {
+  const span = d.span || 120;
+  return d.vertical
+    ? { x: d.x - 8, y: d.y - span / 2, w: 16, h: span }
+    : { x: d.x - span / 2, y: d.y - 8, w: span, h: 16 };
+}
+
+function getDoorAt(x, y) {
+  return DOORS.find(d => Math.hypot(d.x - x, d.y - y) < 20) || null;
+}
+
+function createTransitAsteroids() {
+  const list = [];
+  for (let i = 0; i < 12; i++) {
+    const large = i % 3 === 0;
+    list.push({
+      x: (i * 193) % (SHIP_W + 240) - 120,
+      y: i % 2 === 0 ? (10 + (i * 19) % 44) : (SHIP_H - 54 + (i * 13) % 42),
+      vx: (large ? -26 : -44) - (i % 4) * 9,
+      vy: ((i % 3) - 1) * 5,
+      size: large ? 48 + (i % 3) * 10 : 22 + (i % 3) * 6,
+      rot: i * 0.7,
+      vr: ((i % 2 === 0 ? 1 : -1) * (0.35 + (i % 4) * 0.18)),
+      large
+    });
+  }
+  return list;
+}
 
 const WIRE_COLORS = ['#ef4444', '#3b82f6', '#eab308', '#22c55e'];
 
 export function startStage2() {
+  const scen = getScenario();
+  const totalDuration = 64;
+  const minTasksRequired = scen?.id === 'south_pole' ? 5 : 4;
   state.stage = 'STAGE2';
-  state.stageTimer = 42;
+  state.stageTimer = totalDuration;
   state.activeMiniGame = null;
   state.floatingTexts = [];
+
+  for (const d of DOORS) {
+    d.locked = false;
+    d.lockTimer = 0;
+    d.overrideProg = 0;
+    d.overriding = false;
+  }
 
   const startBatt = Math.max(45, Math.min(100, 60 + Math.round(state.telemetry.power * 0.25)));
   state.orbitState = {
     progress: 0,
+    stageDuration: totalDuration,
     battery: startBatt,
     shipIntegrity: 100,
     dataBuffer: 30,
     inEclipse: false,
     inGroundCone: false,
     inScanZone: false,
-    eventTimer: 3.0,
+    eventTimer: 3.4,
     tasksCompleted: 0,
-    minTasksRequired: 3,
+    minTasksRequired,
     overtimeHold: 0,
     alarmPulseCd: 0,
     arrivalReady: false,
     arrivalHold: 0,
-    eclipseDilemmaShown: false
+    eclipseDilemmaShown: false,
+    surge1Triggered: false,
+    surge2Triggered: false,
+    surgeFlashTimer: 0,
+    interferenceTimer: 0,
+    impacts: [],
+    asteroids: createTransitAsteroids()
   };
 
   state.wrenchRack = { x: 230, y: 690, available: true };
@@ -228,7 +275,7 @@ function openConsoleMiniGame(c) {
       type: 'LAUNCH',
       console: c,
       boltsTightened: 0,
-      boltsNeeded: 5
+      boltsNeeded: 7
     };
   }
   playTone(480, 'sine', 0.08, 0.1);
@@ -393,6 +440,15 @@ export function handleStage2Interact() {
     }
   }
 
+  for (const d of DOORS) {
+    if (d.locked && Math.hypot(p.x - d.x, p.y - d.y) < 92) {
+      d.overriding = true;
+      d.overrideProg = Math.max(d.overrideProg || 0, 0.18);
+      playTone(380, 'square', 0.06, 0.08);
+      return;
+    }
+  }
+
   for (const c of state.consoles) {
     if (Math.hypot(p.x - c.x, p.y - c.y) < 82) {
       if (c.alert) {
@@ -412,10 +468,18 @@ export function handleStage2CanvasClick(lx, ly) {
   const my = LOGICAL_H / 2 + 12;
 
   if (!mg) {
-    // Allow clicking nearby console directly on canvas to open it if in range
+    // Allow clicking nearby console or locked bulkhead door directly on canvas
     const p = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
     const wx = lx + state.stage2Cam.x;
     const wy = ly + state.stage2Cam.y;
+    for (const d of DOORS) {
+      if (d.locked && Math.hypot(wx - d.x, wy - d.y) < 64 && Math.hypot(p.x - d.x, p.y - d.y) < 115) {
+        d.overriding = true;
+        d.overrideProg = Math.max(d.overrideProg || 0, 0.18);
+        playTone(380, 'square', 0.06, 0.08);
+        return;
+      }
+    }
     for (const c of state.consoles) {
       if (c.alert && Math.hypot(wx - c.x, wy - c.y) < 60 && Math.hypot(p.x - c.x, p.y - c.y) < 115) {
         openConsoleMiniGame(c);
@@ -511,6 +575,7 @@ function moveCtrlPlayer(p, dx, dy) {
   const steps = Math.max(1, Math.ceil(stepDist / 6));
   const sx = dx / steps;
   const sy = dy / steps;
+  const lockedDoors = DOORS.filter(d => d.locked);
   let nx = p.x;
   let ny = p.y;
   for (let s = 0; s < steps; s++) {
@@ -519,6 +584,11 @@ function moveCtrlPlayer(p, dx, dy) {
     for (let iter = 0; iter < 2; iter++) {
       for (const box of SHIP_COLLIDERS) {
         const res = resolveCircleBox(nx, ny, CTRL_RADIUS, box);
+        nx = res.x;
+        ny = res.y;
+      }
+      for (const d of lockedDoors) {
+        const res = resolveCircleBox(nx, ny, CTRL_RADIUS, getDoorCollider(d));
         nx = res.x;
         ny = res.y;
       }
@@ -566,6 +636,9 @@ function hasClearShipLOS(ax, ay, bx, by, pad = 20) {
   for (const box of SHIP_COLLIDERS) {
     if (segmentIntersectsBox(ax, ay, bx, by, box, pad)) return false;
   }
+  for (const d of DOORS) {
+    if (d.locked && segmentIntersectsBox(ax, ay, bx, by, getDoorCollider(d), pad)) return false;
+  }
   return true;
 }
 
@@ -610,11 +683,13 @@ const ROOM_DOORS = {
   ]
 };
 
-function findFirstShipDoor(startRoom, goalRoom) {
+function findFirstShipDoor(startRoom, goalRoom, allowLocked = false) {
   if (startRoom === goalRoom) return null;
   const visited = new Set([startRoom]);
   const queue = [];
   for (const edge of (ROOM_DOORS[startRoom] || [])) {
+    const door = getDoorAt(edge.door.x, edge.door.y);
+    if (!allowLocked && door?.locked) continue;
     queue.push({ room: edge.to, firstEdge: edge });
     visited.add(edge.to);
   }
@@ -622,6 +697,8 @@ function findFirstShipDoor(startRoom, goalRoom) {
     const cur = queue.shift();
     if (cur.room === goalRoom) return cur.firstEdge;
     for (const edge of (ROOM_DOORS[cur.room] || [])) {
+      const door = getDoorAt(edge.door.x, edge.door.y);
+      if (!allowLocked && door?.locked) continue;
       if (!visited.has(edge.to)) {
         visited.add(edge.to);
         queue.push({ room: edge.to, firstEdge: cur.firstEdge });
@@ -647,13 +724,27 @@ function steerShipBot(b, tx, ty, dt) {
   let wx = tx;
   let wy = ty;
 
-  // Use straight path only when cleanly unobstructed with 20px wall/table corner margin
+  // Use straight path only when cleanly unobstructed with 20px wall/table/locked-door margin
   if (!hasClearShipLOS(b.x, b.y, tx, ty, 20)) {
     const botRoom = getShipRoomId(b.x, b.y);
     const targetRoom = getShipRoomId(tx, ty);
     if (botRoom !== targetRoom) {
-      const edge = findFirstShipDoor(botRoom, targetRoom);
+      const edge = findFirstShipDoor(botRoom, targetRoom, false) || findFirstShipDoor(botRoom, targetRoom, true);
       if (edge) {
+        const door = getDoorAt(edge.door.x, edge.door.y);
+        if (door?.locked && Math.hypot(b.x - door.x, b.y - door.y) < 88) {
+          door.overrideProg = Math.min(1, (door.overrideProg || 0) + dt / 0.95);
+          b.angle = Math.atan2(door.y - b.y, door.x - b.x);
+          if (door.overrideProg >= 1) {
+            door.locked = false;
+            door.lockTimer = 0;
+            door.overrideProg = 0;
+            door.overriding = false;
+            addFloatText(door.x, door.y - 24, `🔓 ${b.name} OVERRODE DOOR`, '#4ade80');
+            playTone(540, 'triangle', 0.1, 0.08);
+          }
+          return Math.hypot(tx - b.x, ty - b.y);
+        }
         const atApproach = Math.hypot(b.x - edge.from.x, b.y - edge.from.y) <= 18;
         const inDoorCorridor = pointNearSeg(b.x, b.y, edge.from.x, edge.from.y, edge.into.x, edge.into.y, 18);
         if (atApproach || inDoorCorridor) {
@@ -665,10 +756,12 @@ function steerShipBot(b, tx, ty, dt) {
         }
       }
     } else {
-      // Bot just crossed a room boundary line while still inside wall doorway band: clear the nearest door portal first
+      // Bot just crossed a room boundary line while still inside wall doorway band: clear the nearest unlocked door portal first
       let nearestPortal = null;
       let bestDist = Infinity;
       for (const edge of (ROOM_DOORS[botRoom] || [])) {
+        const door = getDoorAt(edge.door.x, edge.door.y);
+        if (door?.locked) continue;
         const dDoor = Math.hypot(b.x - edge.door.x, b.y - edge.door.y);
         if (dDoor < 78 && dDoor < bestDist) {
           bestDist = dDoor;
@@ -697,11 +790,127 @@ function steerShipBot(b, tx, ty, dt) {
   return Math.hypot(tx - b.x, ty - b.y);
 }
 
+function triggerTransitSurge(surgeNum, os) {
+  const isSolar = surgeNum === 2;
+  const primaryIds = isSolar ? ['GROUND', 'LAUNCH', 'CALIB', 'SPACE'] : ['LAUNCH', 'SPACE', 'GROUND', 'CALIB'];
+  let alerted = 0;
+  for (const id of primaryIds) {
+    if (alerted >= 2) break;
+    const c = state.consoles.find(con => con.id === id);
+    if (c && !c.alert) {
+      c.alert = true;
+      c.botProg = 0;
+      alerted++;
+    }
+  }
+  if (alerted < 2) {
+    for (const c of state.consoles) {
+      if (alerted >= 2) break;
+      if (!c.alert && !(c.id === 'USER' && state.mccResult?.completed)) {
+        c.alert = true;
+        c.botProg = 0;
+        alerted++;
+      }
+    }
+  }
+
+  // Lock 1-2 bulkhead doors away from any crewmate standing inside the doorway
+  const candidateIds = isSolar
+    ? ['BRIDGE_HALL', 'COMMS_HALL', 'SCILAB_HALL', 'ENGINE_COMMS']
+    : ['REACTOR_HALL', 'ENGINE_HALL', 'ENGINE_COMMS', 'BRIDGE_HALL'];
+  let lockedCount = 0;
+  for (const doorId of candidateIds) {
+    if (lockedCount >= 2) break;
+    const d = DOORS.find(dr => dr.id === doorId);
+    if (!d || d.locked) continue;
+    const crewBlocking = state.ctrlPlayers.some(p => Math.hypot(p.x - d.x, p.y - d.y) < 38);
+    if (crewBlocking) continue;
+    d.locked = true;
+    d.lockTimer = 15;
+    d.overrideProg = 0;
+    d.overriding = false;
+    lockedCount++;
+  }
+
+  os.surgeFlashTimer = 0.85;
+  os.interferenceTimer = Math.max(os.interferenceTimer || 0, isSolar ? 16 : 13);
+  os.shipIntegrity = Math.max(15, (os.shipIntegrity ?? 100) - 8);
+  state.screenShake = 0.42;
+
+  const impactSpots = isSolar
+    ? [
+        { x: 1580, y: 890, age: 0, dur: 0.85, size: 120 },
+        { x: 960, y: 76, age: -0.12, dur: 0.8, size: 102 }
+      ]
+    : [
+        { x: 645, y: 892, age: 0, dur: 0.85, size: 124 },
+        { x: 245, y: 78, age: -0.1, dur: 0.8, size: 96 },
+        { x: 680, y: 720, age: -0.18, dur: 0.75, size: 92 }
+      ];
+  os.impacts.push(...impactSpots);
+
+  for (const imp of impactSpots) {
+    for (let i = 0; i < 10; i++) {
+      const ang = (i / 10) * Math.PI * 2;
+      state.lunarParticles.push({
+        x: imp.x,
+        y: imp.y,
+        vx: Math.cos(ang) * (50 + Math.random() * 80),
+        vy: Math.sin(ang) * (50 + Math.random() * 80),
+        life: 0.55,
+        size: 3 + Math.random() * 3,
+        color: i % 2 === 0 ? '#ef4444' : '#fde047'
+      });
+    }
+  }
+
+  playTone(isSolar ? 145 : 128, 'sawtooth', 0.34, 0.14);
+  if (isSolar) {
+    showMissionToast('☀️ SOLAR FLARE SURGE', 'Dual alerts + Ka-Band frequency drift & bulkhead lockdowns! Press [SPACE] to override doors.');
+    logBlackBox('STAGE 2', 'Solar flare CME surge caused Ka-Band interference drift, dual alerts, and bulkhead lockdowns.', 'warn');
+  } else {
+    showMissionToast('☄️ MICROMETEOROID IMPACT', 'Dual alerts & bulkhead lockdown! Press [SPACE] at locked doors to override.');
+    logBlackBox('STAGE 2', 'Micrometeoroid impact surge triggered dual console alerts and temporary bulkhead lockdowns.', 'warn');
+  }
+}
+
 export function updateStage2(dt, onNextStage) {
   const scen = getScenario();
   const os = state.orbitState;
   const activeAlertCount = state.consoles.filter(c => c.alert).length;
-  const quotaMet = os.tasksCompleted >= (os.minTasksRequired || 3) && activeAlertCount < 3;
+  const quotaMet = os.tasksCompleted >= (os.minTasksRequired || 4) && activeAlertCount < 3;
+
+  os.surgeFlashTimer = Math.max(0, (os.surgeFlashTimer || 0) - dt);
+  os.interferenceTimer = Math.max(0, (os.interferenceTimer || 0) - dt);
+
+  if (Array.isArray(os.impacts)) {
+    for (let i = os.impacts.length - 1; i >= 0; i--) {
+      os.impacts[i].age += dt;
+      if (os.impacts[i].age >= os.impacts[i].dur) os.impacts.splice(i, 1);
+    }
+  }
+
+  if (Array.isArray(os.asteroids)) {
+    for (const ast of os.asteroids) {
+      ast.x += ast.vx * dt;
+      ast.y += ast.vy * dt;
+      ast.rot += ast.vr * dt;
+      if (ast.x < -120) ast.x = SHIP_W + 110;
+      if (ast.x > SHIP_W + 120) ast.x = -110;
+    }
+  }
+
+  for (const d of DOORS) {
+    if (d.locked) {
+      d.lockTimer -= dt;
+      if (d.lockTimer <= 0) {
+        d.locked = false;
+        d.lockTimer = 0;
+        d.overrideProg = 0;
+        d.overriding = false;
+      }
+    }
+  }
 
   if (state.stageTimer <= 0) {
     state.stageTimer = 0;
@@ -740,11 +949,20 @@ export function updateStage2(dt, onNextStage) {
     }
   }
 
-  os.progress = Math.min(1, 1 - (state.stageTimer / 42));
+  os.progress = Math.min(1, 1 - (state.stageTimer / (os.stageDuration || 64)));
   const phase = (os.progress * 3) % 1;
   os.inEclipse = (phase > 0.35 && phase < 0.62);
   os.inGroundCone = (phase > 0.68 && phase < 0.92);
   os.inScanZone = (phase > 0.08 && phase < 0.32);
+
+  if (os.progress >= 0.30 && !os.surge1Triggered) {
+    os.surge1Triggered = true;
+    triggerTransitSurge(1, os);
+  }
+  if (os.progress >= 0.70 && !os.surge2Triggered) {
+    os.surge2Triggered = true;
+    triggerTransitSurge(2, os);
+  }
 
   if (os.inEclipse && !os.eclipseDilemmaShown) {
     os.eclipseDilemmaShown = true;
@@ -872,6 +1090,10 @@ export function updateStage2(dt, onNextStage) {
         mg.angles[i] += mg.speeds[i] * dt;
       }
     } else if (mg.type === 'GROUND') {
+      const interferenceActive = os.inEclipse || (os.interferenceTimer || 0) > 0 || activeAlertCount >= 2;
+      if (interferenceActive) {
+        mg.targetFreq = Math.max(0.2, Math.min(0.8, mg.targetFreq + Math.sin(performance.now() * 0.0024) * 0.055 * dt));
+      }
       if (state.keys['KeyA'] || state.keys['ArrowLeft']) mg.playerFreq = Math.max(0.1, mg.playerFreq - 0.35 * dt);
       if (state.keys['KeyD'] || state.keys['ArrowRight']) mg.playerFreq = Math.min(0.85, mg.playerFreq + 0.35 * dt);
 
@@ -899,6 +1121,25 @@ export function updateStage2(dt, onNextStage) {
       broadcastNet({ type: 'CREW_INPUT', slot: state.activeCrewIndex, x: p.x, y: p.y, angle: p.angle });
     }
 
+    for (const d of DOORS) {
+      if (!d.locked) continue;
+      const nearDoor = Math.hypot(p.x - d.x, p.y - d.y) < 92;
+      if (nearDoor && (d.overriding || state.keys['Space'] || state.keys['KeyE'])) {
+        d.overrideProg = Math.min(1, (d.overrideProg || 0) + dt / 0.6);
+        if (d.overrideProg >= 1) {
+          d.locked = false;
+          d.lockTimer = 0;
+          d.overrideProg = 0;
+          d.overriding = false;
+          state.score += 20;
+          addFloatText(d.x, d.y - 24, '🔓 DOOR OVERRIDDEN! +20⭐', '#4ade80');
+          playTone(620, 'triangle', 0.12, 0.1);
+        }
+      } else if (!nearDoor && d.overriding) {
+        d.overriding = false;
+      }
+    }
+
     if (state.coopMode === 'LOCAL_2P') {
       const p2 = state.ctrlPlayers[1];
       let mx2 = 0, my2 = 0;
@@ -922,9 +1163,11 @@ export function updateStage2(dt, onNextStage) {
   state.stage2Cam.x += (targetCamX - state.stage2Cam.x) * Math.min(1, dt * 7);
   state.stage2Cam.y += (targetCamY - state.stage2Cam.y) * Math.min(1, dt * 7);
 
-  // AI Crewmates roam rooms to assist consoles without stacking (skip MCC-1 Bridge console)
+  // AI Crewmates roam rooms to assist consoles without stacking (never solo-clear MCC-1 USER or Hull Breach LAUNCH)
   if (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P') {
-    const alerting = state.consoles.filter(c => c.alert && !c.needsWrench && c.id !== 'USER' && (!state.activeMiniGame || state.activeMiniGame.console !== c));
+    const alerting = state.consoles.filter(
+      c => c.alert && !c.needsWrench && c.id !== 'USER' && c.id !== 'LAUNCH' && (!state.activeMiniGame || state.activeMiniGame.console !== c)
+    );
     const homeConsoles = ['LAUNCH', 'SPACE', 'CALIB', 'GROUND'];
     let alertIdx = 0;
     for (let i = 0; i < state.ctrlPlayers.length; i++) {
@@ -938,8 +1181,8 @@ export function updateStage2(dt, onNextStage) {
         const standX = targetC.x + ((i % 2 === 0 ? -1 : 1) * 18);
         const standY = targetC.y + 46;
         const dist = steerShipBot(b, standX, standY, dt);
-        if (targetC.alert && !targetC.needsWrench && targetC.id !== 'USER' && dist <= 36) {
-          targetC.botProg += dt * 0.26;
+        if (targetC.alert && !targetC.needsWrench && targetC.id !== 'USER' && targetC.id !== 'LAUNCH' && dist <= 36) {
+          targetC.botProg += dt * 0.13;
           if (targetC.botProg >= 1) {
             targetC.alert = false;
             targetC.botProg = 0;
@@ -956,6 +1199,33 @@ export function updateStage2(dt, onNextStage) {
 
   state.telemetry.science = Math.round(state.telemetry.science);
   updateBottomHUD();
+}
+
+function drawAsteroidSprite(ctx, ast) {
+  const img = getAsset(ast.large ? 'asteroidLg' : 'asteroidSm');
+  ctx.save();
+  ctx.translate(ast.x, ast.y);
+  ctx.rotate(ast.rot);
+  if (img && img.complete && img.naturalWidth > 0) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, -ast.size / 2, -ast.size / 2, ast.size, ast.size);
+  } else {
+    const r = ast.size * 0.42;
+    ctx.fillStyle = '#574232';
+    ctx.strokeStyle = '#a16207';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-r, -r * 0.3);
+    ctx.lineTo(-r * 0.3, -r);
+    ctx.lineTo(r * 0.7, -r * 0.7);
+    ctx.lineTo(r, r * 0.2);
+    ctx.lineTo(r * 0.2, r);
+    ctx.lineTo(-r * 0.8, r * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawShipBayDecorations(ctx, nowMs) {
@@ -1013,14 +1283,32 @@ function drawShipBayDecorations(ctx, nowMs) {
   ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.moveTo(115, 92); ctx.lineTo(485, 92); ctx.lineTo(485, 126); ctx.stroke();
 
-  // 2. BRIDGE: Panoramic Starfield Viewports + Helm Crew Seats
+  // 2. BRIDGE: Panoramic Starfield & Asteroid Viewports + Helm Crew Seats
+  const astLg = getAsset('asteroidLg');
+  const astSm = getAsset('asteroidSm');
   for (const wx of [735, 1145]) {
-    ctx.fillStyle = '#030712'; ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.roundRect(wx - 68, 66, 136, 14, 5); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = 'rgba(186, 230, 253, 0.7)';
-    ctx.fillRect(wx - 48, 71, 3, 3);
-    ctx.fillRect(wx + 12, 70, 2, 2);
-    ctx.fillRect(wx + 44, 73, 3, 3);
+    ctx.save();
+    ctx.fillStyle = '#030712';
+    ctx.beginPath(); ctx.roundRect(wx - 74, 64, 148, 22, 6); ctx.fill();
+    ctx.clip();
+    const drift = ((nowMs * 0.025 + wx) % 210) - 35;
+    ctx.fillStyle = 'rgba(186, 230, 253, 0.75)';
+    ctx.fillRect(wx - 58 + (drift * 0.2) % 120, 69, 2, 2);
+    ctx.fillRect(wx + 8 - (drift * 0.15) % 80, 74, 2, 2);
+    ctx.fillRect(wx + 34, 71, 3, 3);
+    const vpAst = wx < 900 ? astLg : astSm;
+    const ax = wx + 82 - drift;
+    const ay = 75 + Math.sin(nowMs * 0.0018 + wx) * 3;
+    if (vpAst && vpAst.complete && vpAst.naturalWidth > 0) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(vpAst, ax - 10, ay - 10, 20, 20);
+    } else {
+      ctx.fillStyle = '#78553a';
+      ctx.beginPath(); ctx.arc(ax, ay, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(wx - 74, 64, 148, 22, 6); ctx.stroke();
   }
   for (const seatX of [810, 1070]) {
     ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#475569'; ctx.lineWidth = 2;
@@ -1098,9 +1386,35 @@ function drawShipBayDecorations(ctx, nowMs) {
 
 export function drawStage2(ctx) {
   const nowMs = performance.now();
-  // Deep space organic parallax starfield
+  // Layered deep-space parallax backdrop
   ctx.fillStyle = '#050814';
   ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+  const spaceBack = getAsset('spaceBack');
+  const spaceStars = getAsset('spaceStars');
+  const spacePlanet = getAsset('spacePlanet');
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  if (spaceBack && spaceBack.complete && spaceBack.naturalWidth > 0) {
+    const bx = -((state.stage2Cam.x * 0.08) % LOGICAL_W);
+    ctx.globalAlpha = 0.75;
+    ctx.drawImage(spaceBack, bx, 0, LOGICAL_W, LOGICAL_H);
+    ctx.drawImage(spaceBack, bx + LOGICAL_W, 0, LOGICAL_W, LOGICAL_H);
+  }
+  if (spaceStars && spaceStars.complete && spaceStars.naturalWidth > 0) {
+    const sx = -((state.stage2Cam.x * 0.14 + nowMs * 0.012) % LOGICAL_W);
+    ctx.globalAlpha = 0.88;
+    ctx.drawImage(spaceStars, sx, 0, LOGICAL_W, LOGICAL_H);
+    ctx.drawImage(spaceStars, sx + LOGICAL_W, 0, LOGICAL_W, LOGICAL_H);
+  }
+  if (spacePlanet && spacePlanet.complete && spacePlanet.naturalWidth > 0) {
+    ctx.globalAlpha = 0.55;
+    const pW = LOGICAL_W * 1.15;
+    const pH = LOGICAL_H * 0.78;
+    ctx.drawImage(spacePlanet, -state.stage2Cam.x * 0.05, LOGICAL_H - pH + 70 - state.stage2Cam.y * 0.04, pW, pH);
+  }
+  ctx.restore();
+
   drawStarfield(ctx, CRUISE_STARS, LOGICAL_W, LOGICAL_H, {
     offsetX: state.stage2Cam.x * 0.14,
     offsetY: state.stage2Cam.y * 0.14,
@@ -1109,6 +1423,13 @@ export function drawStage2(ctx) {
 
   ctx.save();
   ctx.translate(-state.stage2Cam.x, -state.stage2Cam.y);
+
+  // Drifting transit asteroids in outer space outside ship hull
+  if (Array.isArray(state.orbitState?.asteroids)) {
+    for (const ast of state.orbitState.asteroids) {
+      drawAsteroidSprite(ctx, ast);
+    }
+  }
 
   // Outer Hull Shell
   ctx.fillStyle = '#0f172a';
@@ -1145,21 +1466,51 @@ export function drawStage2(ctx) {
   ctx.moveTo(680, 720); ctx.lineTo(680, 480);
   ctx.stroke();
 
-  // Sliding Airlock Doors with proximity LEDs
+  // Sliding Airlock Doors & Locked Bulkheads with proximity LEDs
+  const activeCrewForDoor = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
   for (const d of DOORS) {
-    const open = state.ctrlPlayers.some(p => Math.hypot(p.x - d.x, p.y - d.y) < 110);
-    if (!open) {
-      ctx.fillStyle = '#0284c7';
-      ctx.globalAlpha = 0.35;
-      if (d.vertical) ctx.fillRect(d.x - 4, d.y - 58, 8, 116);
-      else ctx.fillRect(d.x - 58, d.y - 4, 116, 8);
-      ctx.globalAlpha = 1;
-    }
-    ctx.fillStyle = open ? '#4ade80' : '#f59e0b';
-    if (d.vertical) {
-      ctx.beginPath(); ctx.arc(d.x, d.y - 60, 4, 0, Math.PI * 2); ctx.arc(d.x, d.y + 60, 4, 0, Math.PI * 2); ctx.fill();
+    const span = d.span || 120;
+    const halfSpan = span / 2;
+    if (d.locked) {
+      const col = getDoorCollider(d);
+      const nearLocked = activeCrewForDoor && Math.hypot(activeCrewForDoor.x - d.x, activeCrewForDoor.y - d.y) < 92;
+      ctx.save();
+      ctx.fillStyle = '#7f1d1d';
+      ctx.strokeStyle = nearLocked ? '#fde047' : '#ef4444';
+      ctx.lineWidth = nearLocked ? 3 : 2;
+      ctx.fillRect(col.x, col.y, col.w, col.h);
+      ctx.strokeRect(col.x, col.y, col.w, col.h);
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.strokeStyle = nearLocked ? '#fde047' : '#ef4444';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.roundRect(d.x - 56, d.y - 16, 112, 32, 7); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = nearLocked ? '#fde047' : '#fca5a5';
+      ctx.font = 'bold 9.5px Fredoka, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(nearLocked ? '🔒 [SPACE] OVERRIDE' : '🔒 LOCKED', d.x, d.y + (d.overrideProg > 0 ? -1 : 3));
+      if (d.overrideProg > 0) {
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(d.x - 44, d.y + 4, 88, 6);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(d.x - 44, d.y + 4, 88 * Math.min(1, d.overrideProg), 6);
+      }
+      ctx.restore();
     } else {
-      ctx.beginPath(); ctx.arc(d.x - 60, d.y, 4, 0, Math.PI * 2); ctx.arc(d.x + 60, d.y, 4, 0, Math.PI * 2); ctx.fill();
+      const open = state.ctrlPlayers.some(p => Math.hypot(p.x - d.x, p.y - d.y) < 110);
+      if (!open) {
+        ctx.fillStyle = '#0284c7';
+        ctx.globalAlpha = 0.35;
+        if (d.vertical) ctx.fillRect(d.x - 4, d.y - halfSpan + 2, 8, span - 4);
+        else ctx.fillRect(d.x - halfSpan + 2, d.y - 4, span - 4, 8);
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = open ? '#4ade80' : '#f59e0b';
+      if (d.vertical) {
+        ctx.beginPath(); ctx.arc(d.x, d.y - halfSpan, 4, 0, Math.PI * 2); ctx.arc(d.x, d.y + halfSpan, 4, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.beginPath(); ctx.arc(d.x - halfSpan, d.y, 4, 0, Math.PI * 2); ctx.arc(d.x + halfSpan, d.y, 4, 0, Math.PI * 2); ctx.fill();
+      }
     }
   }
 
@@ -1246,6 +1597,12 @@ export function drawStage2(ctx) {
           ? '🟢 PRESS [SPACE] OR CLICK NOW!'
           : '⚠️ ALERT: GO HERE';
       ctx.fillText(promptTxt, c.x, c.y - 48);
+      if (c.botProg > 0.02 && !c.needsWrench && c.id !== 'USER' && c.id !== 'LAUNCH') {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(c.x - 42, c.y + 24, 84, 6);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(c.x - 42, c.y + 24, 84 * Math.min(1, c.botProg), 6);
+      }
     }
   }
 
@@ -1255,17 +1612,28 @@ export function drawStage2(ctx) {
     .sort((a, b) => a.p.y - b.p.y)
     .forEach(({ p, idx }) => drawChibiEngineer(ctx, p, idx === state.activeCrewIndex));
 
+  // Hull Impact Explosion Sprite Bursts
+  if (Array.isArray(state.orbitState?.impacts)) {
+    for (const imp of state.orbitState.impacts) {
+      const prog = imp.age / imp.dur;
+      if (prog >= 0 && prog <= 1) {
+        drawExplosionSprite(ctx, imp.x, imp.y, prog, imp.size);
+      }
+    }
+  }
+
   ctx.restore();
 
   // Top-Left Ship Task Checklist Card + Red Emergency Lighting Pulse (screen space)
   const alertList = state.consoles.filter(c => c.alert);
   const os = state.orbitState;
-  const minQuota = os.minTasksRequired || 3;
+  const minQuota = os.minTasksRequired || 4;
   const quotaDone = os.tasksCompleted >= minQuota;
   const redAlert = alertList.length >= 3 || os.battery < 25 || (os.shipIntegrity ?? 100) < 35;
 
-  if (redAlert) {
-    const alarmAlpha = 0.1 + 0.12 * (0.5 + 0.5 * Math.sin(performance.now() * 0.012));
+  if (redAlert || (os.surgeFlashTimer || 0) > 0) {
+    const surgeFlash = (os.surgeFlashTimer || 0) > 0 ? Math.min(0.42, os.surgeFlashTimer * 0.5) : 0;
+    const alarmAlpha = Math.max(surgeFlash, redAlert ? 0.1 + 0.12 * (0.5 + 0.5 * Math.sin(performance.now() * 0.012)) : 0);
     ctx.save();
     ctx.fillStyle = `rgba(220, 38, 38, ${alarmAlpha})`;
     ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
@@ -1365,6 +1733,11 @@ export function drawStage2(ctx) {
   ctx.lineWidth = 1;
   for (const rm of ROOMS) {
     ctx.strokeRect(mmX + rm.x * sxScale, mmY + rm.y * syScale, rm.w * sxScale, rm.h * syScale);
+  }
+  for (const d of DOORS) {
+    if (!d.locked) continue;
+    ctx.fillStyle = '#f97316';
+    ctx.fillRect(mmX + d.x * sxScale - 3, mmY + d.y * syScale - 3, 6, 6);
   }
   for (const c of state.consoles) {
     ctx.fillStyle = c.alert ? '#ef4444' : '#4ade80';
@@ -1572,10 +1945,19 @@ export function drawStage2(ctx) {
       ctx.fillText('[A/D] Trim Pitch  •  Hold [W] / Click or [SPACE] Fire', mx, my + 130);
     } else if (mg.type === 'GROUND') {
       const waveSynced = Math.abs(mg.playerFreq - mg.targetFreq) < 0.045;
+      const interferenceActive = os.inEclipse || (os.interferenceTimer || 0) > 0 || alertList.length >= 2;
       ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka, sans-serif';
       ctx.fillText('KA-BAND WAVE ALIGNMENT', mx, my - 110);
       ctx.fillStyle = waveSynced ? '#4ade80' : '#fde047'; ctx.font = 'bold 12.5px Fredoka, sans-serif';
-      ctx.fillText(waveSynced ? '🟢 LOCKED ON! HOLD STILL TO COMPLETE!' : 'Hold [A] or [D] to match YELLOW wave to GREEN wave!', mx, my - 89);
+      ctx.fillText(
+        waveSynced
+          ? '🟢 LOCKED ON! HOLD STILL TO COMPLETE!'
+          : interferenceActive
+            ? '📡 SOLAR DRIFT: Track drifting GREEN wave with [A/D]!'
+            : 'Hold [A] or [D] to match YELLOW wave to GREEN wave!',
+        mx,
+        my - 89
+      );
 
       ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 3.5;
       ctx.beginPath();

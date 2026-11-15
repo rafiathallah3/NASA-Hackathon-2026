@@ -1,7 +1,13 @@
 import { LOGICAL_W, LOGICAL_H, RECIPES, SCIENCE_OBJECTIVES } from './config.js';
 import { state, resetRunState, auditScienceBaselineRequirements, logBlackBox } from './state.js';
+import { preloadAllAssets } from './assets.js';
+import { playTone, startBackgroundMusic, syncMusicMute, setMusicDuck } from './audio.js';
 import { broadcastNet, registerNetStageHandler } from './net.js';
-import { selectActiveCrew, cycleCoopMode, showMenuModal, renderTicketsHUD, updateBottomHUD, updateClockHUD, syncPauseUI, showMissionToast, hideMissionToast } from './hud.js';
+import {
+  selectActiveCrew, cycleCoopMode, showMenuModal, renderTicketsHUD,
+  updateBottomHUD, updateClockHUD, syncPauseUI, showMissionToast, hideMissionToast,
+  startUiTour, advanceUiTour, skipUiTour, isUiTourActive
+} from './hud.js';
 import { startTransition, skipTransition, updateTransition, drawTransition } from './transitions.js';
 import { initStage1, buildStage1Map, handleStage1Interact, handleStage1Dash, handleStage1Throw, handleStage1CanvasClick, skipStage1Tutorial, updateStage1, drawStage1 } from './stages/stage1.js';
 import { startStage1B, handleStage1BSeparation, updateStage1B, drawStage1B } from './stages/stage1b.js';
@@ -196,17 +202,64 @@ function openScienceAuditModal(audit) {
   modal.classList.remove('hidden');
 }
 
+function openMinBuildModal(builtCount) {
+  const modal = document.getElementById('modal');
+  const content = document.getElementById('modal-content');
+  if (!modal || !content) return;
+
+  const remaining = Math.max(1, 2 - builtCount);
+  const obj = SCIENCE_OBJECTIVES?.[state.selectedObjective] || {};
+  const reqTitles = (obj.requiredModules || []).map(id => {
+    const rec = RECIPES.find(r => r.id === id);
+    const done = (state.shippedModules?.[id] || 0) > 0;
+    return `<li>${done ? '✅' : '⬜'} ${rec ? rec.title : id}</li>`;
+  });
+
+  content.innerHTML = `
+    <div class="cml-review-header">
+      <span class="cml-warn-badge">HANGAR INTEGRATION GATE: ${builtCount}/2 BUILT</span>
+    </div>
+    <h1>Build at Least 2 Rocket Modules</h1>
+    <p class="sub">
+      Fairing integration requires <b>${remaining} more completed module${remaining === 1 ? '' : 's'}</b> before Stage 1B liftoff.
+      Aim for your Science Goal <b>REQ</b> payloads to unlock <b>LAUNCH READY</b>!
+    </p>
+    <div class="config-panel" style="margin-bottom:16px;">
+      <h3>${obj.title || 'Science Goal'} Payloads</h3>
+      <ul class="audit-missing-list">
+        ${reqTitles.join('')}
+      </ul>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-minbuild-return" class="btn-play" type="button">Return to Hangar</button>
+    </div>
+  `;
+
+  const retBtn = document.getElementById('btn-minbuild-return');
+  retBtn?.addEventListener('click', () => {
+    modal.classList.add('hidden');
+  });
+  modal.classList.remove('hidden');
+  retBtn?.focus();
+}
+
 function advanceStageManual(fromNet = false) {
+  if (isUiTourActive()) return;
   setPaused(false);
   if (state.stage === 'STAGE1') {
+    const built = state.shippedCount || 0;
+    if (!fromNet && built < 2) {
+      const rem = 2 - built;
+      showMissionToast(
+        `Need ${rem} More Module${rem === 1 ? '' : 's'}`,
+        `Build at least 2 modules in the Hangar before liftoff (${built}/2 built).`
+      );
+      openMinBuildModal(built);
+      return;
+    }
     const audit = auditScienceBaselineRequirements();
     if (!fromNet && !audit.passed) {
       openScienceAuditModal(audit);
-      return;
-    }
-    if (!fromNet && state.shippedCount === 0 && !state._warnedEmptyLaunch) {
-      state._warnedEmptyLaunch = true;
-      showMissionToast('No Modules Built', 'Build at least 1 NASA module or click Launch Mission again to fly bare!');
       return;
     }
     if (audit.passed) {
@@ -226,9 +279,32 @@ function advanceStageManual(fromNet = false) {
   else if (state.stage === 'STAGE4') goToDebrief();
 }
 
+function syncMusicDuckState() {
+  const modalOpen = !document.getElementById('modal')?.classList.contains('hidden');
+  const guideOpen = !document.getElementById('guide-modal')?.classList.contains('hidden');
+  const tutPaused = state.stage === 'STAGE1' && Boolean(state.tutorial?.active && state.tutorial?.paused);
+  setMusicDuck(Boolean(state.paused || modalOpen || guideOpen || isUiTourActive() || tutPaused || state.dilemma));
+}
+
+function runStage1GuidedTour() {
+  for (const k of Object.keys(state.keys)) state.keys[k] = false;
+  draw();
+  startUiTour(({ skipped } = {}) => {
+    state.tutorial = {
+      active: true,
+      step: 0,
+      paused: !skipped,
+      skipped: false,
+      startShipped: state.shippedCount || 0
+    };
+    playTone(580, 'sine', 0.08, 0.07);
+  });
+}
+
 function startGame(fromNet = false) {
   hideMissionToast();
   document.getElementById('modal').classList.add('hidden');
+  startBackgroundMusic();
   resetRunState();
   initStage1();
   syncPauseUI();
@@ -240,6 +316,9 @@ function startGame(fromNet = false) {
       vehicle: state.selectedVehicle,
       objective: state.selectedObjective
     });
+  }
+  if (!fromNet && !state.tutorial?.skipped) {
+    runStage1GuidedTour();
   }
   state.lastTime = performance.now();
   requestAnimationFrame(loop);
@@ -285,15 +364,27 @@ const replayGuideBtn = document.getElementById('btn-replay-guide');
 if (replayGuideBtn) {
   replayGuideBtn.addEventListener('click', () => {
     document.getElementById('guide-modal').classList.add('hidden');
+    document.getElementById('modal')?.classList.add('hidden');
+    startBackgroundMusic();
     if (state.stage === 'STAGE1') {
+      setPaused(false);
       state.pinnedRecipeId = 'sensor_pod';
       state.tutorial = { active: true, step: 0, paused: true, skipped: false, startShipped: state.shippedCount || 0 };
       renderTicketsHUD();
+      runStage1GuidedTour();
     } else {
+      const wasStopped = state.stage === 'MENU' || state.stage === 'STAGE5';
       resetRunState();
       state.pinnedRecipeId = 'sensor_pod';
-      state.tutorial = { active: true, step: 0, paused: true, skipped: false, startShipped: 0 };
       initStage1();
+      setPaused(false);
+      state.tutorial = { active: true, step: 0, paused: true, skipped: false, startShipped: 0 };
+      renderTicketsHUD();
+      runStage1GuidedTour();
+      if (wasStopped) {
+        state.lastTime = performance.now();
+        requestAnimationFrame(loop);
+      }
     }
   });
 }
@@ -301,6 +392,7 @@ if (replayGuideBtn) {
 document.getElementById('btn-mute').addEventListener('click', (e) => {
   state.muted = !state.muted;
   e.currentTarget.textContent = state.muted ? '🔇' : '🔊';
+  syncMusicMute();
 });
 
 document.getElementById('btn-pause')?.addEventListener('click', () => {
@@ -320,7 +412,7 @@ document.getElementById('btn-pause-menu')?.addEventListener('click', () => {
 });
 
 canvas.addEventListener('click', (e) => {
-  if (state.paused) return;
+  if (state.paused || isUiTourActive()) return;
   if (state.stage === 'TRANSITION') {
     skipTransition();
     return;
@@ -343,6 +435,26 @@ canvas.addEventListener('click', (e) => {
 
 // Keyboard Controls
 window.addEventListener('keydown', (e) => {
+  if (state.stage !== 'MENU') {
+    startBackgroundMusic();
+  }
+
+  // Corner UI Spotlight Tour intercepts keys cleanly (movement keys blocked)
+  if (isUiTourActive()) {
+    if (['Space', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+      e.preventDefault();
+    }
+    if (!e.repeat) {
+      if (e.code === 'Space' || e.code === 'Enter') {
+        advanceUiTour();
+        playTone(540, 'sine', 0.06, 0.06);
+      } else if (e.code === 'Tab' || e.code === 'Escape') {
+        skipUiTour();
+      }
+    }
+    return;
+  }
+
   if (e.code === 'Escape') {
     if (!e.repeat) {
       const guideModal = document.getElementById('guide-modal');
@@ -363,6 +475,30 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (state.paused) return;
+
+  // Gameplay Tutorial paused gate: ONLY Space (unpauses to act), Enter (advances/unpauses), or Tab (skips)
+  if (state.stage === 'STAGE1' && state.tutorial?.active && state.tutorial?.paused) {
+    if (['Space', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+      e.preventDefault();
+    }
+    if (!e.repeat) {
+      if (e.code === 'Space') {
+        state.tutorial.paused = false;
+        playTone(540, 'sine', 0.06, 0.06);
+      } else if (e.code === 'Enter') {
+        if ((state.tutorial.step || 0) < 4) {
+          state.tutorial.step = (state.tutorial.step || 0) + 1;
+          playTone(620 + state.tutorial.step * 45, 'sine', 0.08, 0.07);
+        } else {
+          state.tutorial.paused = false;
+          playTone(540, 'sine', 0.06, 0.06);
+        }
+      } else if (e.code === 'Tab') {
+        skipStage1Tutorial();
+      }
+    }
+    return;
+  }
 
   state.keys[e.code] = true;
 
@@ -393,17 +529,6 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyU' && !e.repeat && state.stage === 'STAGE1' && state.coopMode === 'LOCAL_2P') {
     handleStage1Throw(state.players[1]);
-  }
-
-  // Unpause Stage 1 Spotlight Tutorial Step when player starts moving or pressing action
-  if (
-    state.stage === 'STAGE1' &&
-    state.tutorial?.active &&
-    state.tutorial?.paused &&
-    ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyE', 'Enter'].includes(e.code)
-  ) {
-    state.tutorial.paused = false;
-    if (['Space', 'KeyE', 'Enter'].includes(e.code)) return;
   }
 
   if ((e.code === 'Space' || e.code === 'KeyE') && !e.repeat) {
@@ -449,8 +574,10 @@ window.addEventListener('keyup', (e) => {
 });
 
 function update(dt) {
+  syncMusicDuckState();
   if (state.stage === 'MENU' || state.stage === 'STAGE5') return;
   if (state.paused) return;
+  if (isUiTourActive()) return;
   if (!document.getElementById('guide-modal').classList.contains('hidden')) return;
   if (!document.getElementById('modal').classList.contains('hidden')) return;
   if (state.dilemma) return;
@@ -552,6 +679,7 @@ function loop(now) {
 }
 
 try {
+  preloadAllAssets();
   resizeCanvas();
   openMenu();
   updateBottomHUD();

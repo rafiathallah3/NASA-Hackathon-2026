@@ -3,7 +3,8 @@ import { state, getScenario, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
 import { addFloatText, drawItemBadge, drawChibiEngineer, drawHardwareCanvas } from '../sprites.js';
-import { renderTicketsHUD, updateTicketBarsOnly, updateBottomHUD, setStageBanner, showMissionToast, getActiveTargetRecipe, isProcPartReadyInHangar } from '../hud.js';
+import { getAsset, getAnimFrame, getAnimFrameBounds, getSheetSlice, isImageReady } from '../assets.js';
+import { renderTicketsHUD, updateTicketBarsOnly, updateBottomHUD, setStageBanner, showMissionToast, getActiveTargetRecipe, isProcPartReadyInHangar, isUiTourActive } from '../hud.js';
 
 export function buildStage1Map() {
   state.stations = [];
@@ -24,7 +25,7 @@ export function buildStage1Map() {
         traysCount: code === 'T' ? 4 : 0,
         hasExtinguisher: code === 'F'
       };
-      if ((r === 1 && c === 7) || (r === 4 && c === 7)) {
+      if ((r === 3 && c === 7) || (r === 3 && c === 10)) {
         st.item = { kind: 'tray', parts: [], touchedBy: [] };
       }
       state.stations.push(st);
@@ -53,6 +54,7 @@ export function skipStage1Tutorial() {
 }
 
 export function handleStage1CanvasClick(lx, ly) {
+  if (isUiTourActive()) return;
   if (state.stage !== 'STAGE1' || !state.tutorial?.active) return;
   const rects = state.tutorialBtnRects || {};
   if (rects.skip && lx >= rects.skip.x && lx <= rects.skip.x + rects.skip.w && ly >= rects.skip.y && ly <= rects.skip.y + rects.skip.h) {
@@ -74,10 +76,10 @@ export function initStage1() {
 
   buildStage1Map();
   const preferredSpots = [
-    { c: 3.5, r: 2.5, a: 0 },
-    { c: 5.5, r: 4.5, a: 0 },
-    { c: 9.5, r: 2.5, a: Math.PI },
-    { c: 10.5, r: 4.5, a: Math.PI }
+    { c: 2.5, r: 2.5, a: 0 },
+    { c: 8.5, r: 2.5, a: 0 },
+    { c: 8.5, r: 5.5, a: Math.PI },
+    { c: 14.5, r: 2.5, a: Math.PI }
   ];
   state.players = CREW_ROSTER.map((cr, i) => {
     const pref = preferredSpots[i];
@@ -175,17 +177,18 @@ export function handleStage1Throw(p) {
 }
 
 export function getFacingStation(p) {
-  const reach = 42;
+  const reach = 38;
   const fx = p.x + Math.cos(p.angle) * reach;
   const fy = p.y + Math.sin(p.angle) * reach;
   let best = null;
   let bestScore = 999;
   for (const st of state.stations) {
+    if (st.type === 'G' || st.type === 'L') continue;
     const cx = st.x + TILE / 2;
     const cy = st.y + TILE / 2;
     const dist = Math.hypot(fx - cx, fy - cy);
     const pDist = Math.hypot(p.x - cx, p.y - cy);
-    if (dist < 52 && pDist < 84) {
+    if (dist < 46 && pDist < 76) {
       const sc = dist + pDist * 0.25;
       if (sc < bestScore) {
         bestScore = sc;
@@ -217,7 +220,7 @@ export function handleStage1Interact(p) {
   }
 
   const st = getFacingStation(p);
-  if (!st) return;
+  if (!st || st.type === 'G' || st.type === 'L') return;
 
   if (st.type === 'F') {
     if (!p.holding && st.hasExtinguisher) {
@@ -355,7 +358,7 @@ export function handleStage1Interact(p) {
       return;
     }
     p.holding = st.item;
-    if (st.c === 7 && p.holding.lastBy && p.holding.lastBy !== p.name) {
+    if (st.type === '#' && p.holding.lastBy && p.holding.lastBy !== p.name) {
       addFloatText(st.x + 34, st.y - 12, 'Nice Catch! 🤝', '#38bdf8');
     }
     st.item = null;
@@ -417,9 +420,10 @@ export function handleStage1Interact(p) {
 function isWalkableCell(r, c) {
   if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
   if (state.stations && state.stations.length > 0) {
-    return !state.stations.some(s => s.r === r && s.c === c);
+    return !state.stations.some(s => s.r === r && s.c === c && s.type !== 'G');
   }
-  return MAP_LAYOUT[r][c] === '.';
+  const code = MAP_LAYOUT[r][c];
+  return code === '.' || code === 'G';
 }
 
 function findNearestWalkableCell(startR, startC) {
@@ -441,7 +445,7 @@ function findNearestWalkableCell(startR, startC) {
       queue.push({ r: nr, c: nc });
     }
   }
-  return { r: 3, c: 4 };
+  return { r: 2, c: 8 };
 }
 
 function pushOutOfStations(p, r = 14) {
@@ -460,6 +464,7 @@ function pushOutOfStations(p, r = 14) {
 
   // Otherwise resolve any hitbox overlap cleanly along minimum penetration axis
   for (const s of state.stations) {
+    if (s.type === 'G') continue;
     const left = s.x + 5 - r;
     const right = s.x + TILE - 5 + r;
     const top = s.y + 5 - r;
@@ -485,12 +490,13 @@ function moveStage1Player(p, vx, vy) {
     p.angle = Math.atan2(vy, vx);
     p.walk += 0.22;
   }
-  const r = 14;
+  const r = 13;
   pushOutOfStations(p, r);
   const collides = (nx, ny) => {
     if (nx < GRID_X + r || nx > GRID_X + COLS * TILE - r) return true;
     if (ny < GRID_Y + r || ny > GRID_Y + ROWS * TILE - r) return true;
     for (const s of state.stations) {
+      if (s.type === 'G') continue;
       if (nx + r > s.x + 5 && nx - r < s.x + TILE - 5 &&
           ny + r > s.y + 5 && ny - r < s.y + TILE - 5) return true;
     }
@@ -530,7 +536,7 @@ function getStationStandTile(st, actor) {
     const nr = st.r + d.dr;
     const nc = st.c + d.dc;
     if (isWalkableCell(nr, nc)) {
-      const sameHalfBonus = (actorC < 7 && nc < 7) || (actorC >= 7 && nc >= 7) ? -2.5 : 0;
+      const sameHalfBonus = (actorC < 9 && nc < 9) || (actorC >= 9 && nc >= 9) ? -2.5 : 0;
       const dist = Math.hypot(nc + 0.5 - actorC, nr + 0.5 - actorR) + sameHalfBonus;
       if (dist < bestDist) {
         bestDist = dist;
@@ -538,7 +544,7 @@ function getStationStandTile(st, actor) {
       }
     }
   }
-  return best || { r: 3, c: 4, x: GRID_X + 4.5 * TILE, y: GRID_Y + 3.5 * TILE };
+  return best || { r: 2, c: 8, x: GRID_X + 8.5 * TILE, y: GRID_Y + 2.5 * TILE };
 }
 
 function findFullPathBFS(startR, startC, goalR, goalC) {
@@ -615,7 +621,8 @@ function updateStage1Bot(bot, botSlot, claimedStations, dt) {
     targetSt = state.stations.find(s => canClaim(s) && s.type === '>' && s.r >= 1) || state.stations.find(s => s.type === '>');
     act = 'interact';
   } else if (bot.holding && bot.holding.kind === 'tray' && bot.holding.parts.length < 2) {
-    targetSt = state.stations.find(s => canClaim(s) && s.type === '#' && !s.item && s.c === 7 && s.r >= 1 && s.r <= 5);
+    targetSt = state.stations.find(s => canClaim(s) && s.type === '#' && !s.item && s.c >= 6 && s.c <= 13)
+      || state.stations.find(s => canClaim(s) && s.type === '#' && !s.item);
     act = 'interact';
   } else if (bot.holding && bot.holding.kind === 'proc') {
     if (bot.holding.id === 'burned') {
@@ -627,7 +634,8 @@ function updateStage1Bot(bot, botSlot, claimedStations, dt) {
         targetSt = compatTray;
         act = 'interact';
       } else {
-        targetSt = state.stations.find(s => canClaim(s) && s.type === '#' && !s.item && s.c === 7 && s.r >= 1 && s.r <= 5);
+        targetSt = state.stations.find(s => canClaim(s) && s.type === '#' && !s.item && s.c >= 6 && s.c <= 13)
+          || state.stations.find(s => canClaim(s) && s.type === '#' && !s.item);
         act = 'interact';
       }
     }
@@ -759,10 +767,10 @@ function updateStage1Bot(bot, botSlot, claimedStations, dt) {
   } else {
     // Idle standby home positions out of the player's way
     const homes = [
-      { c: 4.5, r: 5.5 },
-      { c: 9.5, r: 5.5 },
-      { c: 5.5, r: 2.5 },
-      { c: 10.5, r: 2.5 }
+      { c: 2.5, r: 6.5 },
+      { c: 8.5, r: 6.5 },
+      { c: 8.5, r: 2.5 },
+      { c: 14.5, r: 2.5 }
     ];
     const h = homes[botSlot % homes.length];
     const hx = GRID_X + h.c * TILE;
@@ -974,7 +982,7 @@ export function updateStage1(dt) {
         }
       } else if (st.item.kind === 'proc' && st.item.id !== 'burned') {
         st.progress += dt * 0.06;
-        if (st.progress >= 1.75) {
+        if (st.progress >= 2.15) {
           st.item = { kind: 'proc', id: 'burned' };
           st.onFire = true;
           st.fireProg = 0;
@@ -1064,7 +1072,7 @@ function getTutorialStepInfo(lead) {
         ? 'Place Circuit on a Blue WELD bench (SPACE), then HOLD SPACE until finished.'
         : state.stations.some(s => s.type === 'W' && s.item?.id === 'circuit')
           ? 'Stand at the Blue WELD bench and HOLD SPACE until the Circuit finishes welding.'
-          : 'Grab a Circuit from the orange crate, place it on Blue WELD, and HOLD SPACE.',
+          : 'Grab a Circuit from the top-left crate beside the lockers, place it on Blue WELD, and HOLD SPACE.',
       find: () => lead?.holding?.id === 'circuit'
         ? (state.stations.find(s => s.type === 'W' && !s.item) || state.stations.find(s => s.type === 'W'))
         : (state.stations.find(s => s.type === 'W' && s.item?.id === 'circuit') || state.stations.find(s => s.crateItem === 'circuit'))
@@ -1172,7 +1180,8 @@ function getNextTargetStation(lead, targetRec) {
       const miss = needed.find(r => !lead.holding.parts.includes(r));
       const readyBench = state.stations.find(s => s.item && s.item.kind === 'proc' && s.item.id === miss);
       if (readyBench) return readyBench;
-      return state.stations.find(s => s.type === '#' && !s.item && s.c === 7);
+      return state.stations.find(s => s.type === '#' && !s.item && s.c >= 6 && s.c <= 13)
+        || state.stations.find(s => s.type === '#' && !s.item);
     }
   }
 
@@ -1196,28 +1205,72 @@ function getNextTargetStation(lead, targetRec) {
   return null;
 }
 
-export function drawStage1(ctx) {
-  // Hangar backdrop & overhead gantry crane beam
-  ctx.fillStyle = '#182032';
-  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-
-  ctx.fillStyle = '#232c40';
-  ctx.fillRect(GRID_X - 8, 12, COLS * TILE + 16, GRID_Y - 12);
-  // Safety stripe trim along top gantry
-  ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(GRID_X - 8, GRID_Y - 10, COLS * TILE + 16, 10);
-  ctx.fillStyle = '#0f172a';
-  for (let sx = GRID_X; sx < GRID_X + COLS * TILE; sx += 28) {
-    ctx.fillRect(sx, GRID_Y - 10, 12, 10);
+function drawSpriteFitted(ctx, img, bounds, dx, dy, dw, dh, preserveAspect = true) {
+  if (!isImageReady(img)) return false;
+  const sx = bounds ? bounds.x : 0;
+  const sy = bounds ? bounds.y : 0;
+  const sw = bounds ? bounds.w : img.naturalWidth;
+  const sh = bounds ? bounds.h : img.naturalHeight;
+  if (!preserveAspect) {
+    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+    return true;
   }
+  const scale = Math.min(dw / sw, dh / sh);
+  const rw = sw * scale;
+  const rh = sh * scale;
+  const rx = dx + (dw - rw) / 2;
+  const ry = dy + (dh - rh);
+  ctx.drawImage(img, sx, sy, sw, sh, rx, ry, rw, rh);
+  return true;
+}
 
-  // Hangar floor tiles with subtle rivets
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      ctx.fillStyle = (r + c) % 2 === 0 ? '#2b354b' : '#252e42';
-      ctx.fillRect(GRID_X + c * TILE, GRID_Y + r * TILE, TILE, TILE);
-      ctx.fillStyle = 'rgba(255,255,255,0.03)';
-      ctx.fillRect(GRID_X + c * TILE + 4, GRID_Y + r * TILE + 4, 3, 3);
+function drawSliceBox(ctx, slice, dx, dy, dw, dh, preserveAspect = true) {
+  if (!slice || !slice.ready || !slice.img) return false;
+  return drawSpriteFitted(ctx, slice.img, { x: slice.sx, y: slice.sy, w: slice.sw, h: slice.sh }, dx, dy, dw, dh, preserveAspect);
+}
+
+function drawSmallStationPill(ctx, cx, y, text, bg = 'rgba(15, 23, 42, 0.85)', fg = '#f8fafc') {
+  ctx.save();
+  ctx.font = '700 9px "Plus Jakarta Sans", system-ui, sans-serif';
+  const tw = ctx.measureText(text).width + 10;
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(cx - tw / 2, y - 9, tw, 13, 4);
+  ctx.fill();
+  ctx.fillStyle = fg;
+  ctx.textAlign = 'center';
+  ctx.fillText(text, cx, y + 1);
+  ctx.restore();
+}
+
+export function drawStage1(ctx) {
+  const now = performance.now();
+  const bg = getAsset('stage1Bg');
+  const bgReady = isImageReady(bg);
+
+  if (bgReady) {
+    ctx.drawImage(bg, 0, 0, LOGICAL_W, LOGICAL_H);
+  } else {
+    // Procedural fallback hangar backdrop & gantry
+    ctx.fillStyle = '#182032';
+    ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+    ctx.fillStyle = '#232c40';
+    ctx.fillRect(GRID_X - 8, 12, COLS * TILE + 16, GRID_Y - 12);
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(GRID_X - 8, GRID_Y - 10, COLS * TILE + 16, 10);
+    ctx.fillStyle = '#0f172a';
+    for (let sx = GRID_X; sx < GRID_X + COLS * TILE; sx += 28) {
+      ctx.fillRect(sx, GRID_Y - 10, 12, 10);
+    }
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        ctx.fillStyle = (r + c) % 2 === 0 ? '#2b354b' : '#252e42';
+        ctx.fillRect(GRID_X + c * TILE, GRID_Y + r * TILE, TILE, TILE);
+        ctx.fillStyle = 'rgba(255,255,255,0.03)';
+        ctx.fillRect(GRID_X + c * TILE + 4, GRID_Y + r * TILE + 4, 3, 3);
+      }
     }
   }
 
@@ -1229,13 +1282,76 @@ export function drawStage1(ctx) {
   const tutInfo = tutActive && lead ? getTutorialStepInfo(lead) : null;
   const activeTargetSt = (tutActive && tutInfo?.targetSt) ? tutInfo.targetSt : nextTargetSt;
 
+  // Draw 3 table cluster sprites from Tables_Stage 1.png aligned to MAP_LAYOUT
+  const leftUSlice = getSheetSlice('tablesSheet', 'left_u');
+  const centerUSlice = getSheetSlice('tablesSheet', 'center_u');
+  const rightLSlice = getSheetSlice('tablesSheet', 'right_l');
+  const tablesReady = Boolean(leftUSlice?.ready && centerUSlice?.ready && rightLSlice?.ready);
+
+  if (tablesReady) {
+    drawSliceBox(ctx, leftUSlice, GRID_X + 4 * TILE, GRID_Y + 3 * TILE - 4, 4 * TILE, 3 * TILE + 8, false);
+    drawSliceBox(ctx, centerUSlice, GRID_X + 10 * TILE, GRID_Y + 3 * TILE - 4, 4 * TILE, 3 * TILE + 8, false);
+    drawSliceBox(ctx, rightLSlice, GRID_X + 15 * TILE, GRID_Y + 3 * TILE - 4, 3 * TILE, 2.25 * TILE, false);
+
+    // Table Props: animated beacon, robotic arm, and monitor on the U-tables
+    const propBeacon = getAnimFrame('tableProps', 0);
+    const propArm = getAnimFrame('tableProps', 1);
+    const propMon = getAnimFrame('tableProps', 2);
+    if (isImageReady(propBeacon)) {
+      const bBounds = getAnimFrameBounds('tableProps', 0);
+      const bx = GRID_X + 4.35 * TILE - 12;
+      const by = GRID_Y + 3 * TILE - 22;
+      drawSpriteFitted(ctx, propBeacon, bBounds, bx, by, 24, 30, true);
+      const blink = 0.25 + 0.45 * Math.sin(now * 0.009);
+      ctx.save();
+      ctx.fillStyle = `rgba(251, 146, 60, ${blink})`;
+      ctx.beginPath();
+      ctx.arc(bx + 12, by + 10, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    if (isImageReady(propArm)) {
+      const aBounds = getAnimFrameBounds('tableProps', 1);
+      const swayX = Math.sin(now * 0.0025) * 3;
+      drawSpriteFitted(ctx, propArm, aBounds, GRID_X + 5.75 * TILE - 22 + swayX, GRID_Y + 3 * TILE - 34, 44, 46, true);
+    }
+    if (isImageReady(propMon)) {
+      const mBounds = getAnimFrameBounds('tableProps', 2);
+      drawSpriteFitted(ctx, propMon, mBounds, GRID_X + 12.6 * TILE - 18, GRID_Y + 3 * TILE - 32, 36, 40, true);
+    }
+  }
+
+  // Subtle floor pass-through indicator on Swing-Gate 'G' tiles when crew approaches
+  for (const g of state.stations) {
+    if (g.type !== 'G') continue;
+    const nearActor = (state.players || []).some(pl => Math.hypot(pl.x - (g.x + TILE / 2), pl.y - (g.y + TILE / 2)) < 72);
+    if (nearActor) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(g.x + 6, g.y + 8, TILE - 12, TILE - 16, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    } else if (!tablesReady) {
+      ctx.save();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 2;
+      ctx.strokeRect(g.x + 4, g.y + 16, TILE - 8, TILE - 32);
+      ctx.restore();
+    }
+  }
+
   // Live BFS dotted floor path trail from active player to next target station
   if (state.stage === 'STAGE1' && lead && activeTargetSt) {
     drawStage1Trail(ctx, lead, activeTargetSt, tutActive);
   }
 
   const renderables = [
-    ...state.stations.map(s => ({ kind: 'station', y: s.y + TILE, obj: s })),
+    ...state.stations.filter(s => s.type !== 'L' && s.type !== 'G').map(s => ({ kind: 'station', y: s.y + TILE, obj: s })),
     ...state.floorItems.map(fi => ({ kind: 'floor', y: fi.y + 8, obj: fi })),
     ...state.players.map((p, idx) => ({ kind: 'player', y: p.y + 15, obj: p, isLead: idx === state.activeCrewIndex }))
   ].sort((a, b) => a.y - b.y);
@@ -1247,87 +1363,176 @@ export function drawStage1(ctx) {
       const s = ent.obj;
       const isHi = (facing === s);
       const isNextGoal = (activeTargetSt === s && !isHi);
+      const cx = s.x + TILE / 2;
+      const cy = s.y + TILE / 2;
 
-      ctx.fillStyle = '#151b28';
-      ctx.fillRect(s.x + 2, s.y + 10, TILE - 4, TILE - 6);
-
-      let topCol = s.c === 7 && s.type === '#' ? '#64748b' : '#475569', label = s.c === 7 && s.type === '#' ? 'PASS' : '', lampCol = null;
-      if (s.type === 'CRATE') {
-        topCol = '#b45309';
-        const rm = RAW_ITEMS[s.crateItem];
-        label = rm.name;
-        lampCol = rm.procType === 'weld' ? '#38bdf8' : rm.procType === 'calibrate' ? '#a78bfa' : '#4ade80';
-      } else if (s.type === 'W') { topCol = '#0369a1'; label = 'WELD'; lampCol = '#38bdf8'; }
-      else if (s.type === 'A') { topCol = '#6d28d9'; label = 'CALIBRATE'; lampCol = '#a78bfa'; }
-      else if (s.type === 'P') { topCol = '#15803d'; label = 'CHARGE'; lampCol = '#4ade80'; }
-      else if (s.type === 'T') { topCol = '#0f766e'; label = `TRAYS (${s.traysCount})`; }
-      else if (s.type === 'F') { topCol = '#b91c1c'; label = s.hasExtinguisher ? 'CO2' : 'EMPTY'; }
-      else if (s.type === 'X') { topCol = '#991b1b'; label = 'SCRAP'; }
-      else if (s.type === '>') { topCol = '#1e293b'; label = 'SUBMIT'; }
-
-      ctx.fillStyle = topCol;
-      ctx.strokeStyle = isHi ? '#fde047' : '#0f172a';
-      ctx.lineWidth = isHi ? 3.5 : 2.2;
-      ctx.beginPath();
-      ctx.roundRect(s.x + 3, s.y - 5, TILE - 6, TILE - 6, 9);
-      ctx.fill(); ctx.stroke();
-
-      // Top highlight bevel
-      ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      ctx.fillRect(s.x + 8, s.y - 2, TILE - 16, 4);
-
-      if (isHi) {
-        ctx.strokeStyle = '#fde047';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(s.x + 1, s.y - 7, TILE - 2, TILE - 2);
-      } else if (isNextGoal) {
-        const pulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.007);
-        ctx.strokeStyle = `rgba(253, 224, 71, ${pulse})`;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.roundRect(s.x + 1, s.y - 7, TILE - 2, TILE - 2, 10);
-        ctx.stroke();
-      }
-
-      if (lampCol) {
-        ctx.fillStyle = lampCol;
-        ctx.beginPath(); ctx.arc(s.x + TILE - 12, s.y + 4, 4, 0, Math.PI * 2); ctx.fill();
-      }
-
-      if (s.type === '>') {
+      // On-floor target/hover highlight ring so stations pop clearly over pixel art
+      if (isHi || isNextGoal) {
+        const pulse = 0.55 + 0.45 * Math.sin(now * 0.008);
         ctx.save();
-        ctx.beginPath(); ctx.roundRect(s.x + 5, s.y - 3, TILE - 10, TILE - 10, 7); ctx.clip();
-        ctx.fillStyle = '#38bdf8';
-        for (let bx = -24; bx < TILE + 24; bx += 22) {
-          ctx.fillRect(s.x + bx + state.conveyorOffset, s.y + 14, 9, 24);
-        }
+        ctx.fillStyle = isHi ? 'rgba(253, 224, 71, 0.24)' : `rgba(253, 224, 71, ${0.14 * pulse})`;
+        ctx.strokeStyle = isHi ? '#fde047' : `rgba(253, 224, 71, ${pulse})`;
+        ctx.lineWidth = isHi ? 3 : 2.2;
+        ctx.beginPath();
+        ctx.ellipse(cx, s.y + TILE - 4, TILE * 0.52, TILE * 0.22, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
         ctx.restore();
       }
 
+      let drewSprite = false;
+
       if (s.type === 'CRATE') {
-        drawHardwareCanvas(ctx, s.x + TILE / 2, s.y + 20, RAW_ITEMS[s.crateItem].shape, false, 0.95);
-      } else if (s.type === 'F' && s.hasExtinguisher) {
-        ctx.fillStyle = '#ef4444'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.roundRect(s.x + 26, s.y + 8, 16, 26, 5); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#e2e8f0'; ctx.fillRect(s.x + 31, s.y + 4, 6, 5);
-      }
-      if (label) {
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 9.5px Fredoka, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(label, s.x + TILE / 2, s.y + 49);
+        const slice = getSheetSlice('cratesSheet', s.crateItem);
+        if (drawSliceBox(ctx, slice, s.x - 3, s.y - 8, TILE + 6, TILE + 10, true)) {
+          drewSprite = true;
+          drawSmallStationPill(ctx, cx, s.y + TILE - 2, RAW_ITEMS[s.crateItem].name);
+        }
+      } else if (s.type === 'W') {
+        const activeWeld = Boolean(s.item && s.item.kind === 'raw');
+        const frameIdx = activeWeld ? Math.floor(now / 110) % 3 : 0;
+        const img = getAnimFrame('weldFrames', frameIdx);
+        const bounds = getAnimFrameBounds('weldFrames', frameIdx);
+        if (drawSpriteFitted(ctx, img, bounds, s.x - 7, s.y - 12, TILE + 14, TILE + 14, true)) {
+          drewSprite = true;
+          drawSmallStationPill(ctx, cx, s.y + TILE - 2, 'WELD', 'rgba(3, 105, 161, 0.92)', '#e0f2fe');
+        }
+      } else if (s.type === 'A') {
+        const activeCal = Boolean(s.item && s.item.kind === 'raw' && s.progress < 1);
+        const frameIdx = activeCal ? Math.floor(now / 140) % 3 : 0;
+        const img = getAnimFrame('calFrames', frameIdx);
+        const bounds = getAnimFrameBounds('calFrames', frameIdx);
+        if (drawSpriteFitted(ctx, img, bounds, s.x - 2, s.y - 18, TILE + 4, TILE + 20, true)) {
+          drewSprite = true;
+          drawSmallStationPill(ctx, cx, s.y + TILE - 2, 'CAL', 'rgba(109, 40, 217, 0.92)', '#f3e8ff');
+        }
+      } else if (s.type === 'P') {
+        const activeChg = Boolean(s.item && s.item.kind === 'raw' && s.progress < 1);
+        const frameIdx = activeChg ? Math.floor(now / 170) % 3 : 0;
+        const img = getAnimFrame('chgFrames', frameIdx);
+        const bounds = getAnimFrameBounds('chgFrames', frameIdx);
+        if (drawSpriteFitted(ctx, img, bounds, s.x - 1, s.y - 18, TILE + 2, TILE + 20, true)) {
+          drewSprite = true;
+          drawSmallStationPill(ctx, cx, s.y + TILE - 2, 'CHARGE', 'rgba(21, 128, 61, 0.92)', '#dcfce7');
+        }
+      } else if (s.type === '>') {
+        const frameIdx = Math.floor(now / 110) % 4;
+        const img = getAnimFrame('conveyorFrames', frameIdx);
+        const bounds = getAnimFrameBounds('conveyorFrames', frameIdx);
+        if (drawSpriteFitted(ctx, img, bounds, s.x - 2, s.y - 10, TILE * 2, TILE + 12, true)) {
+          drewSprite = true;
+          drawSmallStationPill(ctx, s.x + TILE * 0.72, s.y + TILE - 2, 'SUBMIT', 'rgba(15, 23, 42, 0.9)', '#38bdf8');
+        }
+      } else if (s.type === 'T') {
+        const slice = getSheetSlice('logisticsSheet', 'tray_stack');
+        if (slice?.ready) {
+          ctx.save();
+          if (s.traysCount <= 0) ctx.globalAlpha = 0.35;
+          drawSliceBox(ctx, slice, s.x - 2, s.y - 18, TILE + 4, TILE + 20, true);
+          ctx.restore();
+          drewSprite = true;
+          drawSmallStationPill(ctx, cx, s.y + TILE - 2, `TRAYS (${s.traysCount})`, 'rgba(15, 118, 110, 0.92)', '#ccfbf1');
+        }
+      } else if (s.type === 'X') {
+        const slice = getSheetSlice('logisticsSheet', 'scrap_bin');
+        if (drawSliceBox(ctx, slice, s.x + 2, s.y - 12, TILE - 4, TILE + 14, true)) {
+          drewSprite = true;
+          drawSmallStationPill(ctx, cx, s.y + TILE - 2, 'SCRAP', 'rgba(153, 27, 27, 0.92)', '#fee2e2');
+        }
+      } else if (s.type === 'F') {
+        const slice = getSheetSlice('logisticsSheet', 'extinguisher');
+        if (slice?.ready) {
+          ctx.save();
+          if (!s.hasExtinguisher) ctx.globalAlpha = 0.25;
+          drawSliceBox(ctx, slice, s.x + 4, s.y - 14, TILE - 8, TILE + 16, true);
+          ctx.restore();
+          drewSprite = true;
+          drawSmallStationPill(ctx, cx, s.y + TILE - 2, s.hasExtinguisher ? 'CO2' : 'EMPTY', 'rgba(185, 28, 28, 0.92)', '#fee2e2');
+        }
+      } else if (s.type === '#' && tablesReady) {
+        drewSprite = true;
       }
 
-      if (s.item) drawItemBadge(ctx, s.x + TILE / 2, s.y + 18, s.item);
+      if (!drewSprite) {
+        ctx.fillStyle = '#151b28';
+        ctx.fillRect(s.x + 2, s.y + 10, TILE - 4, TILE - 6);
+
+        let topCol = '#475569', label = '', lampCol = null;
+        if (s.type === 'CRATE') {
+          topCol = '#b45309';
+          const rm = RAW_ITEMS[s.crateItem];
+          label = rm.name;
+          lampCol = rm.procType === 'weld' ? '#38bdf8' : rm.procType === 'calibrate' ? '#a78bfa' : '#4ade80';
+        } else if (s.type === 'W') { topCol = '#0369a1'; label = 'WELD'; lampCol = '#38bdf8'; }
+        else if (s.type === 'A') { topCol = '#6d28d9'; label = 'CALIBRATE'; lampCol = '#a78bfa'; }
+        else if (s.type === 'P') { topCol = '#15803d'; label = 'CHARGE'; lampCol = '#4ade80'; }
+        else if (s.type === 'T') { topCol = '#0f766e'; label = `TRAYS (${s.traysCount})`; }
+        else if (s.type === 'F') { topCol = '#b91c1c'; label = s.hasExtinguisher ? 'CO2' : 'EMPTY'; }
+        else if (s.type === 'X') { topCol = '#991b1b'; label = 'SCRAP'; }
+        else if (s.type === '>') { topCol = '#1e293b'; label = 'SUBMIT'; }
+
+        ctx.fillStyle = topCol;
+        ctx.strokeStyle = isHi ? '#fde047' : '#0f172a';
+        ctx.lineWidth = isHi ? 3.5 : 2.2;
+        ctx.beginPath();
+        ctx.roundRect(s.x + 3, s.y - 5, TILE - 6, TILE - 6, 9);
+        ctx.fill(); ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        ctx.fillRect(s.x + 8, s.y - 2, TILE - 16, 4);
+
+        if (lampCol) {
+          ctx.fillStyle = lampCol;
+          ctx.beginPath(); ctx.arc(s.x + TILE - 12, s.y + 4, 4, 0, Math.PI * 2); ctx.fill();
+        }
+
+        if (s.type === '>') {
+          ctx.save();
+          ctx.beginPath(); ctx.roundRect(s.x + 5, s.y - 3, TILE - 10, TILE - 10, 7); ctx.clip();
+          ctx.fillStyle = '#38bdf8';
+          for (let bx = -24; bx < TILE + 24; bx += 22) {
+            ctx.fillRect(s.x + bx + state.conveyorOffset, s.y + 14, 9, 24);
+          }
+          ctx.restore();
+        }
+
+        if (s.type === 'CRATE') {
+          drawHardwareCanvas(ctx, cx, s.y + 20, RAW_ITEMS[s.crateItem].shape, false, 0.95);
+        } else if (s.type === 'F' && s.hasExtinguisher) {
+          ctx.fillStyle = '#ef4444'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.roundRect(s.x + 22, s.y + 6, 14, 24, 5); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#e2e8f0'; ctx.fillRect(s.x + 26, s.y + 2, 6, 5);
+        }
+        if (label) {
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 9px Fredoka, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(label, cx, s.y + TILE - 10);
+        }
+      }
+
+      if (isHi) {
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        ctx.roundRect(s.x + 1, s.y - 5, TILE - 2, TILE + 2, 8);
+        ctx.stroke();
+      } else if (isNextGoal) {
+        const pulse = 0.55 + 0.45 * Math.sin(now * 0.007);
+        ctx.strokeStyle = `rgba(253, 224, 71, ${pulse})`;
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.roundRect(s.x + 1, s.y - 5, TILE - 2, TILE + 2, 8);
+        ctx.stroke();
+      }
+
+      if (s.item) drawItemBadge(ctx, cx, s.y + 16, s.item);
 
       if (s.onFire) {
-        const now = performance.now();
         const sway = Math.sin(now * 0.015 + s.c * 1.7) * 5;
         const pulse = 0.55 + 0.45 * Math.sin(now * 0.012);
-        const cx = s.x + TILE / 2;
-        const baseY = s.y + 26;
+        const baseY = s.y + 24;
 
-        // Pulsing red danger halo over burning bench
         ctx.save();
         ctx.fillStyle = `rgba(239, 68, 68, ${0.24 + pulse * 0.22})`;
         ctx.beginPath(); ctx.roundRect(s.x, s.y - 8, TILE, TILE, 11); ctx.fill();
@@ -1335,30 +1540,33 @@ export function drawStage1(ctx) {
         ctx.lineWidth = 3;
         ctx.strokeRect(s.x - 1, s.y - 9, TILE + 2, TILE + 2);
 
-        // Multi-layered animated flame silhouette
-        ctx.fillStyle = '#ea580c';
-        ctx.beginPath();
-        ctx.moveTo(cx - 18, baseY);
-        ctx.quadraticCurveTo(cx - 22, baseY - 18, cx - 8 + sway * 0.4, baseY - 30 - pulse * 6);
-        ctx.quadraticCurveTo(cx + 2, baseY - 22, cx + 6 + sway * 0.7, baseY - 38 - pulse * 8);
-        ctx.quadraticCurveTo(cx + 22, baseY - 20, cx + 18, baseY);
-        ctx.closePath();
-        ctx.fill();
+        const fireImg = getAnimFrame('fireSmokeFrames', Math.floor(now / 70) % 16);
+        if (isImageReady(fireImg)) {
+          ctx.drawImage(fireImg, s.x - 10, s.y - 42, TILE + 20, TILE + 46);
+        } else {
+          ctx.fillStyle = '#ea580c';
+          ctx.beginPath();
+          ctx.moveTo(cx - 18, baseY);
+          ctx.quadraticCurveTo(cx - 22, baseY - 18, cx - 8 + sway * 0.4, baseY - 30 - pulse * 6);
+          ctx.quadraticCurveTo(cx + 2, baseY - 22, cx + 6 + sway * 0.7, baseY - 38 - pulse * 8);
+          ctx.quadraticCurveTo(cx + 22, baseY - 20, cx + 18, baseY);
+          ctx.closePath();
+          ctx.fill();
 
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.moveTo(cx - 11, baseY);
-        ctx.quadraticCurveTo(cx - 13, baseY - 12, cx - 2 + sway * 0.5, baseY - 24 - pulse * 4);
-        ctx.quadraticCurveTo(cx + 12, baseY - 14, cx + 11, baseY);
-        ctx.closePath();
-        ctx.fill();
+          ctx.fillStyle = '#fbbf24';
+          ctx.beginPath();
+          ctx.moveTo(cx - 11, baseY);
+          ctx.quadraticCurveTo(cx - 13, baseY - 12, cx - 2 + sway * 0.5, baseY - 24 - pulse * 4);
+          ctx.quadraticCurveTo(cx + 12, baseY - 14, cx + 11, baseY);
+          ctx.closePath();
+          ctx.fill();
 
-        ctx.fillStyle = '#fef9c3';
-        ctx.beginPath();
-        ctx.arc(cx + sway * 0.2, baseY - 6, 5.5, 0, Math.PI * 2);
-        ctx.fill();
+          ctx.fillStyle = '#fef9c3';
+          ctx.beginPath();
+          ctx.arc(cx + sway * 0.2, baseY - 6, 5.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
 
-        // Bold FIRE label pill
         ctx.fillStyle = '#dc2626';
         ctx.beginPath(); ctx.roundRect(cx - 22, s.y - 26, 44, 15, 5); ctx.fill();
         ctx.fillStyle = '#fff'; ctx.font = 'bold 9.5px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
@@ -1366,18 +1574,18 @@ export function drawStage1(ctx) {
         ctx.restore();
 
         if (s.fireProg > 0) {
-          ctx.fillStyle = '#0f172a'; ctx.fillRect(s.x + 9, s.y - 36, 50, 7);
-          ctx.fillStyle = '#38bdf8'; ctx.fillRect(s.x + 9, s.y - 36, 50 * s.fireProg, 7);
+          ctx.fillStyle = '#0f172a'; ctx.fillRect(s.x + 5, s.y - 36, TILE - 10, 7);
+          ctx.fillStyle = '#38bdf8'; ctx.fillRect(s.x + 5, s.y - 36, (TILE - 10) * s.fireProg, 7);
         }
       } else if (s.item && s.progress > 0 && s.item.id !== 'burned') {
-        const bw = 50, bh = 7, bx = s.x + (TILE - bw) / 2, by = s.y - 14;
+        const bw = 46, bh = 7, bx = s.x + (TILE - bw) / 2, by = s.y - 14;
         ctx.fillStyle = '#0f172a'; ctx.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
         if (s.progress <= 1) {
           ctx.fillStyle = s.progress >= 1 ? '#4ade80' : '#38bdf8';
           ctx.fillRect(bx, by, bw * s.progress, bh);
         } else {
-          const warn = Math.min(1, (s.progress - 1) / 0.75);
-          ctx.fillStyle = Math.floor(performance.now() / 120) % 2 === 0 ? '#ef4444' : '#fde047';
+          const warn = Math.min(1, (s.progress - 1) / 1.15);
+          ctx.fillStyle = Math.floor(now / 120) % 2 === 0 ? '#ef4444' : '#fde047';
           ctx.fillRect(bx, by, bw * warn, bh);
         }
       }
@@ -1485,7 +1693,7 @@ export function drawStage1(ctx) {
     const flash = Math.floor(performance.now() / 260) % 2 === 0;
     const msg = hasCo2
       ? 'EXTINGUISH FIRE! Face Burning Bench and Hold [SPACE]!'
-      : 'BENCH FIRE! Grab CO2 Extinguisher (Red Crate Left) + Hold [SPACE]!';
+      : 'BENCH FIRE! Grab CO2 Extinguisher (Top-Right Wall) + Hold [SPACE]!';
     ctx.save();
     ctx.fillStyle = flash ? 'rgba(185, 28, 28, 0.95)' : 'rgba(127, 29, 29, 0.95)';
     ctx.strokeStyle = '#fca5a5';
@@ -1528,7 +1736,7 @@ export function drawStage1(ctx) {
 
   // Interactive 5-Step Spotlight Overlay & Active Guide Banner
   state.tutorialBtnRects = {};
-  if (tutActive && tutInfo && lead) {
+  if (tutActive && tutInfo && lead && !isUiTourActive()) {
     const tTarget = tutInfo.targetSt;
     if (state.tutorial.paused) {
       ctx.save();
@@ -1592,7 +1800,7 @@ export function drawStage1(ctx) {
 
       ctx.fillStyle = '#94a3b8';
       ctx.font = '600 11.5px "Plus Jakarta Sans", system-ui, sans-serif';
-      ctx.fillText('Move (WASD), press SPACE, or click Continue to act.', cardX + 18, cardY + 84);
+      ctx.fillText('Press SPACE or ENTER (or click Continue) to proceed.', cardX + 18, cardY + 84);
 
       const contRect = { x: cardX + cardW - 224, y: cardY + 66, w: 100, h: 28 };
       const skipRect = { x: cardX + cardW - 116, y: cardY + 66, w: 102, h: 28 };

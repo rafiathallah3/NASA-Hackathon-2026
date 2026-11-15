@@ -1,7 +1,8 @@
 import { LOGICAL_W, LOGICAL_H } from '../config.js';
 import { state, getVehicle, logBlackBox } from '../state.js';
 import { playTone } from '../audio.js';
-import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
+import { getAsset } from '../assets.js';
+import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite } from '../sprites.js';
 import { setStageBanner, updateBottomHUD } from '../hud.js';
 
 const ASCENT_STARS = createStarfield(75, LOGICAL_W, LOGICAL_H, 11815);
@@ -29,6 +30,7 @@ export function startStage1B() {
     padScroll: 0,
     integrity: 100,
     aborted: false,
+    abortAtMs: 0,
     abortReason: '',
     warningMsg: '',
     inputTouched: false
@@ -83,8 +85,22 @@ export function handleStage1BSeparation() {
 function triggerStage1BAbort(reason, onAbortToHangar) {
   const a = state.ascent;
   a.aborted = true;
+  a.abortAtMs = performance.now();
   a.abortReason = reason;
-  state.screenShake = 0.3;
+  state.screenShake = 0.35;
+  for (let i = 0; i < 24; i++) {
+    const ang = (i / 24) * Math.PI * 2;
+    const spd = 65 + Math.random() * 145;
+    state.lunarParticles.push({
+      x: LOGICAL_W / 2 + Math.cos(ang) * 14,
+      y: a.rocketY + Math.sin(ang) * 18,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      life: 0.8,
+      size: 4 + Math.random() * 5,
+      color: i % 2 === 0 ? '#f97316' : '#fde047'
+    });
+  }
   logBlackBox('STAGE 1B', `LAUNCH ABORT: ${reason}`, 'warn');
   playTone(110, 'sawtooth', 0.45, 0.16);
   updateBottomHUD();
@@ -268,6 +284,37 @@ export function drawStage1B(ctx) {
   grad.addColorStop(1, altRatio > 0.7 ? '#1e293b' : '#2563eb');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+  // Layered space sky fading in smoothly as the rocket climbs above the troposphere
+  const spaceAlpha = Math.max(0, Math.min(1, (altRatio - 0.12) / 0.72));
+  if (spaceAlpha > 0.01) {
+    const spaceBack = getAsset('spaceBack');
+    const spaceStars = getAsset('spaceStars');
+    const spacePlanet = getAsset('spacePlanet');
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    if (spaceBack && spaceBack.complete && spaceBack.naturalWidth > 0) {
+      const yShift = (a.padScroll * 0.12) % LOGICAL_H;
+      ctx.globalAlpha = spaceAlpha * 0.78;
+      ctx.drawImage(spaceBack, 0, yShift - LOGICAL_H, LOGICAL_W, LOGICAL_H);
+      ctx.drawImage(spaceBack, 0, yShift, LOGICAL_W, LOGICAL_H);
+    }
+    if (spaceStars && spaceStars.complete && spaceStars.naturalWidth > 0) {
+      const yStarShift = (a.padScroll * 0.28) % LOGICAL_H;
+      ctx.globalAlpha = spaceAlpha * 0.9;
+      ctx.drawImage(spaceStars, 0, yStarShift - LOGICAL_H, LOGICAL_W, LOGICAL_H);
+      ctx.drawImage(spaceStars, 0, yStarShift, LOGICAL_W, LOGICAL_H);
+    }
+    if (spacePlanet && spacePlanet.complete && spacePlanet.naturalWidth > 0) {
+      const pAlpha = Math.max(0, Math.min(1, (altRatio - 0.35) / 0.65)) * 0.75;
+      if (pAlpha > 0.01) {
+        ctx.globalAlpha = pAlpha;
+        const pH = LOGICAL_H * 0.85;
+        ctx.drawImage(spacePlanet, 0, LOGICAL_H - pH + 90 * (1 - altRatio), LOGICAL_W, pH);
+      }
+    }
+    ctx.restore();
+  }
 
   // Ascending organic starfield
   drawStarfield(ctx, ASCENT_STARS, LOGICAL_W, LOGICAL_H, {
@@ -533,6 +580,21 @@ export function drawStage1B(ctx) {
   }
 
   ctx.restore();
+
+  if (a.aborted && a.abortAtMs > 0) {
+    const elapsedSec = (performance.now() - a.abortAtMs) / 1000;
+    const bursts = [
+      { dx: 0, dy: 0, delay: 0, dur: 0.85, size: 156 },
+      { dx: -26, dy: 28, delay: 0.14, dur: 0.75, size: 112 },
+      { dx: 24, dy: -22, delay: 0.28, dur: 0.75, size: 120 }
+    ];
+    for (const b of bursts) {
+      const p = (elapsedSec - b.delay) / b.dur;
+      if (p >= 0 && p <= 1) {
+        drawExplosionSprite(ctx, LOGICAL_W / 2 + b.dx, a.rocketY + b.dy, p, b.size);
+      }
+    }
+  }
 
   drawCanvasControlBar(ctx, LOGICAL_W, [
     { key: 'W / S', label: 'Green Thrust Band' },

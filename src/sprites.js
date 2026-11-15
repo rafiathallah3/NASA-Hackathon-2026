@@ -1,5 +1,6 @@
 import { RAW_ITEMS, PROC_META } from './config.js';
 import { state } from './state.js';
+import { getItemSprite, getItemBounds, getAnimFrame, getAnimFrameBounds, getSheetSlice, isImageReady } from './assets.js';
 
 export function addFloatText(x, y, text, color = '#fff') {
   state.floatingTexts.push({ x, y, text, color, life: 1.25 });
@@ -87,50 +88,138 @@ export function drawHardwareCanvas(c, x, y, shape, processed = false, scale = 1)
   c.restore();
 }
 
+export function drawSpriteItem(ctx, itemId, x, y, boxSize = 28) {
+  const img = getItemSprite(itemId);
+  if (!isImageReady(img)) return false;
+  const bounds = getItemBounds(itemId);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  if (bounds) {
+    const scale = boxSize / Math.max(bounds.w, bounds.h);
+    const dw = bounds.w * scale;
+    const dh = bounds.h * scale;
+    ctx.drawImage(img, bounds.x, bounds.y, bounds.w, bounds.h, x - dw / 2, y - dh / 2, dw, dh);
+  } else {
+    const scale = boxSize / Math.max(img.naturalWidth, img.naturalHeight);
+    const dw = img.naturalWidth * scale;
+    const dh = img.naturalHeight * scale;
+    ctx.drawImage(img, x - dw / 2, y - dh / 2, dw, dh);
+  }
+  ctx.restore();
+  return true;
+}
+
+export function drawSpriteSheetTile(ctx, sheetKey, sliceKey, dx, dy, dw, dh, { pixelated = true, alpha = 1 } = {}) {
+  const slice = getSheetSlice(sheetKey, sliceKey);
+  if (!slice || !slice.ready) return false;
+  ctx.save();
+  ctx.imageSmoothingEnabled = !pixelated;
+  if (alpha < 1) ctx.globalAlpha = alpha;
+  ctx.drawImage(slice.img, slice.sx, slice.sy, slice.sw, slice.sh, dx, dy, dw, dh);
+  ctx.restore();
+  return true;
+}
+
+export function drawAnimSpriteFrame(ctx, groupKey, frameIdx, dx, dy, dw, dh, { pixelated = true, alpha = 1, crop = false } = {}) {
+  const img = getAnimFrame(groupKey, frameIdx);
+  if (!isImageReady(img)) return false;
+  const bounds = crop ? getAnimFrameBounds(groupKey, frameIdx) : null;
+  ctx.save();
+  ctx.imageSmoothingEnabled = !pixelated;
+  if (alpha < 1) ctx.globalAlpha = alpha;
+  if (bounds) {
+    ctx.drawImage(img, bounds.x, bounds.y, bounds.w, bounds.h, dx, dy, dw, dh);
+  } else {
+    ctx.drawImage(img, dx, dy, dw, dh);
+  }
+  ctx.restore();
+  return true;
+}
+
+export function drawExplosionSprite(ctx, x, y, progress, size = 96) {
+  const p = Math.max(0, Math.min(1, progress));
+  const frameIdx = Math.min(4, Math.floor(p * 5));
+  const img = getAnimFrame('explosionFrames', frameIdx);
+  ctx.save();
+  const alpha = p > 0.8 ? (1 - p) / 0.2 : 1;
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+  if (isImageReady(img)) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, x - size / 2, y - size / 2, size, size);
+  } else {
+    const r = size * 0.44 * (0.35 + 0.65 * Math.sin(p * Math.PI * 0.7));
+    const grad = ctx.createRadialGradient(x, y, r * 0.12, x, y, Math.max(4, r));
+    grad.addColorStop(0, '#fef08a');
+    grad.addColorStop(0.55, '#f97316');
+    grad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(4, r), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 export function drawItemBadge(ctx, x, y, item) {
   if (!item) return;
   ctx.save();
   if (item.kind === 'extinguisher') {
-    ctx.fillStyle = '#dc2626';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.roundRect(x - 8, y - 12, 16, 24, 5);
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#e2e8f0';
-    ctx.fillRect(x - 4, y - 16, 8, 4);
-    ctx.fillStyle = '#fde047';
-    ctx.font = 'bold 7px Fredoka, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('CO2', x, y + 3);
+    if (!drawSpriteItem(ctx, 'extinguisher', x, y - 2, 38)) {
+      ctx.fillStyle = '#dc2626';
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.roundRect(x - 8, y - 12, 16, 24, 5);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(x - 4, y - 16, 8, 4);
+      ctx.fillStyle = '#fde047';
+      ctx.font = 'bold 7px Fredoka, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('CO2', x, y + 3);
+    }
   } else if (item.kind === 'tray') {
-    // Fairing tray rim & inner metallic recess
-    ctx.fillStyle = '#94a3b8';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.ellipse(x, y + 6, 25, 14, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
+    const drewTraySprite = drawSpriteItem(ctx, 'tray', x, y + 3, 52);
+    if (!drewTraySprite) {
+      // Fairing tray rim & inner metallic recess fallback
+      ctx.fillStyle = '#94a3b8';
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.ellipse(x, y + 6, 25, 14, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
 
-    ctx.fillStyle = '#f1f5f9';
-    ctx.beginPath();
-    ctx.ellipse(x, y + 3, 22, 12, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#f1f5f9';
+      ctx.beginPath();
+      ctx.ellipse(x, y + 3, 22, 12, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
 
     if (item.parts.length === 0) {
-      ctx.fillStyle = '#475569';
-      ctx.font = 'bold 9px Fredoka, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('TRAY', x, y + 6);
+      if (!drewTraySprite) {
+        ctx.fillStyle = '#475569';
+        ctx.font = 'bold 9px Fredoka, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('TRAY', x, y + 6);
+      }
     } else if (item.parts.length === 1) {
-      drawHardwareCanvas(ctx, x, y + 1, PROC_META[item.parts[0]].shape, true, 0.72);
+      const partId = item.parts[0];
+      if (!drawSpriteItem(ctx, partId, x, y, 28)) {
+        drawHardwareCanvas(ctx, x, y + 1, PROC_META[partId]?.shape || 'tank', true, 0.72);
+      }
       ctx.fillStyle = '#f59e0b';
       ctx.beginPath(); ctx.roundRect(x + 8, y - 14, 22, 13, 5); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = 'bold 9px Fredoka, sans-serif'; ctx.textAlign = 'center';
       ctx.fillText('1/2', x + 19, y - 4);
     } else {
-      drawHardwareCanvas(ctx, x - 9, y + 1, PROC_META[item.parts[0]].shape, true, 0.65);
-      drawHardwareCanvas(ctx, x + 9, y + 1, PROC_META[item.parts[1]].shape, true, 0.65);
+      const p0 = item.parts[0];
+      const p1 = item.parts[1];
+      if (!drawSpriteItem(ctx, p0, x - 10, y, 24)) {
+        drawHardwareCanvas(ctx, x - 9, y + 1, PROC_META[p0]?.shape || 'tank', true, 0.65);
+      }
+      if (!drawSpriteItem(ctx, p1, x + 10, y, 24)) {
+        drawHardwareCanvas(ctx, x + 9, y + 1, PROC_META[p1]?.shape || 'tank', true, 0.65);
+      }
       ctx.fillStyle = '#16a34a';
       ctx.beginPath(); ctx.roundRect(x - 19, y - 19, 38, 13, 5); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = 'bold 8px Fredoka, sans-serif'; ctx.textAlign = 'center';
@@ -145,7 +234,9 @@ export function drawItemBadge(ctx, x, y, item) {
     ctx.beginPath();
     ctx.arc(x, y, 17, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
-    drawHardwareCanvas(ctx, x, y, meta.shape, !isRaw && item.id !== 'burned', 0.78);
+    if (!drawSpriteItem(ctx, item.id, x, y, 27)) {
+      drawHardwareCanvas(ctx, x, y, meta?.shape || 'tank', !isRaw && item.id !== 'burned', 0.78);
+    }
   }
   ctx.restore();
 }

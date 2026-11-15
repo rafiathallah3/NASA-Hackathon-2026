@@ -63,7 +63,141 @@ function getObjectiveSampleFlavor(objectiveId, sampleCount = 1, sciMul = 1) {
   };
 }
 
+const ELEV_LIFT_PX = 24;
+
+function isPointInRoundedRect(x, y, rect) {
+  if (!rect) return false;
+  if (x < rect.x1 || x > rect.x2 || y < rect.y1 || y > rect.y2) return false;
+  const r = rect.r || 0;
+  const ix = Math.max(rect.x1 + r, Math.min(rect.x2 - r, x));
+  const iy = Math.max(rect.y1 + r, Math.min(rect.y2 - r, y));
+  return Math.hypot(x - ix, y - iy) <= r;
+}
+
+function getRampElevAt(x, y, ramp) {
+  const span = ramp.dir === 'x' ? (ramp.x2 - ramp.x1) : (ramp.y2 - ramp.y1);
+  const rawT = span > 0
+    ? (ramp.dir === 'x' ? (x - ramp.x1) : (y - ramp.y1)) / span
+    : 0;
+  const t = Math.max(0, Math.min(1, rawT));
+  return ramp.fromElev + (ramp.toElev - ramp.fromElev) * t;
+}
+
+function getTerrainInfo(x, y) {
+  const cliffs = state.lunarCliffs;
+  if (!cliffs) return { elev: 0, zone: 'PLAIN', ramp: null, cliff: null, ledge: null };
+
+  for (const ramp of cliffs.ramps || []) {
+    if (x >= ramp.x1 && x <= ramp.x2 && y >= ramp.y1 && y <= ramp.y2) {
+      const parent =
+        (cliffs.plateaus || []).find(p => p.id === ramp.cliffId) ||
+        (cliffs.basins || []).find(b => b.id === ramp.cliffId) ||
+        null;
+      return {
+        elev: getRampElevAt(x, y, ramp),
+        zone: 'RAMP',
+        ramp,
+        cliff: parent,
+        ledge: null
+      };
+    }
+  }
+
+  for (const p of cliffs.plateaus || []) {
+    if (isPointInRoundedRect(x, y, p)) {
+      return { elev: p.elev, zone: 'HIGH_CLIFF', ramp: null, cliff: p, ledge: null };
+    }
+    for (const ledge of p.ledges || []) {
+      if (isPointInRoundedRect(x, y, ledge)) {
+        return { elev: ledge.elev, zone: 'LEDGE', ramp: null, cliff: p, ledge };
+      }
+    }
+  }
+
+  for (const b of cliffs.basins || []) {
+    if (isPointInRoundedRect(x, y, b)) {
+      return { elev: b.elev, zone: 'LOW_CLIFF', ramp: null, cliff: b, ledge: null };
+    }
+  }
+
+  return { elev: 0, zone: 'PLAIN', ramp: null, cliff: null, ledge: null };
+}
+
+function getSurfaceElevation(x, y) {
+  return getTerrainInfo(x, y).elev;
+}
+
+function getRampEndpoints(ramp) {
+  const midX = (ramp.x1 + ramp.x2) * 0.5;
+  const midY = (ramp.y1 + ramp.y2) * 0.5;
+  if (ramp.dir === 'x') {
+    const fromPt = { x: ramp.x1 - 14, y: midY };
+    const toPt = { x: ramp.x2 + 14, y: midY };
+    return {
+      plainEnd: ramp.fromElev === 0 ? fromPt : toPt,
+      cliffEnd: ramp.fromElev === 0 ? toPt : fromPt
+    };
+  }
+  const fromPt = { x: midX, y: ramp.y1 - 14 };
+  const toPt = { x: midX, y: ramp.y2 + 14 };
+  return {
+    plainEnd: ramp.fromElev === 0 ? fromPt : toPt,
+    cliffEnd: ramp.fromElev === 0 ? toPt : fromPt
+  };
+}
+
 function build25DLunarTerrain() {
+  state.lunarCliffs = {
+    plateaus: [
+      {
+        id: 'high_nw',
+        name: 'NW BASALT PLATEAU',
+        elev: 1,
+        x1: 530, y1: 335, x2: 1030, y2: 515, r: 34,
+        wallH: 26,
+        ledges: [
+          { x1: 800, y1: 505, x2: 890, y2: 552, r: 12, elev: 0.5 }
+        ]
+      },
+      {
+        id: 'high_ne',
+        name: 'NE RELAY RIDGE',
+        elev: 1,
+        x1: 1330, y1: 330, x2: 1860, y2: 605, r: 38,
+        wallH: 28,
+        ledges: [
+          { x1: 1470, y1: 595, x2: 1570, y2: 642, r: 12, elev: 0.5 }
+        ]
+      }
+    ],
+    basins: [
+      {
+        id: 'low_ice',
+        name: 'SHADOWED ICE BASIN',
+        elev: -1,
+        x1: 970, y1: 965, x2: 1300, y2: 1205, r: 34,
+        wallH: 22
+      },
+      {
+        id: 'low_crater',
+        name: 'POINT B CRATER BASIN',
+        elev: -1,
+        x1: 1760, y1: 655, x2: 2140, y2: 910, r: 42,
+        wallH: 22
+      }
+    ],
+    ramps: [
+      { id: 'ramp_nw_w', cliffId: 'high_nw', x1: 445, y1: 405, x2: 550, y2: 475, dir: 'x', fromElev: 0, toElev: 1 },
+      { id: 'ramp_nw_e', cliffId: 'high_nw', x1: 1010, y1: 400, x2: 1110, y2: 470, dir: 'x', fromElev: 1, toElev: 0 },
+      { id: 'ramp_ne_w', cliffId: 'high_ne', x1: 1240, y1: 485, x2: 1350, y2: 555, dir: 'x', fromElev: 0, toElev: 1 },
+      { id: 'ramp_ne_s', cliffId: 'high_ne', x1: 1640, y1: 590, x2: 1720, y2: 675, dir: 'y', fromElev: 1, toElev: 0 },
+      { id: 'ramp_ice_w', cliffId: 'low_ice', x1: 885, y1: 1045, x2: 990, y2: 1120, dir: 'x', fromElev: 0, toElev: -1 },
+      { id: 'ramp_ice_n', cliffId: 'low_ice', x1: 1095, y1: 895, x2: 1175, y2: 985, dir: 'y', fromElev: 0, toElev: -1 },
+      { id: 'ramp_crater_w', cliffId: 'low_crater', x1: 1685, y1: 800, x2: 1785, y2: 865, dir: 'x', fromElev: 0, toElev: -1 },
+      { id: 'ramp_crater_n', cliffId: 'low_crater', x1: 1900, y1: 585, x2: 1980, y2: 675, dir: 'y', fromElev: 0, toElev: -1 }
+    ]
+  };
+
   state.lunarCraters = [
     { x: 640,  y: 440,  rx: 48, ry: 22, isTarget: false },
     { x: 890,  y: 960,  rx: 56, ry: 26, isTarget: false },
@@ -392,14 +526,18 @@ export function updateStage3A(dt, onNextStage, onAbortToMenu) {
   state.lunarCam.x += (camTargetX - state.lunarCam.x) * Math.min(1, dt * 6);
   state.lunarCam.y += (camTargetY - state.lunarCam.y) * Math.min(1, dt * 6);
 
-  if (l.z < 90) l.legAnim = Math.min(1, l.legAnim + dt * 2.6);
+  const terrainUnder = getTerrainInfo(l.x, l.y);
+  const surfaceZ = terrainUnder.elev * ELEV_LIFT_PX;
+  const altAboveGround = Math.max(0, l.z - surfaceZ);
 
-  if ((l.thrusting || l.hoverTrim || l.p2AssistActive) && l.z < 105) {
+  if (altAboveGround < 90) l.legAnim = Math.min(1, l.legAnim + dt * 2.6);
+
+  if ((l.thrusting || l.hoverTrim || l.p2AssistActive) && altAboveGround < 105) {
     for (let i = 0; i < 3; i++) {
       const ang = Math.random() * Math.PI * 2;
       state.lunarParticles.push({
         x: l.x + Math.cos(ang) * 26,
-        y: l.y + Math.sin(ang) * 12,
+        y: (l.y - surfaceZ) + Math.sin(ang) * 12,
         vx: Math.cos(ang) * (85 + Math.random() * 75),
         vy: Math.sin(ang) * (40 + Math.random() * 35),
         life: 0.55,
@@ -409,17 +547,22 @@ export function updateStage3A(dt, onNextStage, onAbortToMenu) {
     }
   }
 
-  if (l.z <= 0) {
-    l.z = 0;
+  if (l.z <= surfaceZ) {
+    l.z = surfaceZ;
+    l.surfaceZ = surfaceZ;
     l.thrusting = false;
     l.hoverTrim = false;
     const vSpd = Math.abs(l.vz * 0.24);
     const tiltAbs = Math.abs(l.tiltX);
+    const onSlope = Boolean(terrainUnder.ramp || terrainUnder.ledge);
+    const maxTilt = onSlope ? 0.22 : 0.35;
 
-    if (vSpd > 7.5 || tiltAbs > 0.35) {
+    if (vSpd > 7.5 || tiltAbs > maxTilt) {
       const reason = vSpd > 7.5
         ? `Descent impact velocity too high (${vSpd.toFixed(1)} m/s vs 7.5 m/s limit). Fire [SPACE] retro-thrust earlier!`
-        : `Lander touched down tilted too far (${Math.round((tiltAbs * 180) / Math.PI)} deg) and toppled on the lunar surface.`;
+        : onSlope
+          ? `Lander touched down on a steep cliff slope (${Math.round((tiltAbs * 180) / Math.PI)} deg tilt) and toppled.`
+          : `Lander touched down tilted too far (${Math.round((tiltAbs * 180) / Math.PI)} deg) and toppled on the lunar surface.`;
       triggerStage3AAbort(reason, onAbortToMenu);
       return;
     }
@@ -439,28 +582,32 @@ export function updateStage3A(dt, onNextStage, onAbortToMenu) {
     }
 
     let pts = 85;
-    if (onPad && vSpd <= 4.2) {
+    if (onPad && vSpd <= 4.2 && !onSlope) {
       l.hardLandingPenalty = false;
       pts = 200;
       state.landingGrade = 'TEXTBOOK 4P BUTTER LANDING (+200⭐)';
       state.score += 200;
-      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 125, 'TEXTBOOK 4P TOUCHDOWN! +200⭐', '#4ade80');
+      addFloatText(l.x - state.lunarCam.x, l.y - surfaceZ - state.lunarCam.y - 125, 'TEXTBOOK 4P TOUCHDOWN! +200⭐', '#4ade80');
       logBlackBox('STAGE 3A', `Textbook landing at Point A (${vSpd.toFixed(1)} m/s, ${Math.round(l.fuel)}% fuel left).`, 'good');
-    } else if (onPad && vSpd <= 6.8) {
+    } else if (onPad && vSpd <= 6.8 && !onSlope) {
       l.hardLandingPenalty = false;
       pts = 140;
       state.landingGrade = 'SAFE TOUCHDOWN (+140⭐)';
       state.score += 140;
-      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 125, 'SAFE LANDING! +140⭐', '#38bdf8');
+      addFloatText(l.x - state.lunarCam.x, l.y - surfaceZ - state.lunarCam.y - 125, 'SAFE LANDING! +140⭐', '#38bdf8');
       logBlackBox('STAGE 3A', `Safe touchdown at Point A (${vSpd.toFixed(1)} m/s).`, 'good');
     } else {
       l.hardLandingPenalty = true;
       l.shockRepaired = false;
       pts = 85;
-      state.landingGrade = onPad ? 'HARD PAD TOUCHDOWN (+85⭐ • -28Wh SHOCK)' : 'FIELD LANDING (+85⭐ • -28Wh SHOCK)';
+      state.landingGrade = onSlope
+        ? 'CLIFF SLOPE TOUCHDOWN (+85⭐ • -28Wh SHOCK)'
+        : onPad
+          ? 'HARD PAD TOUCHDOWN (+85⭐ • -28Wh SHOCK)'
+          : 'FIELD LANDING (+85⭐ • -28Wh SHOCK)';
       state.score += 85;
-      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 125, 'HARD TOUCHDOWN! ROVER BATTERY SHOCK (-28Wh)!', '#fbbf24');
-      logBlackBox('STAGE 3A', `Hard touchdown (${vSpd.toFixed(1)} m/s) caused -28 Wh rover battery shock (repairable at Lander).`, 'warn');
+      addFloatText(l.x - state.lunarCam.x, l.y - surfaceZ - state.lunarCam.y - 125, onSlope ? 'CLIFF SLOPE TOUCHDOWN! ROVER SHOCK (-28Wh)!' : 'HARD TOUCHDOWN! ROVER BATTERY SHOCK (-28Wh)!', '#fbbf24');
+      logBlackBox('STAGE 3A', `${onSlope ? 'Cliff slope' : 'Hard'} touchdown (${vSpd.toFixed(1)} m/s) caused -28 Wh rover battery shock (repairable at Lander).`, 'warn');
     }
     l.landingPts = pts;
     l.landingSpeedMs = vSpd;
@@ -476,7 +623,7 @@ export function updateStage3A(dt, onNextStage, onAbortToMenu) {
 // ============================================================================
 export function startStage3B() {
   state.stage = 'STAGE3B';
-  state.stageTimer = 95;
+  state.stageTimer = 140;
   state.lunarParticles = [];
   state.roverTracks = [];
   state.sampleCollected = false;
@@ -489,10 +636,15 @@ export function startStage3B() {
   const bonusWh = state.missionChoices?.roverBonusWh || 0;
   const maxBatt = Math.max(85, Math.min(180, 90 + Math.round(state.telemetry.power * 0.25) + bonusWh));
   const startBatt = state.lander.hardLandingPenalty ? Math.max(38, maxBatt - 28) : maxBatt;
+  const r1x = Math.max(90, Math.min(LUNAR_W - 90, px + 92));
+  const r1y = Math.max(295, Math.min(LUNAR_H - 70, py + 8));
+  const r2x = Math.max(90, Math.min(LUNAR_W - 90, px + 76));
+  const r2y = Math.max(295, Math.min(LUNAR_H - 70, py + 68));
+
   state.rover = {
     id: 'LTV-1 (P1+P3)',
     bodyColor: '#f59e0b',
-    x: px + 92, y: py + 8, z: 0,
+    x: r1x, y: r1y, z: 0,
     vx: 0, vy: 0, vz: 0,
     facingX: 1, facingY: 0,
     wheelSpin: 0,
@@ -505,13 +657,17 @@ export function startStage3B() {
     drillProgress: 0,
     armAnim: 0,
     rcsHopping: false,
+    groundElev: getSurfaceElevation(r1x, r1y),
+    highCliffDrop: false,
+    rcsCushioned: false,
+    cliffWarnCd: 0,
     trackCd: 0
   };
 
   state.rover2 = {
     id: 'LTV-2 (P2+P4)',
     bodyColor: '#38bdf8',
-    x: px + 76, y: py + 68, z: 0,
+    x: r2x, y: r2y, z: 0,
     vx: 0, vy: 0, vz: 0,
     facingX: 1, facingY: 0,
     wheelSpin: 0,
@@ -524,14 +680,18 @@ export function startStage3B() {
     drillProgress: 0,
     armAnim: 0,
     rcsHopping: false,
+    groundElev: getSurfaceElevation(r2x, r2y),
+    highCliffDrop: false,
+    rcsCushioned: false,
+    cliffWarnCd: 0,
     trackCd: 0
   };
 
   setStageBanner(
     'STAGE 3B: LUNAR SURFACE EVA',
     'Explore the Moon & Drill Point B Crater',
-    'Drill Point B Crater, return with all active crew to Point A Rocket, and board together for Moon Ascent.',
-    `<kbd>WASD</kbd> LTV-1 &nbsp;•&nbsp; <kbd>IJKL</kbd> LTV-2 (2P) &nbsp;•&nbsp; <kbd>SHIFT</kbd> Hop &nbsp;•&nbsp; <kbd>SPACE</kbd> Task / Tether`,
+    'Climb High Cliff ramps for sunlit +4.5Wh/s recharge, descend into shadowed basins, drill Point B Crater, and board Point A Rocket.',
+    `<kbd>WASD</kbd> LTV-1 &nbsp;•&nbsp; <kbd>IJKL</kbd> LTV-2 (2P) &nbsp;•&nbsp; <kbd>SHIFT</kbd> RCS Hop / Cushion &nbsp;•&nbsp; <kbd>SPACE</kbd> Task / Tether`,
     { showTickets: false, showSkip: false, showNext: true }
   );
   updateBottomHUD();
@@ -546,6 +706,9 @@ function tryBoardRoverAtLander(rv, radius = 125) {
   const sampleReady = state.sampleCollected || state.rover.hasSample || state.rover2.hasSample;
   if (!sampleReady) return false;
   if (Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) > radius) return false;
+  const rvElev = rv.groundElev ?? getSurfaceElevation(rv.x, rv.y);
+  const padElev = getSurfaceElevation(state.lander.padX, state.lander.padY);
+  if (Math.abs(rvElev - padElev) > 0.45) return false;
   if (rv.hasSample && !rv.sampleStowed) return false;
 
   rv.boarded = true;
@@ -587,12 +750,15 @@ function tryBoardRoverAtLander(rv, radius = 125) {
 
 export function handleStage3BInteract(rv, onNextStage) {
   if (!rv || rv.boarded) return;
+  const rvElev = rv.groundElev ?? getSurfaceElevation(rv.x, rv.y);
+
   for (const sn of state.scienceNodes) {
-    if (!sn.scanned && Math.hypot(rv.x - sn.x, rv.y - sn.y) < 68) {
+    const snElev = getSurfaceElevation(sn.x, sn.y);
+    if (!sn.scanned && Math.abs(rvElev - snElev) <= 0.45 && Math.hypot(rv.x - sn.x, rv.y - sn.y) < 68) {
       sn.scanned = true;
       state.score += sn.pts;
       state.telemetry.science += 25;
-      addFloatText(sn.x - state.lunarCam.x, sn.y - state.lunarCam.y - 45, `${rv.id} SCANNED ${sn.name.toUpperCase()}! +${sn.pts}⭐`, '#38bdf8');
+      addFloatText(sn.x - state.lunarCam.x, sn.y - snElev * ELEV_LIFT_PX - state.lunarCam.y - 45, `${rv.id} SCANNED ${sn.name.toUpperCase()}! +${sn.pts}⭐`, '#38bdf8');
       logBlackBox('STAGE 3B', `${rv.id} scanned ${sn.name} (+25 science).`, 'good');
       playTone(720, 'triangle', 0.16, 0.12);
       updateBottomHUD();
@@ -600,18 +766,21 @@ export function handleStage3BInteract(rv, onNextStage) {
     }
   }
 
+  const padElev = getSurfaceElevation(state.lander.padX, state.lander.padY);
+  const nearPad = Math.abs(rvElev - padElev) <= 0.45 && Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) < 125;
+
   if (
     state.lander.hardLandingPenalty &&
     !state.lander.shockRepaired &&
     !state.rover.hasSample &&
     !state.rover2.hasSample &&
-    Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) < 125
+    nearPad
   ) {
     state.lander.shockRepaired = true;
     state.rover.battery = state.rover.maxBattery;
     state.rover2.battery = state.rover2.maxBattery;
     state.score += 40;
-    addFloatText(state.lander.padX - state.lunarCam.x, state.lander.padY - state.lunarCam.y - 95, '🔧 SHOCK DAMAGE REPAIRED! FULL ROVER BATTERY +40⭐', '#4ade80');
+    addFloatText(state.lander.padX - state.lunarCam.x, state.lander.padY - padElev * ELEV_LIFT_PX - state.lunarCam.y - 95, '🔧 SHOCK DAMAGE REPAIRED! FULL ROVER BATTERY +40⭐', '#4ade80');
     showMissionToast('Rover Battery Repaired', 'Landing shock damage cleared. Full battery restored.');
     logBlackBox('STAGE 3B', 'Crew repaired landing shock damage on rover battery bus (+28 Wh restored).', 'good');
     playSuccessChord();
@@ -625,7 +794,7 @@ export function handleStage3BInteract(rv, onNextStage) {
     rv.battery = Math.min(rv.maxBattery, rv.battery + 18);
     other.battery = Math.min(other.maxBattery, other.battery + 18);
     state.score += 15;
-    addFloatText(rv.x - state.lunarCam.x, rv.y - state.lunarCam.y - 45, '🤝 TETHER CHARGE SHARE +15⭐', '#38bdf8');
+    addFloatText(rv.x - state.lunarCam.x, rv.y - rvElev * ELEV_LIFT_PX - state.lunarCam.y - 45, '🤝 TETHER CHARGE SHARE +15⭐', '#38bdf8');
     playTone(600, 'sine', 0.12, 0.08);
     updateBottomHUD();
     return;
@@ -635,7 +804,7 @@ export function handleStage3BInteract(rv, onNextStage) {
   const r2AtPad = state.rover2.hasSample && Math.hypot(state.rover2.x - state.lander.padX, state.rover2.y - state.lander.padY) < 115;
   const hasUnstowedAtPad = (r1AtPad && !state.rover.sampleStowed) || (r2AtPad && !state.rover2.sampleStowed);
 
-  if (hasUnstowedAtPad && Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) < 105) {
+  if (hasUnstowedAtPad && Math.abs(rvElev - padElev) <= 0.45 && Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) < 105) {
     const sciMul = state.missionChoices?.scienceMul || 1;
     const objective = SCIENCE_OBJECTIVES?.[state.selectedObjective] || SCIENCE_OBJECTIVES?.polar_volatiles;
 
@@ -658,7 +827,7 @@ export function handleStage3BInteract(rv, onNextStage) {
 
       addFloatText(
         state.lander.padX - state.lunarCam.x,
-        state.lander.padY - state.lunarCam.y - 125,
+        state.lander.padY - padElev * ELEV_LIFT_PX - state.lunarCam.y - 125,
         `${flavor.shortLabel.toUpperCase()} BOARDED! +${totalPts}⭐`,
         '#4ade80'
       );
@@ -681,7 +850,7 @@ export function handleStage3BInteract(rv, onNextStage) {
 
       addFloatText(
         state.lander.padX - state.lunarCam.x,
-        state.lander.padY - state.lunarCam.y - 145,
+        state.lander.padY - padElev * ELEV_LIFT_PX - state.lunarCam.y - 145,
         'DUAL-ROVER BONUS CORE STOWED! +100⭐',
         '#fde047'
       );
@@ -697,14 +866,100 @@ export function handleStage3BInteract(rv, onNextStage) {
   }
 }
 
+function canRoverMoveTo(fromElev, fromZ, toX, toY) {
+  if (fromZ < 14) {
+    for (const b of state.lunarBoulders) {
+      const bElev = getSurfaceElevation(b.x, b.y);
+      if (Math.abs(bElev - fromElev) <= 0.45 && Math.hypot(toX - b.x, (toY - b.y) * 1.6) < b.r + 17) {
+        return { ok: false, reason: 'BOULDER' };
+      }
+    }
+  }
+  const toTerrain = getTerrainInfo(toX, toY);
+  if (toTerrain.elev - fromElev > 0.35 && fromZ < 18) {
+    return { ok: false, reason: 'CLIFF_WALL', toTerrain };
+  }
+  return { ok: true, toTerrain };
+}
+
+function applyRoverVerticalAndDropPhysics(rv, prevElev, newElev, hasCushionInput, dt) {
+  if (newElev - prevElev > 0.35) {
+    const liftPx = (newElev - prevElev) * ELEV_LIFT_PX;
+    rv.z = Math.max(2, rv.z - liftPx);
+  } else if (prevElev - newElev > 0.35) {
+    const dropPx = (prevElev - newElev) * ELEV_LIFT_PX;
+    rv.z += dropPx;
+    if (prevElev >= 0.75 && newElev <= 0.25) {
+      rv.highCliffDrop = true;
+    }
+  }
+  rv.groundElev = newElev;
+
+  if (rv.z > 0 && rv.highCliffDrop && hasCushionInput && rv.battery > 0.5) {
+    rv.rcsHopping = true;
+    if (rv.vz < -75) {
+      rv.vz += 210 * dt;
+    }
+    rv.battery = Math.max(0, rv.battery - dt * 1.8);
+  }
+
+  if (rv.z > 0 || rv.vz > 0) {
+    rv.vz -= 290 * dt;
+    rv.z += rv.vz * dt;
+    if (rv.z <= 0) {
+      rv.z = 0;
+      rv.vz = 0;
+      if (rv.highCliffDrop) {
+        rv.highCliffDrop = false;
+        const cushioned = Boolean(hasCushionInput && rv.battery > 0.5);
+        const visualY = rv.y - newElev * ELEV_LIFT_PX;
+        if (cushioned) {
+          addFloatText(rv.x - state.lunarCam.x, visualY - state.lunarCam.y - 44, 'RCS CUSHIONED LANDING!', '#38bdf8');
+          playTone(340, 'sine', 0.1, 0.06);
+          for (let i = 0; i < 6; i++) {
+            const ang = (i / 6) * Math.PI * 2;
+            state.lunarParticles.push({
+              x: rv.x, y: visualY,
+              vx: Math.cos(ang) * 55, vy: Math.sin(ang) * 25,
+              life: 0.35, size: 3.5, color: '#38bdf8'
+            });
+          }
+        } else {
+          rv.battery = Math.max(0, rv.battery - 12);
+          state.screenShake = Math.max(state.screenShake, 0.22);
+          playTone(120, 'sawtooth', 0.2, 0.11);
+          addFloatText(rv.x - state.lunarCam.x, visualY - state.lunarCam.y - 46, '-12Wh HIGH CLIFF SHOCK! (HOLD SHIFT)', '#f87171');
+          for (let i = 0; i < 10; i++) {
+            const ang = (i / 10) * Math.PI * 2;
+            state.lunarParticles.push({
+              x: rv.x, y: visualY,
+              vx: Math.cos(ang) * 75, vy: Math.sin(ang) * 35 - 12,
+              life: 0.45, size: 4, color: '#cbd5e1'
+            });
+          }
+        }
+      }
+    }
+  }
+}
+
 function updateSingleRover(rv, input, targetCrater, dt) {
   if (!rv || rv.boarded) return;
+  rv.cliffWarnCd = Math.max(0, (rv.cliffWarnCd || 0) - dt);
+
+  const prevTerrain = getTerrainInfo(rv.x, rv.y);
+  const prevElev = rv.groundElev ?? prevTerrain.elev;
   const other = rv === state.rover ? state.rover2 : state.rover;
   const tethered = other && !other.boarded && state.coopMode !== 'SOLO' && Math.hypot(rv.x - other.x, rv.y - other.y) < 130;
   const coopMult = tethered ? 2.0 : 1.0;
 
-  const atCrater = Math.hypot(rv.x - targetCrater.x, rv.y - targetCrater.y) < 92;
-  const nearEva = state.evaTasks.find(t => !t.done && Math.hypot(rv.x - t.x, rv.y - t.y) < 74);
+  const tcElev = targetCrater ? getSurfaceElevation(targetCrater.x, targetCrater.y) : 0;
+  const atCrater = targetCrater && Math.abs(prevElev - tcElev) <= 0.45 && Math.hypot(rv.x - targetCrater.x, rv.y - targetCrater.y) < 92;
+  const nearEva = state.evaTasks.find(t => {
+    if (t.done) return false;
+    const tElev = getSurfaceElevation(t.x, t.y);
+    return Math.abs(prevElev - tElev) <= 0.45 && Math.hypot(rv.x - t.x, rv.y - t.y) < 74;
+  });
 
   if (nearEva && input.drill) {
     rv.drilling = true;
@@ -720,7 +975,8 @@ function updateSingleRover(rv, input, targetCrater, dt) {
       state.score += nearEva.pts + (tethered ? 35 : 0);
       state.telemetry.science += 35 * sciMul;
       if (nearEva.kind === 'RELAY') state.telemetry.comms += 25;
-      addFloatText(nearEva.x - state.lunarCam.x, nearEva.y - state.lunarCam.y - 45, `${nearEva.name.toUpperCase()} ONLINE! +${nearEva.pts}⭐`, '#4ade80');
+      const evElev = getSurfaceElevation(nearEva.x, nearEva.y);
+      addFloatText(nearEva.x - state.lunarCam.x, nearEva.y - evElev * ELEV_LIFT_PX - state.lunarCam.y - 45, `${nearEva.name.toUpperCase()} ONLINE! +${nearEva.pts}⭐`, '#4ade80');
       showMissionToast(nearEva.name, `+${35 * sciMul} Science logged${tethered ? ' (Co-Op Tether 2x speed!)' : ''}.`);
       logBlackBox('STAGE 3B', `${rv.id} deployed ${nearEva.name} (+35 science${tethered ? ', Co-Op Boost!' : ''}).`, 'good');
       playSuccessChord();
@@ -734,7 +990,7 @@ function updateSingleRover(rv, input, targetCrater, dt) {
     if (Math.random() < 0.4) {
       state.lunarParticles.push({
         x: rv.x + rv.facingX * 22,
-        y: rv.y,
+        y: rv.y - prevElev * ELEV_LIFT_PX,
         vx: (Math.random() - 0.5) * 85,
         vy: -25 - Math.random() * 35,
         life: 0.4,
@@ -751,7 +1007,7 @@ function updateSingleRover(rv, input, targetCrater, dt) {
       state.sampleYieldText = flavor.yieldText;
       state.score += 150 + (tethered ? 40 : 0);
       state.telemetry.science += Math.round(45 * sciMul);
-      addFloatText(rv.x - state.lunarCam.x, rv.y - state.lunarCam.y - 62, `${rv.id} EXTRACTED ${flavor.shortLabel.toUpperCase()}! +150⭐`, '#4ade80');
+      addFloatText(rv.x - state.lunarCam.x, rv.y - prevElev * ELEV_LIFT_PX - state.lunarCam.y - 62, `${rv.id} EXTRACTED ${flavor.shortLabel.toUpperCase()}! +150⭐`, '#4ade80');
       showMissionToast(`${flavor.shortLabel} Extracted`, `${rv.id}: ${flavor.yieldText} (+${Math.round(45 * sciMul)} Science). Return to Lander!`);
       logBlackBox('STAGE 3B', `${rv.id} drilled ${flavor.shortLabel} at Point B Crater (${flavor.yieldText}).`, 'good');
       playSuccessChord();
@@ -760,7 +1016,7 @@ function updateSingleRover(rv, input, targetCrater, dt) {
     rv.drilling = false;
     rv.armAnim = Math.max(0, rv.armAnim - dt * 3);
 
-    const maxSpd = rv.battery > 0 ? 235 : 135;
+    const baseMaxSpd = rv.battery > 0 ? 255 : 145;
     let mx = 0, my = 0;
     if (input.left) mx -= 1;
     if (input.right) mx += 1;
@@ -772,35 +1028,59 @@ function updateSingleRover(rv, input, targetCrater, dt) {
       mx /= len; my /= len;
       rv.facingX = mx;
       rv.facingY = my;
-      rv.vx += mx * 540 * dt;
-      rv.vy += my * 420 * dt;
+
+      let uphillRamp = false;
+      if (prevTerrain.ramp) {
+        const climbSign = Math.sign(prevTerrain.ramp.toElev - prevTerrain.ramp.fromElev);
+        const climbDot = prevTerrain.ramp.dir === 'x' ? mx * climbSign : my * climbSign;
+        if (climbDot > 0.15) uphillRamp = true;
+      }
+
+      const maxSpd = uphillRamp ? baseMaxSpd * 0.8 : baseMaxSpd;
+      rv.vx += mx * 720 * dt;
+      rv.vy += my * 580 * dt;
       const spd = Math.hypot(rv.vx, rv.vy);
       if (spd > maxSpd) {
         rv.vx = (rv.vx / spd) * maxSpd;
         rv.vy = (rv.vy / spd) * maxSpd;
       }
-      rv.battery = Math.max(0, rv.battery - dt * 1.6);
+
+      const shadowMul = prevElev <= -0.85 ? 1.4 : 1.0;
+      const slopeMul = uphillRamp ? 1.35 : 1.0;
+      rv.battery = Math.max(0, rv.battery - dt * 1.6 * shadowMul * slopeMul);
+
       rv.trackCd = (rv.trackCd || 0) - dt;
       if (rv.z === 0 && rv.trackCd <= 0) {
         rv.trackCd = 0.08;
-        state.roverTracks.push({ x: rv.x, y: rv.y + 8, angle: Math.atan2(my, mx) });
+        state.roverTracks.push({
+          x: rv.x,
+          y: rv.y + 8 - prevElev * ELEV_LIFT_PX,
+          angle: Math.atan2(my, mx),
+          elev: prevElev
+        });
         if (state.roverTracks.length > 220) state.roverTracks.shift();
       }
       if (rv.z === 0 && Math.random() < 0.32) {
         state.lunarParticles.push({
           x: rv.x - mx * 20,
-          y: rv.y - my * 10,
+          y: rv.y - my * 10 - prevElev * ELEV_LIFT_PX,
           vx: -mx * 35 + (Math.random() - 0.5) * 20,
           vy: -my * 20 - 10,
           life: 0.38,
           size: 3,
-          color: '#94a3b8'
+          color: prevElev <= -0.85 ? '#64748b' : '#94a3b8'
         });
       }
     } else {
-      rv.vx *= 0.86;
-      rv.vy *= 0.86;
-      rv.battery = Math.min(rv.maxBattery, rv.battery + dt * 3.0);
+      const damp = Math.pow(0.03, dt);
+      rv.vx *= damp;
+      rv.vy *= damp;
+      if (Math.hypot(rv.vx, rv.vy) < 4) {
+        rv.vx = 0;
+        rv.vy = 0;
+      }
+      const rechargeRate = prevElev >= 0.85 ? 4.5 : prevElev <= -0.85 ? 1.2 : 3.0;
+      rv.battery = Math.min(rv.maxBattery, rv.battery + dt * rechargeRate);
     }
 
     rv.rcsHopping = input.hop;
@@ -811,18 +1091,37 @@ function updateSingleRover(rv, input, targetCrater, dt) {
     }
   }
 
-  let nextX = Math.max(90, Math.min(LUNAR_W - 90, rv.x + rv.vx * dt));
-  let nextY = Math.max(335, Math.min(LUNAR_H - 70, rv.y + rv.vy * dt));
+  const candX = Math.max(90, Math.min(LUNAR_W - 90, rv.x + rv.vx * dt));
+  const candY = Math.max(295, Math.min(LUNAR_H - 70, rv.y + rv.vy * dt));
 
-  if (rv.z < 14) {
-    for (const b of state.lunarBoulders) {
-      const dist = Math.hypot(nextX - b.x, (nextY - b.y) * 1.6);
-      if (dist < b.r + 17) {
-        nextX = rv.x;
-        nextY = rv.y;
-        rv.vx *= -0.3;
-        rv.vy *= -0.3;
-      }
+  let nextX = candX;
+  let nextY = candY;
+  const checkBoth = canRoverMoveTo(prevElev, rv.z, candX, candY);
+  if (!checkBoth.ok) {
+    const checkX = canRoverMoveTo(prevElev, rv.z, candX, rv.y);
+    const checkY = canRoverMoveTo(prevElev, rv.z, rv.x, candY);
+    if (checkX.ok) {
+      nextX = candX;
+      nextY = rv.y;
+      rv.vy *= 0.15;
+    } else if (checkY.ok) {
+      nextX = rv.x;
+      nextY = candY;
+      rv.vx *= 0.15;
+    } else {
+      nextX = rv.x;
+      nextY = rv.y;
+      rv.vx *= -0.25;
+      rv.vy *= -0.25;
+    }
+    if (checkBoth.reason === 'CLIFF_WALL' && rv.cliffWarnCd <= 0) {
+      rv.cliffWarnCd = 1.6;
+      addFloatText(
+        rv.x - state.lunarCam.x,
+        rv.y - prevElev * ELEV_LIFT_PX - state.lunarCam.y - 46,
+        'CLIFF WALL! USE RAMP OR [SHIFT] HOP',
+        '#fbbf24'
+      );
     }
   }
 
@@ -830,11 +1129,75 @@ function updateSingleRover(rv, input, targetCrater, dt) {
   rv.y = nextY;
   rv.wheelSpin += Math.hypot(rv.vx, rv.vy) * dt * 0.08;
 
-  if (rv.z > 0 || rv.vz > 0) {
-    rv.vz -= 290 * dt;
-    rv.z += rv.vz * dt;
-    if (rv.z <= 0) { rv.z = 0; rv.vz = 0; }
+  const newElev = getSurfaceElevation(nextX, nextY);
+  applyRoverVerticalAndDropPhysics(rv, prevElev, newElev, Boolean(input.hop), dt);
+}
+
+function getAIRampWaypoint(rv, currTerrain, goalX, goalY) {
+  const goalTerrain = getTerrainInfo(goalX, goalY);
+  const ramps = state.lunarCliffs?.ramps || [];
+
+  if (currTerrain.ramp) {
+    const eps = getRampEndpoints(currTerrain.ramp);
+    if (goalTerrain.cliff && goalTerrain.cliff.id === currTerrain.ramp.cliffId) {
+      return eps.cliffEnd;
+    }
+    if (Math.abs(currTerrain.elev - goalTerrain.elev) >= 0.35) {
+      return eps.plainEnd;
+    }
   }
+
+  if (Math.abs(currTerrain.elev - goalTerrain.elev) < 0.5) {
+    return { x: goalX, y: goalY };
+  }
+
+  if (currTerrain.cliff && Math.abs(currTerrain.elev) >= 0.85) {
+    const cliffRamps = ramps.filter(r => r.cliffId === currTerrain.cliff.id);
+    if (cliffRamps.length > 0) {
+      let bestEps = null;
+      let bestScore = Infinity;
+      for (const r of cliffRamps) {
+        const eps = getRampEndpoints(r);
+        const score = Math.hypot(eps.cliffEnd.x - rv.x, eps.cliffEnd.y - rv.y) +
+          Math.hypot(goalX - eps.plainEnd.x, goalY - eps.plainEnd.y) * 0.6;
+        if (score < bestScore) {
+          bestScore = score;
+          bestEps = eps;
+        }
+      }
+      if (bestEps) {
+        if (Math.hypot(bestEps.cliffEnd.x - rv.x, bestEps.cliffEnd.y - rv.y) <= 16) {
+          return bestEps.plainEnd;
+        }
+        return bestEps.cliffEnd;
+      }
+    }
+  }
+
+  if (goalTerrain.cliff && Math.abs(goalTerrain.elev) >= 0.85) {
+    const cliffRamps = ramps.filter(r => r.cliffId === goalTerrain.cliff.id);
+    if (cliffRamps.length > 0) {
+      let bestEps = null;
+      let bestScore = Infinity;
+      for (const r of cliffRamps) {
+        const eps = getRampEndpoints(r);
+        const score = Math.hypot(eps.plainEnd.x - rv.x, eps.plainEnd.y - rv.y) +
+          Math.hypot(goalX - eps.cliffEnd.x, goalY - eps.cliffEnd.y) * 0.6;
+        if (score < bestScore) {
+          bestScore = score;
+          bestEps = eps;
+        }
+      }
+      if (bestEps) {
+        if (Math.hypot(bestEps.plainEnd.x - rv.x, bestEps.plainEnd.y - rv.y) <= 16) {
+          return bestEps.cliffEnd;
+        }
+        return bestEps.plainEnd;
+      }
+    }
+  }
+
+  return { x: goalX, y: goalY };
 }
 
 function updateCompanionRoverAI(rv, targetCrater, dt) {
@@ -855,32 +1218,63 @@ function updateCompanionRoverAI(rv, targetCrater, dt) {
     goalX = targetCrater.x; goalY = targetCrater.y + 22;
   }
 
-  const dx = goalX - rv.x, dy = goalY - rv.y;
+  const currTerrain = getTerrainInfo(rv.x, rv.y);
+  const prevElev = rv.groundElev ?? currTerrain.elev;
+  const wp = getAIRampWaypoint(rv, currTerrain, goalX, goalY);
+  const dx = wp.x - rv.x, dy = wp.y - rv.y;
   const d = Math.hypot(dx, dy);
+  const goalDist = Math.hypot(goalX - rv.x, goalY - rv.y);
+  const goalElev = getSurfaceElevation(goalX, goalY);
+  const sameElevAsGoal = Math.abs(prevElev - goalElev) <= 0.45;
 
-  if (d > 26) {
+  if (goalDist > 26 && d > 8) {
     const nx = dx / d, ny = dy / d;
     rv.facingX = nx; rv.facingY = ny;
-    rv.x += nx * 135 * dt;
-    rv.y += ny * 105 * dt;
-    rv.wheelSpin += 135 * dt * 0.08;
+    const uphill = currTerrain.ramp && (
+      (currTerrain.ramp.dir === 'x' ? nx : ny) * Math.sign(currTerrain.ramp.toElev - currTerrain.ramp.fromElev) > 0.15
+    );
+    const spdMul = uphill ? 0.8 : 1.0;
+    const candX = Math.max(90, Math.min(LUNAR_W - 90, rv.x + nx * 145 * spdMul * dt));
+    const candY = Math.max(295, Math.min(LUNAR_H - 70, rv.y + ny * 115 * spdMul * dt));
+    const moveCheck = canRoverMoveTo(prevElev, rv.z, candX, candY);
+
+    if (moveCheck.ok) {
+      rv.x = candX;
+      rv.y = candY;
+    } else if (moveCheck.reason === 'CLIFF_WALL' && rv.z === 0) {
+      rv.vz = 165;
+      rv.rcsHopping = true;
+    } else {
+      const slideX = canRoverMoveTo(prevElev, rv.z, candX, rv.y);
+      const slideY = canRoverMoveTo(prevElev, rv.z, rv.x, candY);
+      if (slideX.ok) rv.x = candX;
+      else if (slideY.ok) rv.y = candY;
+    }
+
+    rv.wheelSpin += 145 * spdMul * dt * 0.08;
     rv.trackCd = (rv.trackCd || 0) - dt;
     if (rv.z === 0 && rv.trackCd <= 0) {
       rv.trackCd = 0.1;
-      state.roverTracks.push({ x: rv.x, y: rv.y + 8, angle: Math.atan2(ny, nx) });
+      state.roverTracks.push({
+        x: rv.x,
+        y: rv.y + 8 - prevElev * ELEV_LIFT_PX,
+        angle: Math.atan2(ny, nx),
+        elev: prevElev
+      });
       if (state.roverTracks.length > 140) state.roverTracks.shift();
     }
     for (const b of state.lunarBoulders) {
-      if (rv.z === 0 && Math.hypot(rv.x - b.x, rv.y - b.y) < b.r + 24) {
+      const bElev = getSurfaceElevation(b.x, b.y);
+      if (rv.z === 0 && Math.abs(bElev - prevElev) <= 0.45 && Math.hypot(rv.x - b.x, rv.y - b.y) < b.r + 24) {
         rv.vz = 145;
       }
     }
-  } else if (unscanned && !unscanned.scanned) {
+  } else if (sameElevAsGoal && unscanned && !unscanned.scanned && goalDist <= 34) {
     unscanned.scanned = true;
     state.score += unscanned.pts;
     state.telemetry.science += 25;
-    addFloatText(unscanned.x, unscanned.y - 45, `LTV-2 SCANNED ${unscanned.name.toUpperCase()}! +${unscanned.pts}⭐`, '#38bdf8');
-  } else if (nextEva && !nextEva.done && Math.hypot(rv.x - nextEva.x, rv.y - nextEva.y) < 60) {
+    addFloatText(unscanned.x - state.lunarCam.x, unscanned.y - prevElev * ELEV_LIFT_PX - state.lunarCam.y - 45, `LTV-2 SCANNED ${unscanned.name.toUpperCase()}! +${unscanned.pts}⭐`, '#38bdf8');
+  } else if (sameElevAsGoal && nextEva && !nextEva.done && Math.hypot(rv.x - nextEva.x, rv.y - nextEva.y) < 60) {
     rv.drilling = true;
     rv.armAnim = 1;
     nextEva.progress += dt * 0.55;
@@ -891,10 +1285,10 @@ function updateCompanionRoverAI(rv, targetCrater, dt) {
       state.score += nextEva.pts;
       state.telemetry.science += 35;
       if (nextEva.kind === 'RELAY') state.telemetry.comms += 25;
-      addFloatText(nextEva.x, nextEva.y - 45, `LTV-2 DEPLOYED ${nextEva.name.toUpperCase()}! +${nextEva.pts}⭐`, '#38bdf8');
+      addFloatText(nextEva.x - state.lunarCam.x, nextEva.y - prevElev * ELEV_LIFT_PX - state.lunarCam.y - 45, `LTV-2 DEPLOYED ${nextEva.name.toUpperCase()}! +${nextEva.pts}⭐`, '#38bdf8');
       logBlackBox('STAGE 3B', `LTV-2 deployed ${nextEva.name}.`, 'good');
     }
-  } else if (!rv.hasSample && Math.hypot(rv.x - targetCrater.x, rv.y - targetCrater.y) < 75) {
+  } else if (sameElevAsGoal && !rv.hasSample && Math.hypot(rv.x - targetCrater.x, rv.y - targetCrater.y) < 75) {
     rv.drilling = true;
     rv.armAnim = 1;
     rv.drillProgress += dt * 0.42;
@@ -907,16 +1301,13 @@ function updateCompanionRoverAI(rv, targetCrater, dt) {
       const flavor = getObjectiveSampleFlavor(state.selectedObjective, extractedCount, sciMul);
       state.sampleYieldText = flavor.yieldText;
       state.score += 140;
-      addFloatText(rv.x - state.lunarCam.x, rv.y - state.lunarCam.y - 55, `LTV-2 COLLECTED ${flavor.shortLabel.toUpperCase()}! +140⭐`, '#38bdf8');
+      addFloatText(rv.x - state.lunarCam.x, rv.y - prevElev * ELEV_LIFT_PX - state.lunarCam.y - 55, `LTV-2 COLLECTED ${flavor.shortLabel.toUpperCase()}! +140⭐`, '#38bdf8');
       logBlackBox('STAGE 3B', `LTV-2 collected backup ${flavor.shortLabel} (${flavor.yieldText}).`, 'good');
     }
   }
 
-  if (rv.z > 0 || rv.vz > 0) {
-    rv.vz -= 290 * dt;
-    rv.z += rv.vz * dt;
-    if (rv.z <= 0) { rv.z = 0; rv.vz = 0; }
-  }
+  const newElev = getSurfaceElevation(rv.x, rv.y);
+  applyRoverVerticalAndDropPhysics(rv, prevElev, newElev, true, dt);
 }
 
 export function updateStage3B(dt, onNextStage) {
@@ -935,7 +1326,7 @@ export function updateStage3B(dt, onNextStage) {
     down: state.keys['KeyS'] || state.keys['ArrowDown'],
     left: state.keys['KeyA'] || state.keys['ArrowLeft'],
     right: state.keys['KeyD'] || state.keys['ArrowRight'],
-    hop: state.keys['ShiftLeft'],
+    hop: state.keys['ShiftLeft'] || (state.coopMode !== 'LOCAL_2P' && state.keys['ShiftRight']),
     drill: state.keys['Space'] || state.keys['KeyE']
   }, targetCrater, dt);
 
@@ -958,12 +1349,14 @@ export function updateStage3B(dt, onNextStage) {
   }
 
   if (state.coopMode !== 'SOLO') {
+    const r1Elev = state.rover.groundElev ?? getSurfaceElevation(state.rover.x, state.rover.y);
     for (const sn of state.scienceNodes) {
-      if (!sn.scanned && Math.hypot(state.rover.x - sn.x, state.rover.y - sn.y) < 58) {
+      const snElev = getSurfaceElevation(sn.x, sn.y);
+      if (!sn.scanned && Math.abs(r1Elev - snElev) <= 0.45 && Math.hypot(state.rover.x - sn.x, state.rover.y - sn.y) < 58) {
         sn.scanned = true;
         state.score += sn.pts;
         state.telemetry.science += 25;
-        addFloatText(sn.x - state.lunarCam.x, sn.y - state.lunarCam.y - 45, `P3 LIDAR SCANNED ${sn.name.toUpperCase()}! +${sn.pts}⭐`, '#e9d5ff');
+        addFloatText(sn.x - state.lunarCam.x, sn.y - snElev * ELEV_LIFT_PX - state.lunarCam.y - 45, `P3 LIDAR SCANNED ${sn.name.toUpperCase()}! +${sn.pts}⭐`, '#e9d5ff');
         playTone(740, 'triangle', 0.14, 0.1);
       }
     }
@@ -1156,31 +1549,33 @@ function draw25DLunarWorld(ctx) {
   ctx.strokeStyle = 'rgba(147, 197, 253, 0.55)'; ctx.lineWidth = 4;
   ctx.beginPath(); ctx.arc(earthX, earthY, 34, 0, Math.PI * 2); ctx.stroke();
 
-  // Far mountain ridge silhouette
+  // Far mountain & stepped highland mesa silhouette
   ctx.fillStyle = '#161e30';
   ctx.beginPath();
   ctx.moveTo(0, horizonY);
   for (let x = 0; x <= LOGICAL_W; x += 28) {
     const wx = x + cx * 0.22;
-    ctx.lineTo(x, horizonY - 28 - Math.sin(wx * 0.0065) * 18 - Math.cos(wx * 0.014) * 11);
+    const mesa = Math.sin(wx * 0.0042) > 0.35 ? 12 : 0;
+    ctx.lineTo(x, horizonY - 28 - mesa - Math.sin(wx * 0.0065) * 16 - Math.cos(wx * 0.014) * 9);
   }
   ctx.lineTo(LOGICAL_W, horizonY);
   ctx.closePath();
   ctx.fill();
 
-  // Foreground Moon mountain ridge locked to horizonY with sunlit rim
+  // Foreground Moon cliff ridge locked to horizonY with sunlit rim
   ctx.fillStyle = '#232e44';
   ctx.beginPath();
   ctx.moveTo(0, horizonY);
-  for (let x = 0; x <= LOGICAL_W; x += 24) {
+  for (let x = 0; x <= LOGICAL_W; x += 20) {
     const wx = x + cx * 0.42;
-    ctx.lineTo(x, horizonY - 14 - Math.sin(wx * 0.009 + 1.1) * 14 - Math.cos(wx * 0.022) * 8);
+    const flatStep = Math.round((Math.sin(wx * 0.009 + 1.1) * 14 + Math.cos(wx * 0.022) * 8) / 6) * 6;
+    ctx.lineTo(x, horizonY - 15 - flatStep);
   }
   ctx.lineTo(LOGICAL_W, horizonY);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = 'rgba(203, 213, 225, 0.24)';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(203, 213, 225, 0.28)';
+  ctx.lineWidth = 1.6;
   ctx.stroke();
   ctx.restore();
 
@@ -1197,6 +1592,367 @@ function draw25DLunarWorld(ctx) {
   seam.addColorStop(1, 'rgba(15, 23, 42, 0)');
   ctx.fillStyle = seam;
   ctx.fillRect(0, horizonY, LOGICAL_W, 28);
+}
+
+function drawSingleCrater(ctx, cr, offsetY = 0) {
+  const cy = cr.y + offsetY;
+  if (cr.isTarget) {
+    // Soft regolith ejecta blanket around Point B crater
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.13)';
+    ctx.beginPath();
+    ctx.ellipse(cr.x, cy, cr.rx + 16, cr.ry + 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Raised outer crater rim slope
+    ctx.fillStyle = '#334155';
+    ctx.strokeStyle = 'rgba(203, 213, 225, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(cr.x, cy, cr.rx + 6, cr.ry + 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Deep shaded crater depression
+    const basinGrad = ctx.createLinearGradient(cr.x, cy - cr.ry, cr.x, cy + cr.ry);
+    basinGrad.addColorStop(0, '#0b1120');
+    basinGrad.addColorStop(0.58, '#172033');
+    basinGrad.addColorStop(1, '#263246');
+    ctx.fillStyle = basinGrad;
+    ctx.beginPath();
+    ctx.ellipse(cr.x, cy + 1, cr.rx - 4, cr.ry - 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner geological terraced ledge & subtle amber survey marker
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath();
+    ctx.ellipse(cr.x, cy + 2, cr.rx * 0.72, cr.ry * 0.66, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Shadowed northern cliff overhang arc
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.78)';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.ellipse(cr.x, cy + 2, cr.rx - 5, cr.ry - 4, 0, Math.PI * 1.08, Math.PI * 1.92);
+    ctx.stroke();
+
+    ctx.fillStyle = '#fde047';
+    ctx.font = 'bold 12px Fredoka, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('POINT B: TARGET CRATER', cr.x, cy + cr.ry + 20);
+    return;
+  }
+
+  // Outer raised rim highlight + sunken basin
+  ctx.fillStyle = 'rgba(148, 163, 184, 0.16)';
+  ctx.beginPath();
+  ctx.ellipse(cr.x, cy, cr.rx + 7, cr.ry + 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#273246';
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(cr.x, cy, cr.rx, cr.ry, 0, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+
+  // Interior crater wall shading (sunlit far rim, shadowed near wall)
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.65)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(cr.x, cy + 4, cr.rx * 0.85, cr.ry * 0.78, 0, Math.PI, Math.PI * 2);
+  ctx.stroke();
+}
+
+function drawCliffRamp(ctx, ramp) {
+  const offFrom = -ramp.fromElev * ELEV_LIFT_PX;
+  const offTo = -ramp.toElev * ELEV_LIFT_PX;
+
+  ctx.save();
+  if (ramp.dir === 'x') {
+    const p1 = { x: ramp.x1, y: ramp.y1 + offFrom };
+    const p2 = { x: ramp.x2, y: ramp.y1 + offTo };
+    const p3 = { x: ramp.x2, y: ramp.y2 + offTo };
+    const p4 = { x: ramp.x1, y: ramp.y2 + offFrom };
+
+    // Front retaining rock skirt under ramp edge
+    ctx.fillStyle = '#1e293b';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(p4.x, p4.y);
+    ctx.lineTo(p3.x, p3.y);
+    ctx.lineTo(p3.x, ramp.y2 + 6);
+    ctx.lineTo(p4.x, ramp.y2 + 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Sloped ramp deck
+    const grad = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+    grad.addColorStop(0, ramp.fromElev > ramp.toElev ? '#55657d' : '#2d3b52');
+    grad.addColorStop(1, ramp.toElev > ramp.fromElev ? '#55657d' : '#2d3b52');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(p3.x, p3.y);
+    ctx.lineTo(p4.x, p4.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Side guide rails
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+    ctx.moveTo(p4.x, p4.y); ctx.lineTo(p3.x, p3.y);
+    ctx.stroke();
+
+    // Uphill directional chevrons
+    const climbDir = ramp.toElev > ramp.fromElev ? 1 : -1;
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.78)';
+    ctx.lineWidth = 2.2;
+    for (const frac of [0.28, 0.52, 0.76]) {
+      const cx = ramp.x1 + (ramp.x2 - ramp.x1) * frac;
+      const cy = (ramp.y1 + ramp.y2) * 0.5 + offFrom + (offTo - offFrom) * frac;
+      ctx.beginPath();
+      ctx.moveTo(cx - 5 * climbDir, cy - 8);
+      ctx.lineTo(cx + 5 * climbDir, cy);
+      ctx.lineTo(cx - 5 * climbDir, cy + 8);
+      ctx.stroke();
+    }
+  } else {
+    const p1 = { x: ramp.x1, y: ramp.y1 + offFrom };
+    const p2 = { x: ramp.x2, y: ramp.y1 + offFrom };
+    const p3 = { x: ramp.x2, y: ramp.y2 + offTo };
+    const p4 = { x: ramp.x1, y: ramp.y2 + offTo };
+
+    const grad = ctx.createLinearGradient(p1.x, p1.y, p4.x, p4.y);
+    grad.addColorStop(0, ramp.fromElev > ramp.toElev ? '#55657d' : '#2d3b52');
+    grad.addColorStop(1, ramp.toElev > ramp.fromElev ? '#55657d' : '#2d3b52');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(p3.x, p3.y);
+    ctx.lineTo(p4.x, p4.y);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y); ctx.lineTo(p4.x, p4.y);
+    ctx.moveTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y);
+    ctx.stroke();
+
+    const climbDir = ramp.toElev > ramp.fromElev ? 1 : -1;
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.78)';
+    ctx.lineWidth = 2.2;
+    for (const frac of [0.28, 0.52, 0.76]) {
+      const cx = (ramp.x1 + ramp.x2) * 0.5;
+      const cy = ramp.y1 + (ramp.y2 - ramp.y1) * frac + offFrom + (offTo - offFrom) * frac;
+      ctx.beginPath();
+      ctx.moveTo(cx - 8, cy - 5 * climbDir);
+      ctx.lineTo(cx, cy + 5 * climbDir);
+      ctx.lineTo(cx + 8, cy - 5 * climbDir);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function drawLowCliffBasin(ctx, b, ramps, craters, minWorldY) {
+  if (b.y2 + 30 < minWorldY) return;
+  const depth = ELEV_LIFT_PX;
+
+  ctx.save();
+  // Soft outer crater-basin rim shadow
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.28)';
+  ctx.beginPath();
+  ctx.roundRect(b.x1 - 8, b.y1 - 6, (b.x2 - b.x1) + 16, (b.y2 - b.y1) + 12, b.r + 6);
+  ctx.fill();
+
+  // Clip interior to basin opening
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1, b.r);
+  ctx.clip();
+
+  // Deep interior shadowed rock cliff wall (seen along north/side rim)
+  const wallGrad = ctx.createLinearGradient(0, b.y1, 0, b.y1 + depth + 36);
+  wallGrad.addColorStop(0, '#090e1a');
+  wallGrad.addColorStop(0.55, '#172136');
+  wallGrad.addColorStop(1, '#1e293b');
+  ctx.fillStyle = wallGrad;
+  ctx.fillRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+
+  // Vertical basalt striations on interior drop-wall
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.14)';
+  ctx.lineWidth = 2;
+  for (let wx = b.x1 + 18; wx < b.x2 - 12; wx += 22) {
+    ctx.beginPath();
+    ctx.moveTo(wx, b.y1 + 2);
+    ctx.lineTo(wx + ((wx % 44 === 0) ? 4 : -3), b.y1 + depth + 24);
+    ctx.stroke();
+  }
+
+  // Sunken basin floor shifted down by +depth
+  const floorGrad = ctx.createLinearGradient(0, b.y1 + depth, 0, b.y2 + depth);
+  floorGrad.addColorStop(0, '#0f172a');
+  floorGrad.addColorStop(0.45, '#192338');
+  floorGrad.addColorStop(1, '#233047');
+  ctx.fillStyle = floorGrad;
+  ctx.beginPath();
+  ctx.roundRect(b.x1 + 3, b.y1 + depth, (b.x2 - b.x1) - 6, (b.y2 - b.y1) - 2, Math.max(8, b.r - 6));
+  ctx.fill();
+
+  // Subtle shadow-zone tint & frost sheen on basin floor
+  ctx.strokeStyle = 'rgba(129, 140, 248, 0.22)';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  for (const cr of craters) {
+    drawSingleCrater(ctx, cr, depth);
+  }
+
+  ctx.fillStyle = 'rgba(165, 180, 252, 0.72)';
+  ctx.font = 'bold 10.5px Fredoka, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`🌑 ${b.name} (-22m • 1.4x DRAIN)`, (b.x1 + b.x2) * 0.5, b.y2 - 14);
+  ctx.restore();
+
+  // Crisp outer basin rim lip
+  ctx.strokeStyle = '#020617';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1, b.r);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(203, 213, 225, 0.34)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(b.x1 - 1, b.y1 - 1, (b.x2 - b.x1) + 2, (b.y2 - b.y1) + 2, b.r + 1);
+  ctx.stroke();
+
+  // Draw exit ramps bridging across the basin rim
+  for (const ramp of ramps) {
+    drawCliffRamp(ctx, ramp);
+  }
+  ctx.restore();
+}
+
+function drawHighCliffPlateau(ctx, p, ramps, craters) {
+  const lift = ELEV_LIFT_PX;
+
+  ctx.save();
+  // Ground drop shadow under plateau
+  ctx.fillStyle = 'rgba(2, 6, 23, 0.44)';
+  ctx.beginPath();
+  ctx.roundRect(p.x1 + 8, p.y1 + 6, (p.x2 - p.x1) + 4, (p.y2 - p.y1) + 10, p.r);
+  ctx.fill();
+
+  // Layered shadowed rock cliff wall extruded from ground footprint up to lifted plateau top
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(p.x1, p.y1 - lift, p.x2 - p.x1, (p.y2 - p.y1) + lift, p.r);
+  ctx.clip();
+
+  const cliffGrad = ctx.createLinearGradient(0, p.y2 - lift, 0, p.y2 + 2);
+  cliffGrad.addColorStop(0, '#3b495e');
+  cliffGrad.addColorStop(0.45, '#1e293b');
+  cliffGrad.addColorStop(1, '#0f172a');
+  ctx.fillStyle = cliffGrad;
+  ctx.fillRect(p.x1, p.y1 - lift, p.x2 - p.x1, (p.y2 - p.y1) + lift + 4);
+
+  // Horizontal sedimentary/basalt strata bands
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
+  ctx.lineWidth = 2;
+  for (let sy = p.y2 - lift + 8; sy < p.y2; sy += 7) {
+    ctx.beginPath();
+    ctx.moveTo(p.x1, sy);
+    ctx.lineTo(p.x2, sy);
+    ctx.stroke();
+  }
+
+  // Vertical jagged rock cliff fissures
+  ctx.strokeStyle = 'rgba(2, 6, 23, 0.55)';
+  ctx.lineWidth = 2.4;
+  for (let fx = p.x1 + 22; fx < p.x2 - 16; fx += 26) {
+    ctx.beginPath();
+    ctx.moveTo(fx, p.y2 - lift - 2);
+    ctx.lineTo(fx + ((fx % 52 === 0) ? 5 : -4), p.y2 - 10);
+    ctx.lineTo(fx + ((fx % 52 === 0) ? 2 : -1), p.y2 + 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Outer dark rock wall outline
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.roundRect(p.x1, p.y1 - lift, p.x2 - p.x1, (p.y2 - p.y1) + lift, p.r);
+  ctx.stroke();
+
+  // Sunlit plateau top surface shifted up by -lift
+  const topGrad = ctx.createLinearGradient(p.x1, p.y1 - lift, p.x2, p.y2 - lift);
+  topGrad.addColorStop(0, '#64748b');
+  topGrad.addColorStop(0.55, '#4c5c73');
+  topGrad.addColorStop(1, '#3b495e');
+  ctx.fillStyle = topGrad;
+  ctx.beginPath();
+  ctx.roundRect(p.x1, p.y1 - lift, p.x2 - p.x1, p.y2 - p.y1, p.r);
+  ctx.fill();
+
+  // Sunlit rim highlight
+  ctx.strokeStyle = 'rgba(248, 250, 252, 0.52)';
+  ctx.lineWidth = 2.4;
+  ctx.stroke();
+
+  // Craters resting on top of this plateau
+  for (const cr of craters) {
+    drawSingleCrater(ctx, cr, -lift);
+  }
+
+  // Sunlit plateau solar recharge tag
+  ctx.fillStyle = 'rgba(253, 224, 71, 0.88)';
+  ctx.font = 'bold 10.5px Fredoka, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`☀️ ${p.name} (+4.5Wh/s SUN)`, p.x1 + 24, p.y1 - lift + 20);
+
+  // Stepped jump ledges along cliff rim for SHIFT RCS Hop
+  for (const ledge of p.ledges || []) {
+    const ledgeLift = Math.round(ledge.elev * ELEV_LIFT_PX);
+    ctx.fillStyle = '#1e293b';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(ledge.x1, ledge.y1 - ledgeLift, ledge.x2 - ledge.x1, (ledge.y2 - ledge.y1) + ledgeLift, ledge.r);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#4c5c73';
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.68)';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.roundRect(ledge.x1, ledge.y1 - ledgeLift, ledge.x2 - ledge.x1, ledge.y2 - ledge.y1, ledge.r);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#7dd3fc';
+    ctx.font = 'bold 9px Fredoka, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('▲ SHIFT HOP', (ledge.x1 + ledge.x2) * 0.5, (ledge.y1 + ledge.y2) * 0.5 - ledgeLift + 3);
+  }
+
+  // Sloped access ramps connecting plain to plateau
+  for (const ramp of ramps) {
+    drawCliffRamp(ctx, ramp);
+  }
+  ctx.restore();
 }
 
 function drawLunarCratersAndPad(ctx) {
@@ -1224,108 +1980,52 @@ function drawLunarCratersAndPad(ctx) {
     ctx.fill();
   }
 
+  const cliffs = state.lunarCliffs || { plateaus: [], basins: [], ramps: [] };
+  for (const b of cliffs.basins || []) {
+    const basinRamps = (cliffs.ramps || []).filter(r => r.cliffId === b.id);
+    const basinCraters = state.lunarCraters.filter(cr => isPointInRoundedRect(cr.x, cr.y, b));
+    drawLowCliffBasin(ctx, b, basinRamps, basinCraters, minWorldY);
+  }
+
   for (const cr of state.lunarCraters) {
     if (cr.y + cr.ry + 16 < minWorldY) continue;
-    if (cr.isTarget) {
-      // Soft regolith ejecta blanket around Point B crater
-      ctx.fillStyle = 'rgba(148, 163, 184, 0.13)';
-      ctx.beginPath();
-      ctx.ellipse(cr.x, cr.y, cr.rx + 16, cr.ry + 8, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Raised outer crater rim slope
-      ctx.fillStyle = '#334155';
-      ctx.strokeStyle = 'rgba(203, 213, 225, 0.35)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.ellipse(cr.x, cr.y, cr.rx + 6, cr.ry + 3, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-
-      // Deep shaded crater depression
-      const basinGrad = ctx.createLinearGradient(cr.x, cr.y - cr.ry, cr.x, cr.y + cr.ry);
-      basinGrad.addColorStop(0, '#0b1120');
-      basinGrad.addColorStop(0.58, '#172033');
-      basinGrad.addColorStop(1, '#263246');
-      ctx.fillStyle = basinGrad;
-      ctx.beginPath();
-      ctx.ellipse(cr.x, cr.y + 1, cr.rx - 4, cr.ry - 3, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Inner geological terraced ledge & subtle amber survey marker
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([7, 5]);
-      ctx.beginPath();
-      ctx.ellipse(cr.x, cr.y + 2, cr.rx * 0.72, cr.ry * 0.66, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Shadowed northern cliff overhang arc
-      ctx.strokeStyle = 'rgba(2, 6, 23, 0.78)';
-      ctx.lineWidth = 3.5;
-      ctx.beginPath();
-      ctx.ellipse(cr.x, cr.y + 2, cr.rx - 5, cr.ry - 4, 0, Math.PI * 1.08, Math.PI * 1.92);
-      ctx.stroke();
-
-      ctx.fillStyle = '#fde047';
-      ctx.font = 'bold 12px Fredoka, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('POINT B: TARGET CRATER', cr.x, cr.y + cr.ry + 20);
-      continue;
-    }
-
-    // Outer raised rim highlight + sunken basin
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.16)';
-    ctx.beginPath();
-    ctx.ellipse(cr.x, cr.y, cr.rx + 7, cr.ry + 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = '#273246';
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(cr.x, cr.y, cr.rx, cr.ry, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
-
-    // Interior crater wall shading (sunlit far rim, shadowed near wall)
-    ctx.strokeStyle = 'rgba(15, 23, 42, 0.65)';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(cr.x, cr.y + 4, cr.rx * 0.85, cr.ry * 0.78, 0, Math.PI, Math.PI * 2);
-    ctx.stroke();
+    const elev = getSurfaceElevation(cr.x, cr.y);
+    if (Math.abs(elev) >= 0.35) continue;
+    drawSingleCrater(ctx, cr, 0);
   }
 
   // Point A Landing Pad
   const px = state.lander.padX, py = state.lander.padY;
+  const padElevOff = getSurfaceElevation(px, py) * ELEV_LIFT_PX;
+  const padVisualY = py - padElevOff;
   ctx.fillStyle = '#1e293b';
   ctx.strokeStyle = '#38bdf8';
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.ellipse(px, py, 96, 42, 0, 0, Math.PI * 2);
+  ctx.ellipse(px, padVisualY, 96, 42, 0, 0, Math.PI * 2);
   ctx.fill(); ctx.stroke();
 
   ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
   ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.ellipse(px, py, 70, 30, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(px, padVisualY, 70, 30, 0, 0, Math.PI * 2); ctx.stroke();
 
   const beaconCol = Math.floor(performance.now() / 250) % 2 === 0 ? '#4ade80' : '#38bdf8';
   ctx.fillStyle = beaconCol;
   ctx.beginPath();
-  ctx.arc(px - 86, py, 5.5, 0, Math.PI * 2);
-  ctx.arc(px + 86, py, 5.5, 0, Math.PI * 2);
-  ctx.arc(px, py - 38, 5.5, 0, Math.PI * 2);
-  ctx.arc(px, py + 38, 5.5, 0, Math.PI * 2);
+  ctx.arc(px - 86, padVisualY, 5.5, 0, Math.PI * 2);
+  ctx.arc(px + 86, padVisualY, 5.5, 0, Math.PI * 2);
+  ctx.arc(px, padVisualY - 38, 5.5, 0, Math.PI * 2);
+  ctx.arc(px, padVisualY + 38, 5.5, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = '#e0f2fe';
   ctx.font = 'bold 12px Fredoka, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('POINT A: LANDING BASE', px, py + 58);
+  ctx.fillText('POINT A: LANDING BASE', px, padVisualY + 58);
   if (state.lander?.targetSiteName) {
     ctx.fillStyle = '#38bdf8';
     ctx.font = 'bold 10.5px Fredoka, sans-serif';
-    ctx.fillText(state.lander.targetSiteName.toUpperCase(), px, py + 72);
+    ctx.fillText(state.lander.targetSiteName.toUpperCase(), px, padVisualY + 72);
   }
   ctx.restore();
 }
@@ -1337,6 +2037,44 @@ function drawLunarRadarMap(ctx) {
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.roundRect(mmX, mmY, mmW, mmH, 10); ctx.fill(); ctx.stroke();
   const sx = mmW / LUNAR_W, sy = mmH / LUNAR_H;
+
+  // High Cliff Plateau & Low Cliff Basin contour outlines on Lunar Radar
+  const cliffs = state.lunarCliffs || { plateaus: [], basins: [], ramps: [] };
+  for (const p of cliffs.plateaus || []) {
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.22)';
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(mmX + p.x1 * sx, mmY + p.y1 * sy, (p.x2 - p.x1) * sx, (p.y2 - p.y1) * sy, Math.max(2, p.r * sx));
+    ctx.fill();
+    ctx.stroke();
+  }
+  for (const b of cliffs.basins || []) {
+    ctx.fillStyle = 'rgba(49, 46, 129, 0.65)';
+    ctx.strokeStyle = '#818cf8';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(mmX + b.x1 * sx, mmY + b.y1 * sy, (b.x2 - b.x1) * sx, (b.y2 - b.y1) * sy, Math.max(2, b.r * sx));
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.strokeStyle = '#22d3ee';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([2, 2]);
+  for (const r of cliffs.ramps || []) {
+    const mx = ((r.x1 + r.x2) * 0.5) * sx;
+    const my = ((r.y1 + r.y2) * 0.5) * sy;
+    ctx.beginPath();
+    if (r.dir === 'x') {
+      ctx.moveTo(mmX + r.x1 * sx, mmY + my);
+      ctx.lineTo(mmX + r.x2 * sx, mmY + my);
+    } else {
+      ctx.moveTo(mmX + mx, mmY + r.y1 * sy);
+      ctx.lineTo(mmX + mx, mmY + r.y2 * sy);
+    }
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
 
   // Camera viewport box
   ctx.strokeStyle = 'rgba(226, 232, 240, 0.35)';
@@ -1486,6 +2224,15 @@ function draw25DLander(ctx, x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampO
   ctx.restore();
 }
 
+function drawAllHighCliffPlateaus(ctx) {
+  const cliffs = state.lunarCliffs || { plateaus: [], ramps: [] };
+  for (const p of cliffs.plateaus || []) {
+    const pRamps = (cliffs.ramps || []).filter(r => r.cliffId === p.id);
+    const pCraters = state.lunarCraters.filter(cr => isPointInRoundedRect(cr.x, cr.y, p));
+    drawHighCliffPlateau(ctx, p, pRamps, pCraters);
+  }
+}
+
 export function drawStage3A(ctx) {
   const l = state.lander;
   draw25DLunarWorld(ctx);
@@ -1494,47 +2241,96 @@ export function drawStage3A(ctx) {
   ctx.translate(-state.lunarCam.x, -state.lunarCam.y);
   drawLunarCratersAndPad(ctx);
 
+  const terrainUnder = getTerrainInfo(l.x, l.y);
+  const surfaceZ = l.landed && l.surfaceZ != null ? l.surfaceZ : terrainUnder.elev * ELEV_LIFT_PX;
+  const altAboveGround = Math.max(0, l.z - surfaceZ);
   const padDist = Math.hypot(l.x - l.padX, (l.y - l.padY) * 1.4);
   const aligned = padDist <= (l.padRadius || 105);
 
-  // Ground touchdown predictor ring directly underneath lander footpads
-  ctx.strokeStyle = l.landed
-    ? 'rgba(74, 222, 128, 0.72)'
-    : aligned
-      ? 'rgba(74, 222, 128, 0.65)'
-      : 'rgba(168, 85, 247, 0.55)';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.ellipse(l.x, l.y, 58, 26, 0, 0, Math.PI * 2);
-  ctx.stroke();
+  const groundY = l.y - surfaceZ;
+  const padElevOff = getSurfaceElevation(l.padX, l.padY) * ELEV_LIFT_PX;
+  const padVisualY = l.padY - padElevOff;
 
-  const beamGrad = ctx.createLinearGradient(0, l.padY - 260, 0, l.padY);
-  beamGrad.addColorStop(0, 'rgba(56, 189, 248, 0.02)');
-  beamGrad.addColorStop(1, aligned ? 'rgba(74, 222, 128, 0.25)' : 'rgba(251, 191, 36, 0.15)');
-  ctx.fillStyle = beamGrad;
-  ctx.beginPath();
-  ctx.moveTo(l.padX - 140, l.padY - 260);
-  ctx.lineTo(l.padX + 140, l.padY - 260);
-  ctx.lineTo(l.padX + 92, l.padY);
-  ctx.lineTo(l.padX - 92, l.padY);
-  ctx.closePath();
-  ctx.fill();
+  const drawLanderStack3A = () => {
+    // Ground touchdown predictor ring directly underneath lander footpads on current terrain surface
+    ctx.strokeStyle = l.landed
+      ? 'rgba(74, 222, 128, 0.72)'
+      : (terrainUnder.ramp || terrainUnder.ledge)
+        ? 'rgba(251, 191, 36, 0.85)'
+        : aligned
+          ? 'rgba(74, 222, 128, 0.65)'
+          : 'rgba(168, 85, 247, 0.55)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.ellipse(l.x, groundY, 58, 26, 0, 0, Math.PI * 2);
+    ctx.stroke();
 
-  draw25DLander(ctx, l.x, l.y, l.z, l.tiltX, l.legAnim, l.thrusting, l.hoverTrim || l.p2AssistActive, false, false, l.legCompress || 0);
+    const beamGrad = ctx.createLinearGradient(0, padVisualY - 260, 0, padVisualY);
+    beamGrad.addColorStop(0, 'rgba(56, 189, 248, 0.02)');
+    beamGrad.addColorStop(1, aligned ? 'rgba(74, 222, 128, 0.25)' : 'rgba(251, 191, 36, 0.15)');
+    ctx.fillStyle = beamGrad;
+    ctx.beginPath();
+    ctx.moveTo(l.padX - 140, padVisualY - 260);
+    ctx.lineTo(l.padX + 140, padVisualY - 260);
+    ctx.lineTo(l.padX + 92, padVisualY);
+    ctx.lineTo(l.padX - 92, padVisualY);
+    ctx.closePath();
+    ctx.fill();
+
+    draw25DLander(ctx, l.x, groundY, altAboveGround, l.tiltX, l.legAnim, l.thrusting, l.hoverTrim || l.p2AssistActive, false, false, l.legCompress || 0);
+  };
+
+  if (!l.landed) {
+    drawAllHighCliffPlateaus(ctx);
+    drawLanderStack3A();
+  } else {
+    const cliffs = state.lunarCliffs || { plateaus: [], ramps: [] };
+    const landerElev = getSurfaceElevation(l.x, l.y);
+    const landerOnHighRamp = Boolean(terrainUnder.ramp && terrainUnder.cliff && terrainUnder.cliff.elev > 0);
+    const landerSortY = (landerElev >= 0.35 || landerOnHighRamp)
+      ? ((terrainUnder.cliff?.y2 || l.y) + 0.001 + l.y * 0.000001)
+      : l.y;
+    const items3A = [
+      ...(cliffs.plateaus || []).map(p => ({ kind: 'cliff', sortY: p.y2, cliff: p })),
+      { kind: 'lander', sortY: landerSortY }
+    ].sort((a, b) => a.sortY - b.sortY);
+    for (const it of items3A) {
+      if (it.kind === 'cliff') {
+        const p = it.cliff;
+        const pRamps = (cliffs.ramps || []).filter(r => r.cliffId === p.id);
+        const pCraters = state.lunarCraters.filter(cr => isPointInRoundedRect(cr.x, cr.y, p));
+        drawHighCliffPlateau(ctx, p, pRamps, pCraters);
+      } else {
+        drawLanderStack3A();
+      }
+    }
+  }
 
   const vSpdNum = Math.abs(l.vz * 0.24);
   const vSpd = vSpdNum.toFixed(1);
   const footBottom = 11 + l.legAnim * 18;
-  const ly = l.y - l.z - footBottom;
+  const ly = groundY - altAboveGround - footBottom;
   if (!l.landed && !l.crashed) {
+    const hazardSlope = Boolean(terrainUnder.ramp || terrainUnder.ledge);
+    const hazardCliff = Math.abs(terrainUnder.elev) >= 0.35;
+    const cardH = (hazardSlope || hazardCliff) ? 60 : 44;
     ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-    ctx.strokeStyle = vSpdNum <= 4.2 ? '#4ade80' : vSpdNum <= 7.5 ? '#fbbf24' : '#ef4444';
+    ctx.strokeStyle = hazardSlope ? '#fbbf24' : vSpdNum <= 4.2 ? '#4ade80' : vSpdNum <= 7.5 ? '#fbbf24' : '#ef4444';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.roundRect(l.x + 56, ly - 74, 130, 44, 8); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(l.x + 56, ly - 74, 144, cardH, 8); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 11px JetBrains Mono, monospace'; ctx.textAlign = 'left';
     ctx.fillText(`V:${vSpd} m/s`, l.x + 64, ly - 56);
     ctx.fillStyle = (l.hoverTrim || l.p2AssistActive) ? '#38bdf8' : '#94a3b8';
-    ctx.fillText(l.p2AssistActive ? 'P2 TRIMMING' : `ALT:${Math.round(l.z * 0.45)}m`, l.x + 64, ly - 39);
+    ctx.fillText(l.p2AssistActive ? 'P2 TRIMMING' : `ALT:${Math.round(altAboveGround * 0.45)}m`, l.x + 64, ly - 39);
+    if (hazardSlope) {
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 10px JetBrains Mono, monospace';
+      ctx.fillText('⚠ CLIFF SLOPE!', l.x + 64, ly - 22);
+    } else if (hazardCliff) {
+      ctx.fillStyle = terrainUnder.elev > 0 ? '#fde047' : '#818cf8';
+      ctx.font = 'bold 10px JetBrains Mono, monospace';
+      ctx.fillText(terrainUnder.elev > 0 ? '▲ HIGH CLIFF' : '▼ LOW BASIN', l.x + 64, ly - 22);
+    }
   }
 
   drawLunarParticles(ctx);
@@ -1597,13 +2393,29 @@ export function drawStage3A(ctx) {
 }
 
 function draw25DSingleRover(ctx, rv, crewA, crewB) {
+  const elev = rv.groundElev ?? getSurfaceElevation(rv.x, rv.y);
+  const elevOffset = elev * ELEV_LIFT_PX;
+  const groundY = rv.y - elevOffset;
+  const shadowScale = Math.max(0.45, 1 - rv.z / 95);
+
   ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
   ctx.beginPath();
-  ctx.ellipse(rv.x, rv.y + 4, 28, 12, 0, 0, Math.PI * 2);
+  ctx.ellipse(rv.x, groundY + 4, 28 * shadowScale, 12 * shadowScale, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  if (rv.z > 6) {
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.48)';
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(rv.x, groundY + 2);
+    ctx.lineTo(rv.x, groundY - rv.z);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   ctx.save();
-  ctx.translate(rv.x, rv.y - 10 - rv.z);
+  ctx.translate(rv.x, groundY - 10 - rv.z);
 
   const dirAngle = Math.atan2(rv.facingY * 0.6, rv.facingX);
   ctx.save();
@@ -1688,7 +2500,192 @@ function draw25DSingleRover(ctx, rv, crewA, crewB) {
   ctx.font = 'bold 9.5px Fredoka, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText(rv.id, 0, -37);
+
+  const spd = Math.hypot(rv.vx || 0, rv.vy || 0);
+  if (elev >= 0.85 && spd < 8 && rv.battery < rv.maxBattery - 0.5) {
+    ctx.fillStyle = '#fde047';
+    ctx.font = 'bold 8.5px JetBrains Mono, monospace';
+    ctx.fillText('☀️ +4.5Wh/s', 0, -49);
+  } else if (elev <= -0.85 && spd > 12) {
+    ctx.fillStyle = '#a5b4fc';
+    ctx.font = 'bold 8.5px JetBrains Mono, monospace';
+    ctx.fillText('🌑 1.4x DRAIN', 0, -49);
+  }
   ctx.restore();
+}
+
+function drawStage3BDepthItem(ctx, item, targetCrater) {
+  const r1Elev = state.rover.groundElev ?? getSurfaceElevation(state.rover.x, state.rover.y);
+
+  if (item.kind === 'highCliff') {
+    const p = item.cliff;
+    const cliffs = state.lunarCliffs || { ramps: [] };
+    const pRamps = (cliffs.ramps || []).filter(r => r.cliffId === p.id);
+    const pCraters = state.lunarCraters.filter(cr => isPointInRoundedRect(cr.x, cr.y, p));
+    drawHighCliffPlateau(ctx, p, pRamps, pCraters);
+  } else if (item.kind === 'rocket') {
+    const padOff = getSurfaceElevation(state.lander.padX, state.lander.padY) * ELEV_LIFT_PX;
+    draw25DLander(ctx, state.lander.padX, state.lander.padY - padOff, 0, 0, 1, false, false, true, false);
+  } else if (item.kind === 'rover1') {
+    draw25DSingleRover(ctx, state.rover, CREW_ROSTER[0], CREW_ROSTER[2]);
+  } else if (item.kind === 'rover2') {
+    draw25DSingleRover(ctx, state.rover2, CREW_ROSTER[1], CREW_ROSTER[3]);
+  } else if (item.kind === 'boulder') {
+    const b = item.obj;
+    const by = b.y - getSurfaceElevation(b.x, b.y) * ELEV_LIFT_PX;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
+    ctx.beginPath(); ctx.ellipse(b.x + 5, by + 1, b.r * 1.18, b.r * 0.46, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#475569'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(b.x - b.r, by + 1);
+    ctx.lineTo(b.x - b.r * 0.82, by - b.r * 0.58);
+    ctx.lineTo(b.x - b.r * 0.15, by - b.r * 0.95);
+    ctx.lineTo(b.x + b.r * 0.65, by - b.r * 0.65);
+    ctx.lineTo(b.x + b.r, by + 1);
+    ctx.quadraticCurveTo(b.x, by + 5, b.x - b.r, by + 1);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(203, 213, 225, 0.25)';
+    ctx.beginPath();
+    ctx.moveTo(b.x - b.r * 0.78, by - b.r * 0.48);
+    ctx.lineTo(b.x - b.r * 0.15, by - b.r * 0.88);
+    ctx.lineTo(b.x + b.r * 0.15, by - b.r * 0.35);
+    ctx.lineTo(b.x - b.r * 0.45, by - b.r * 0.12);
+    ctx.closePath();
+    ctx.fill();
+  } else if (item.kind === 'science') {
+    const sn = item.obj;
+    const snElev = getSurfaceElevation(sn.x, sn.y);
+    const sy = sn.y - snElev * ELEV_LIFT_PX;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.48)';
+    ctx.beginPath(); ctx.ellipse(sn.x + 3, sy + 2, 20, 8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sn.x - 14, sy + 2);
+    ctx.lineTo(sn.x - 9, sy - 14);
+    ctx.lineTo(sn.x - 1, sy - 25);
+    ctx.lineTo(sn.x + 10, sy - 12);
+    ctx.lineTo(sn.x + 15, sy + 2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = sn.scanned ? '#64748b' : '#38bdf8';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(sn.x - 6, sy - 3);
+    ctx.lineTo(sn.x - 1, sy - 19);
+    ctx.lineTo(sn.x + 5, sy - 5);
+    ctx.stroke();
+    if (!sn.scanned && Math.hypot(state.rover.x - sn.x, state.rover.y - sn.y) < 75) {
+      ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
+      const promptTxt = Math.abs(r1Elev - snElev) <= 0.45
+        ? `[SPACE] Scan ${sn.name} (+${sn.pts}⭐)`
+        : 'Use Ramp or [SHIFT] Hop to reach';
+      ctx.fillText(promptTxt, sn.x, sy - 34);
+    }
+  } else if (item.kind === 'eva') {
+    const ev = item.obj;
+    const evElev = getSurfaceElevation(ev.x, ev.y);
+    const ey = ev.y - evElev * ELEV_LIFT_PX;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
+    ctx.beginPath(); ctx.ellipse(ev.x + 2, ey + 2, 18, 7.5, 0, 0, Math.PI * 2); ctx.fill();
+    if (ev.kind === 'SEISMIC') {
+      if (ev.done) {
+        const pulse = ((performance.now() * 0.04) % 45);
+        ctx.strokeStyle = `rgba(74, 222, 128, ${1 - pulse / 45})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(ev.x, ey, 14 + pulse, (14 + pulse) * 0.48, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(ev.x, ey - 20); ctx.lineTo(ev.x - 12, ey + 1);
+      ctx.moveTo(ev.x, ey - 20); ctx.lineTo(ev.x + 12, ey + 1);
+      ctx.moveTo(ev.x, ey - 20); ctx.lineTo(ev.x, ey + 3);
+      ctx.stroke();
+      ctx.fillStyle = ev.done ? '#4ade80' : '#f59e0b'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(ev.x - 10, ey - 28, 20, 12, 4); ctx.fill(); ctx.stroke();
+    } else {
+      if (ev.done) {
+        const beamGrad = ctx.createLinearGradient(ev.x + 2, ey - 24, ev.x + 95, ey - 165);
+        beamGrad.addColorStop(0, 'rgba(74, 222, 128, 0.65)');
+        beamGrad.addColorStop(1, 'rgba(74, 222, 128, 0)');
+        ctx.strokeStyle = beamGrad;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(ev.x + 2, ey - 24); ctx.lineTo(ev.x + 95, ey - 165); ctx.stroke();
+      }
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(ev.x, ey - 14); ctx.lineTo(ev.x - 10, ey + 1);
+      ctx.moveTo(ev.x, ey - 14); ctx.lineTo(ev.x + 10, ey + 1);
+      ctx.stroke();
+      ctx.fillStyle = '#334155'; ctx.fillRect(ev.x - 6, ey - 16, 12, 10);
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(ev.x, ey - 16); ctx.lineTo(ev.x, ey - 22); ctx.stroke();
+      ctx.fillStyle = ev.done ? '#4ade80' : '#a78bfa'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(ev.x, ey - 24, 13, 0.12 * Math.PI, 0.88 * Math.PI); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(ev.x, ey - 20); ctx.lineTo(ev.x + 3, ey - 29); ctx.stroke();
+    }
+    if (!ev.done && Math.hypot(state.rover.x - ev.x, state.rover.y - ev.y) < 76) {
+      ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
+      const msg = Math.abs(r1Elev - evElev) <= 0.45
+        ? (ev.progress > 0 ? `${ev.name}: ${Math.round(ev.progress * 100)}%` : `[HOLD SPACE] Deploy ${ev.name} (+${ev.pts}⭐)`)
+        : 'Use Ramp or [SHIFT] Hop to reach';
+      ctx.fillText(msg, ev.x, ey - 42);
+    }
+  } else if (item.kind === 'targetDrill' && targetCrater && !state.rover.hasSample && !state.sampleCollected) {
+    const tcElev = getSurfaceElevation(targetCrater.x, targetCrater.y);
+    const tcy = targetCrater.y - tcElev * ELEV_LIFT_PX;
+    const tPulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.005);
+    ctx.save();
+    ctx.translate(targetCrater.x, tcy);
+
+    const boreGlow = ctx.createRadialGradient(0, 0, 2, 0, 0, 24);
+    boreGlow.addColorStop(0, `rgba(74, 222, 128, ${0.42 * tPulse})`);
+    boreGlow.addColorStop(1, 'rgba(74, 222, 128, 0)');
+    ctx.fillStyle = boreGlow;
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 24, 11, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(-12, 3); ctx.lineTo(-4, -14);
+    ctx.moveTo(12, 3); ctx.lineTo(4, -14);
+    ctx.moveTo(0, 5); ctx.lineTo(0, -14);
+    ctx.stroke();
+
+    ctx.fillStyle = '#eab308';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.roundRect(-8, -22, 16, 11, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(0, -11); ctx.lineTo(0, 2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#4ade80';
+    ctx.beginPath();
+    ctx.arc(0, -26, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    if (Math.hypot(state.rover.x - targetCrater.x, state.rover.y - targetCrater.y) < 92) {
+      ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka, sans-serif'; ctx.textAlign = 'center';
+      const msg = Math.abs(r1Elev - tcElev) <= 0.45
+        ? (state.rover.drilling ? `DRILLING SAMPLE... ${Math.round(state.rover.drillProgress * 100)}%` : '[HOLD SPACE] DRILL CORE SAMPLE')
+        : 'Enter Basin Ramp or Drop In to Drill';
+      ctx.fillText(msg, targetCrater.x, tcy - 38);
+      if (state.rover.drilling) {
+        ctx.fillStyle = '#0f172a'; ctx.fillRect(targetCrater.x - 45, tcy - 56, 90, 9);
+        ctx.fillStyle = '#4ade80'; ctx.fillRect(targetCrater.x - 43, tcy - 54, 86 * state.rover.drillProgress, 5);
+      }
+    }
+  }
 }
 
 export function drawStage3B(ctx) {
@@ -1717,6 +2714,53 @@ export function drawStage3B(ctx) {
   const reqRovers = getRequiredStage3BRovers();
   const boardedCount = reqRovers.filter(r => r.boarded).length;
 
+  const rawEntities = [
+    { kind: 'rocket', x: state.lander.padX, y: state.lander.padY },
+    ...(!state.rover.boarded ? [{ kind: 'rover1', x: state.rover.x, y: state.rover.y, rv: state.rover }] : []),
+    ...(state.coopMode !== 'SOLO' && !state.rover2.boarded ? [{ kind: 'rover2', x: state.rover2.x, y: state.rover2.y, rv: state.rover2 }] : []),
+    ...state.lunarBoulders.map(b => ({ kind: 'boulder', x: b.x, y: b.y, obj: b })),
+    ...state.scienceNodes.map(s => ({ kind: 'science', x: s.x, y: s.y, obj: s })),
+    ...state.evaTasks.map(t => ({ kind: 'eva', x: t.x, y: t.y, obj: t })),
+    ...(targetCrater && !state.rover.hasSample && !state.sampleCollected
+      ? [{ kind: 'targetDrill', x: targetCrater.x, y: targetCrater.y, obj: targetCrater }]
+      : [])
+  ];
+
+  // Pass 1: Entities inside Low Cliff Basins (elev < -0.35), Y-sorted
+  const basinItems = [];
+  const mainItems = [];
+  const cliffs = state.lunarCliffs || { plateaus: [] };
+
+  for (const ent of rawEntities) {
+    if (ent.kind !== 'rocket' && ent.y < minWorldY) continue;
+    const info = getTerrainInfo(ent.x, ent.y);
+    const elev = ent.rv ? (ent.rv.groundElev ?? info.elev) : info.elev;
+    const onHighRamp = Boolean(info.ramp && info.cliff && info.cliff.elev > 0);
+    if (elev < -0.35) {
+      basinItems.push({ ...ent, sortY: ent.y });
+    } else if (elev >= 0.35 || onHighRamp) {
+      const parentPlateau = info.cliff || (cliffs.plateaus || [])[0];
+      const baseY = parentPlateau ? parentPlateau.y2 : ent.y;
+      mainItems.push({ ...ent, sortY: baseY + 0.001 + ent.y * 0.000001 });
+    } else {
+      mainItems.push({ ...ent, sortY: ent.y });
+    }
+  }
+
+  for (const p of cliffs.plateaus || []) {
+    mainItems.push({ kind: 'highCliff', sortY: p.y2, cliff: p });
+  }
+
+  basinItems.sort((a, b) => a.sortY - b.sortY);
+  mainItems.sort((a, b) => a.sortY - b.sortY);
+
+  for (const item of basinItems) {
+    drawStage3BDepthItem(ctx, item, targetCrater);
+  }
+  for (const item of mainItems) {
+    drawStage3BDepthItem(ctx, item, targetCrater);
+  }
+
   // Co-Op Power Tether between LTV-1 and LTV-2 when close and both deployed
   const tethered =
     state.coopMode !== 'SOLO' &&
@@ -1724,193 +2768,22 @@ export function drawStage3B(ctx) {
     !state.rover2.boarded &&
     Math.hypot(state.rover.x - state.rover2.x, state.rover.y - state.rover2.y) < 130;
   if (tethered) {
+    const r1y = state.rover.y - (state.rover.groundElev || 0) * ELEV_LIFT_PX - state.rover.z - 16;
+    const r2y = state.rover2.y - (state.rover2.groundElev || 0) * ELEV_LIFT_PX - state.rover2.z - 16;
     ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
     ctx.lineWidth = 3;
     ctx.setLineDash([6, 4]);
     ctx.beginPath();
-    ctx.moveTo(state.rover.x, state.rover.y - 16);
-    ctx.lineTo(state.rover2.x, state.rover2.y - 16);
+    ctx.moveTo(state.rover.x, r1y);
+    ctx.lineTo(state.rover2.x, r2y);
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 10px Fredoka, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('⚡ CO-OP 2x TETHER', (state.rover.x + state.rover2.x) / 2, (state.rover.y + state.rover2.y) / 2 - 26);
+    ctx.fillText('⚡ CO-OP 2x TETHER', (state.rover.x + state.rover2.x) / 2, (r1y + r2y) / 2 - 12);
   }
 
-  const depthList = [
-    { kind: 'rocket', y: state.lander.padY },
-    ...(!state.rover.boarded ? [{ kind: 'rover1', y: state.rover.y }] : []),
-    ...(state.coopMode !== 'SOLO' && !state.rover2.boarded ? [{ kind: 'rover2', y: state.rover2.y }] : []),
-    ...state.lunarBoulders.map(b => ({ kind: 'boulder', y: b.y, obj: b })),
-    ...state.scienceNodes.map(s => ({ kind: 'science', y: s.y, obj: s })),
-    ...state.evaTasks.map(t => ({ kind: 'eva', y: t.y, obj: t }))
-  ].sort((a, b) => a.y - b.y);
-
-  for (const item of depthList) {
-    if (item.kind !== 'rocket' && item.y < minWorldY) continue;
-    if (item.kind === 'rocket') {
-      draw25DLander(ctx, state.lander.padX, state.lander.padY, 0, 0, 1, false, false, true, false);
-    } else if (item.kind === 'rover1') {
-      draw25DSingleRover(ctx, state.rover, CREW_ROSTER[0], CREW_ROSTER[2]);
-    } else if (item.kind === 'rover2') {
-      draw25DSingleRover(ctx, state.rover2, CREW_ROSTER[1], CREW_ROSTER[3]);
-    } else if (item.kind === 'boulder') {
-      const b = item.obj;
-      // Grounded shadow + seated faceted boulder with zero air gap
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
-      ctx.beginPath(); ctx.ellipse(b.x + 5, b.y + 1, b.r * 1.18, b.r * 0.46, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#475569'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(b.x - b.r, b.y + 1);
-      ctx.lineTo(b.x - b.r * 0.82, b.y - b.r * 0.58);
-      ctx.lineTo(b.x - b.r * 0.15, b.y - b.r * 0.95);
-      ctx.lineTo(b.x + b.r * 0.65, b.y - b.r * 0.65);
-      ctx.lineTo(b.x + b.r, b.y + 1);
-      ctx.quadraticCurveTo(b.x, b.y + 5, b.x - b.r, b.y + 1);
-      ctx.closePath();
-      ctx.fill(); ctx.stroke();
-      // Sunlit top-left facet highlight
-      ctx.fillStyle = 'rgba(203, 213, 225, 0.25)';
-      ctx.beginPath();
-      ctx.moveTo(b.x - b.r * 0.78, b.y - b.r * 0.48);
-      ctx.lineTo(b.x - b.r * 0.15, b.y - b.r * 0.88);
-      ctx.lineTo(b.x + b.r * 0.15, b.y - b.r * 0.35);
-      ctx.lineTo(b.x - b.r * 0.45, b.y - b.r * 0.12);
-      ctx.closePath();
-      ctx.fill();
-    } else if (item.kind === 'science') {
-      const sn = item.obj;
-      // Grounded contact shadow + seated mineral rock formation
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.48)';
-      ctx.beginPath(); ctx.ellipse(sn.x + 3, sn.y + 2, 20, 8, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(sn.x - 14, sn.y + 2);
-      ctx.lineTo(sn.x - 9, sn.y - 14);
-      ctx.lineTo(sn.x - 1, sn.y - 25);
-      ctx.lineTo(sn.x + 10, sn.y - 12);
-      ctx.lineTo(sn.x + 15, sn.y + 2);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-      // Glowing mineral/ice seam inlaid onto rock
-      ctx.strokeStyle = sn.scanned ? '#64748b' : '#38bdf8';
-      ctx.lineWidth = 2.6;
-      ctx.beginPath();
-      ctx.moveTo(sn.x - 6, sn.y - 3);
-      ctx.lineTo(sn.x - 1, sn.y - 19);
-      ctx.lineTo(sn.x + 5, sn.y - 5);
-      ctx.stroke();
-      if (!sn.scanned && Math.hypot(state.rover.x - sn.x, state.rover.y - sn.y) < 75) {
-        ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(`[SPACE] Scan ${sn.name} (+${sn.pts}⭐)`, sn.x, sn.y - 34);
-      }
-    } else if (item.kind === 'eva') {
-      const ev = item.obj;
-      // Ground contact pad & shadow under EVA instrument
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
-      ctx.beginPath(); ctx.ellipse(ev.x + 2, ev.y + 2, 18, 7.5, 0, 0, Math.PI * 2); ctx.fill();
-      if (ev.kind === 'SEISMIC') {
-        if (ev.done) {
-          const pulse = ((performance.now() * 0.04) % 45);
-          ctx.strokeStyle = `rgba(74, 222, 128, ${1 - pulse / 45})`;
-          ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.ellipse(ev.x, ev.y, 14 + pulse, (14 + pulse) * 0.48, 0, 0, Math.PI * 2); ctx.stroke();
-        }
-        ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(ev.x, ev.y - 20); ctx.lineTo(ev.x - 12, ev.y + 1);
-        ctx.moveTo(ev.x, ev.y - 20); ctx.lineTo(ev.x + 12, ev.y + 1);
-        ctx.moveTo(ev.x, ev.y - 20); ctx.lineTo(ev.x, ev.y + 3);
-        ctx.stroke();
-        ctx.fillStyle = ev.done ? '#4ade80' : '#f59e0b'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.roundRect(ev.x - 10, ev.y - 28, 20, 12, 4); ctx.fill(); ctx.stroke();
-      } else {
-        if (ev.done) {
-          const beamGrad = ctx.createLinearGradient(ev.x + 2, ev.y - 24, ev.x + 95, ev.y - 165);
-          beamGrad.addColorStop(0, 'rgba(74, 222, 128, 0.65)');
-          beamGrad.addColorStop(1, 'rgba(74, 222, 128, 0)');
-          ctx.strokeStyle = beamGrad;
-          ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.moveTo(ev.x + 2, ev.y - 24); ctx.lineTo(ev.x + 95, ev.y - 165); ctx.stroke();
-        }
-        // Connected tripod base + pedestal mast + dish reflector
-        ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(ev.x, ev.y - 14); ctx.lineTo(ev.x - 10, ev.y + 1);
-        ctx.moveTo(ev.x, ev.y - 14); ctx.lineTo(ev.x + 10, ev.y + 1);
-        ctx.stroke();
-        ctx.fillStyle = '#334155'; ctx.fillRect(ev.x - 6, ev.y - 16, 12, 10);
-        ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.moveTo(ev.x, ev.y - 16); ctx.lineTo(ev.x, ev.y - 22); ctx.stroke();
-        ctx.fillStyle = ev.done ? '#4ade80' : '#a78bfa'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(ev.x, ev.y - 24, 13, 0.12 * Math.PI, 0.88 * Math.PI); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1.8;
-        ctx.beginPath(); ctx.moveTo(ev.x, ev.y - 20); ctx.lineTo(ev.x + 3, ev.y - 29); ctx.stroke();
-      }
-      if (!ev.done && Math.hypot(state.rover.x - ev.x, state.rover.y - ev.y) < 76) {
-        ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(ev.progress > 0 ? `${ev.name}: ${Math.round(ev.progress * 100)}%` : `[HOLD SPACE] Deploy ${ev.name} (+${ev.pts}⭐)`, ev.x, ev.y - 42);
-      }
-    }
-  }
-
-  if (targetCrater && !state.rover.hasSample && !state.sampleCollected) {
-    const tPulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.005);
-    ctx.save();
-    ctx.translate(targetCrater.x, targetCrater.y);
-
-    // Core-drill laser glow on crater floor
-    const boreGlow = ctx.createRadialGradient(0, 0, 2, 0, 0, 24);
-    boreGlow.addColorStop(0, `rgba(74, 222, 128, ${0.42 * tPulse})`);
-    boreGlow.addColorStop(1, 'rgba(74, 222, 128, 0)');
-    ctx.fillStyle = boreGlow;
-    ctx.beginPath();
-    ctx.ellipse(0, 2, 24, 11, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Grounded tripod struts inside the crater basin
-    ctx.strokeStyle = '#94a3b8';
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.moveTo(-12, 3);
-    ctx.lineTo(-4, -14);
-    ctx.moveTo(12, 3);
-    ctx.lineTo(4, -14);
-    ctx.moveTo(0, 5);
-    ctx.lineTo(0, -14);
-    ctx.stroke();
-
-    // Brushed metallic + gold core-drill head & glowing laser rod
-    ctx.fillStyle = '#eab308';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.roundRect(-8, -22, 16, 11, 3);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.strokeStyle = '#4ade80';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(0, -11);
-    ctx.lineTo(0, 2);
-    ctx.stroke();
-
-    // Top telemetry beacon pulse
-    ctx.fillStyle = '#4ade80';
-    ctx.beginPath();
-    ctx.arc(0, -26, 3.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    if (Math.hypot(state.rover.x - targetCrater.x, state.rover.y - targetCrater.y) < 92) {
-      ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(state.rover.drilling ? `DRILLING SAMPLE... ${Math.round(state.rover.drillProgress * 100)}%` : '[HOLD SPACE] DRILL CORE SAMPLE', targetCrater.x, targetCrater.y - 38);
-      if (state.rover.drilling) {
-        ctx.fillStyle = '#0f172a'; ctx.fillRect(targetCrater.x - 45, targetCrater.y - 56, 90, 9);
-        ctx.fillStyle = '#4ade80'; ctx.fillRect(targetCrater.x - 43, targetCrater.y - 54, 86 * state.rover.drillProgress, 5);
-      }
-    }
-  }
-
+  const padOff = getSurfaceElevation(state.lander.padX, state.lander.padY) * ELEV_LIFT_PX;
+  const padVisualY = state.lander.padY - padOff;
   if (
     state.lander.hardLandingPenalty &&
     !state.lander.shockRepaired &&
@@ -1918,15 +2791,15 @@ export function drawStage3B(ctx) {
     Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 130
   ) {
     ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('🔧 [SPACE] REPAIR LANDING SHOCK (+28Wh BATTERY)', state.lander.padX, state.lander.padY - 150);
+    ctx.fillText('🔧 [SPACE] REPAIR LANDING SHOCK (+28Wh BATTERY)', state.lander.padX, padVisualY - 150);
   } else if (anySample) {
     ctx.fillStyle = '#4ade80'; ctx.font = 'bold 13px Fredoka, sans-serif'; ctx.textAlign = 'center';
     if (state.stage3BLaunch?.launching) {
-      ctx.fillText(`🚀 HATCH SEALED! IGNITION IN ${state.stage3BLaunch.countdown.toFixed(1)}s`, state.lander.padX, state.lander.padY - 150);
+      ctx.fillText(`🚀 HATCH SEALED! IGNITION IN ${state.stage3BLaunch.countdown.toFixed(1)}s`, state.lander.padX, padVisualY - 150);
     } else if (boardedCount < reqRovers.length) {
-      ctx.fillText(`⬇️ GATHER INSIDE ROCKET TO LAUNCH (CREW ${boardedCount}/${reqRovers.length}) ⬇️`, state.lander.padX, state.lander.padY - 150);
+      ctx.fillText(`⬇️ GATHER INSIDE ROCKET TO LAUNCH (CREW ${boardedCount}/${reqRovers.length}) ⬇️`, state.lander.padX, padVisualY - 150);
     } else {
-      ctx.fillText('⬇️ ALL CREW AT ROCKET - STOWING CORE SAMPLE! ⬇️', state.lander.padX, state.lander.padY - 150);
+      ctx.fillText('⬇️ ALL CREW AT ROCKET - STOWING CORE SAMPLE! ⬇️', state.lander.padX, padVisualY - 150);
     }
   }
 
@@ -1991,8 +2864,9 @@ export function drawStage3B(ctx) {
   }
 
   for (const wp of evaWaypoints) {
+    const wpElevOff = getSurfaceElevation(wp.x, wp.y) * ELEV_LIFT_PX;
     const sx = wp.x - state.lunarCam.x;
-    const sy = wp.y - state.lunarCam.y;
+    const sy = (wp.y - wpElevOff) - state.lunarCam.y;
     if (sx >= 65 && sx <= LOGICAL_W - 65 && sy >= 65 && sy <= LOGICAL_H - 75) continue;
 
     const cx = LOGICAL_W / 2, cy = LOGICAL_H / 2;
@@ -2036,9 +2910,9 @@ export function drawStage3B(ctx) {
 
   drawCanvasControlBar(ctx, LOGICAL_W, [
     { key: 'WASD', label: 'Drive LTV-1' },
-    { key: 'IJKL', label: 'Drive LTV-2' },
-    { key: 'SPACE', label: 'Drill / Sample' },
-    { key: 'F', label: 'Power Tether' }
+    ...(state.coopMode === 'LOCAL_2P' ? [{ key: 'IJKL', label: 'Drive LTV-2' }] : []),
+    { key: 'SHIFT', label: 'RCS Hop / Cushion' },
+    { key: 'SPACE', label: 'Drill / Scan / Board' }
   ]);
 }
 
@@ -2051,12 +2925,14 @@ export function drawStage3C(ctx) {
     ctx.save();
     ctx.translate(-state.lunarCam.x, -state.lunarCam.y);
     drawLunarCratersAndPad(ctx);
+    drawAllHighCliffPlateaus(ctx);
+    const padOff = getSurfaceElevation(state.lander.padX, state.lander.padY) * ELEV_LIFT_PX;
     // Big Gold Descent Stage remains on Point A as the Lunar Launch Table!
-    draw25DLander(ctx, state.lander.padX, state.lander.padY, 0, 0, 1, false, false, false, true);
+    draw25DLander(ctx, state.lander.padX, state.lander.padY - padOff, 0, 0, 1, false, false, false, true);
 
     // Big White Crew Ascent Stage blasting off vertically!
     ctx.save();
-    ctx.translate(state.lander.padX, ml.capsuleY - 91);
+    ctx.translate(state.lander.padX, ml.capsuleY - padOff - 91);
     ctx.rotate(ml.tilt);
 
     if (ml.thrusting) {

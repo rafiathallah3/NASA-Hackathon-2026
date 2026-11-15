@@ -6,11 +6,11 @@ export const SHIP_H = 980;
 export const LUNAR_W = 2400;
 export const LUNAR_H = 1350;
 
-export const COLS = 14;
+export const COLS = 18;
 export const ROWS = 8;
-export const TILE = 68;
+export const TILE = 56;
 export const GRID_X = (LOGICAL_W - COLS * TILE) / 2;
-export const GRID_Y = 58;
+export const GRID_Y = 160;
 
 export const CREW_ROSTER = [
   { id: 'P1', role: 'Launch',  color: '#3b82f6', visor: '#93c5fd', segment: 'Launch Segment' },
@@ -162,7 +162,7 @@ export const RECIPES = [
     summary: '+45 Science, 95kg',
     reqs: ['cal_optics', 'weld_circuit'],
     points: 120,
-    timeLimit: 55,
+    timeLimit: 80,
     massKg: 95,
     costM: 28,
     telemetry: { power: -35, comms: -15, science: 45, fuel: 0 },
@@ -176,7 +176,7 @@ export const RECIPES = [
     summary: '+130W Power, 110kg',
     reqs: ['chg_battery', 'weld_solar'],
     points: 115,
-    timeLimit: 55,
+    timeLimit: 80,
     massKg: 110,
     costM: 24,
     telemetry: { power: 130, comms: 0, science: 0, fuel: 0 },
@@ -190,7 +190,7 @@ export const RECIPES = [
     summary: '+110 Comms, 75kg',
     reqs: ['cal_dish', 'weld_circuit'],
     points: 120,
-    timeLimit: 55,
+    timeLimit: 80,
     massKg: 75,
     costM: 22,
     telemetry: { power: -25, comms: 110, science: 10, fuel: 0 },
@@ -204,7 +204,7 @@ export const RECIPES = [
     summary: '+25% Fuel, 135kg',
     reqs: ['chg_tank', 'weld_solar'],
     points: 130,
-    timeLimit: 60,
+    timeLimit: 85,
     massKg: 135,
     costM: 32,
     telemetry: { power: 0, comms: 0, science: 0, fuel: 25 },
@@ -213,12 +213,12 @@ export const RECIPES = [
 ];
 
 export const MAP_LAYOUT = [
-  ['#',         'C:optics', 'C:circuit', 'W', 'W', '#', 'T', '#', 'A', 'A', '#', 'P', 'P', '>'],
-  ['C:battery', '.',        '.',         '.', '.', '.', '.', '#', '.', '.', '.', '.', '.', '>'],
-  ['C:solar',   '.',        '.',         '.', '.', '.', '.', '#', '.', '.', '.', '.', '.', '>'],
-  ['C:dish',    '.',        '.',         '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '#'],
-  ['C:tank',    '.',        '.',         '.', '.', '.', '.', '#', '.', '.', '.', '.', '.', '#'],
-  ['F',         '.',        '.',         '.', '.', '.', '.', '#', '.', '.', '.', '.', '.', 'X'],
-  ['#',         '.',        '.',         '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '#'],
-  ['#',         '#',        '#',         '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#']
+  ['L',         'L', 'L', 'L', 'C:circuit', 'W', 'W', 'A', 'A', 'P', 'P', 'T', '.', '.', 'F', '.', '>', 'L'],
+  ['.',         '.', '.', '.', '.',         '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '>', 'L'],
+  ['C:optics',  '.', '.', '.', '.',         '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.'],
+  ['C:battery', '.', '.', '.', '#',         '#', '#', '#', '.', '.', '#', '#', '#', '#', '.', '#', '#', '#'],
+  ['C:solar',   '.', '.', '.', '#',         '.', '.', '#', '.', '.', '#', '.', '.', '#', '.', '.', '.', '#'],
+  ['C:dish',    '.', '.', '.', '#',         'G', 'G', '#', '.', '.', '#', '.', '#', '#', '.', '.', '.', 'X'],
+  ['C:tank',    '.', '.', '.', '.',         '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', 'L', 'L'],
+  ['.',         '.', '.', '.', '.',         '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', '.', 'L', 'L']
 ];
