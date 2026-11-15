@@ -106,18 +106,22 @@ export function resolveDefaultWsUrl() {
     return String(window.__ORBITAL_WS_URL).trim();
   }
   const saved = safeStorageGet(WS_URL_STORAGE_KEY);
-  if (saved) return saved;
+  if (saved && !/\.github\.io(?:\/|$)/i.test(saved)) return saved;
   if (MULTIPLAYER_CONFIG?.defaultWsUrl) {
     return String(MULTIPLAYER_CONFIG.defaultWsUrl).trim();
   }
   const host = typeof location !== 'undefined' ? location.hostname : '';
   const proto = typeof location !== 'undefined' ? location.protocol : 'http:';
+  if (/\.onrender\.com$/i.test(host)) {
+    const scheme = proto === 'https:' ? 'wss:' : 'ws:';
+    return `${scheme}//${host}`;
+  }
   if (host === 'localhost' || host === '127.0.0.1' || /^192\.168\.|^10\.|^172\./.test(host) || proto === 'http:') {
     const scheme = proto === 'https:' ? 'wss:' : 'ws:';
     const port = MULTIPLAYER_CONFIG?.defaultLocalPort || 8787;
     return `${scheme}//${host || 'localhost'}:${port}`;
   }
-  return '';
+  return 'wss://nasa-hackathon-2026.onrender.com';
 }
 
 export function getSavedPlayerName() {
@@ -270,7 +274,13 @@ function openSocketAndRun(wsUrl, onOpenAction) {
   const cleanUrl = normalizeWsUrl(wsUrl);
   if (!cleanUrl) {
     netState.status = 'error';
-    netState.error = 'Enter a WebSocket relay URL (e.g. wss://your-relay.onrender.com or ws://localhost:8787).';
+    netState.error = 'Enter a WebSocket relay URL (e.g. wss://nasa-hackathon-2026.onrender.com or ws://localhost:8787).';
+    emit('roomUpdate', { ...netState });
+    return;
+  }
+  if (/\.github\.io(?:\/|$)/i.test(cleanUrl)) {
+    netState.status = 'error';
+    netState.error = 'GitHub Pages (*.github.io) is a static host and cannot run a WebSocket server. Enter your Render URL (e.g. wss://nasa-hackathon-2026.onrender.com), or click Next: Mission Setup below to play solo/local.';
     emit('roomUpdate', { ...netState });
     return;
   }
