@@ -250,3 +250,67 @@ export function drawCanvasControlBar(ctx, logicalW, items, y = 584) {
   }
   ctx.restore();
 }
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function createStarfield(count = 90, width = 1120, height = 620, seed = 20261115) {
+  const rand = mulberry32(seed);
+  const tints = ['#f8fafc', '#e0f2fe', '#fef3c7', '#cbd5e1'];
+  const stars = [];
+  for (let i = 0; i < count; i++) {
+    stars.push({
+      x: rand() * width,
+      y: rand() * height,
+      size: 0.9 + Math.pow(rand(), 2) * 1.9,
+      depth: 0.15 + rand() * 0.85,
+      baseAlpha: 0.35 + rand() * 0.6,
+      twinkleSpeed: 1.2 + rand() * 2.8,
+      twinklePhase: rand() * Math.PI * 2,
+      color: tints[Math.floor(rand() * tints.length)]
+    });
+  }
+  return stars;
+}
+
+export function drawStarfield(
+  ctx,
+  stars,
+  width = 1120,
+  height = 620,
+  { offsetX = 0, offsetY = 0, maxY = height, alphaMul = 1, nowSec = 0 } = {}
+) {
+  if (!stars || stars.length === 0 || maxY <= 0) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, maxY);
+  ctx.clip();
+
+  for (const s of stars) {
+    let sx = (s.x - offsetX * s.depth) % width;
+    if (sx < 0) sx += width;
+    let sy = (s.y + offsetY * s.depth) % height;
+    if (sy < 0) sy += height;
+    if (sy > maxY) continue;
+
+    const tw = nowSec > 0 ? 0.78 + 0.22 * Math.sin(nowSec * s.twinkleSpeed + s.twinklePhase) : 1;
+    ctx.globalAlpha = Math.max(0, Math.min(1, s.baseAlpha * tw * alphaMul));
+    ctx.fillStyle = s.color;
+    if (s.size > 1.8) {
+      ctx.beginPath();
+      ctx.arc(sx, sy, s.size * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillRect(sx, sy, s.size, s.size);
+    }
+  }
+  ctx.restore();
+}

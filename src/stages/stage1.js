@@ -940,8 +940,30 @@ export function updateStage1(dt) {
   }
 
   for (const st of state.stations) {
-    if (st.onFire && Math.random() < 0.35) {
-      state.hangarSparks.push({ x: st.x + 22 + Math.random() * 24, y: st.y + 8, vx: (Math.random() - 0.5) * 30, vy: -45 - Math.random() * 35, life: 0.4, color: Math.random() < 0.5 ? '#ef4444' : '#fde047' });
+    if (st.onFire) {
+      if (Math.random() < 0.45) {
+        state.hangarSparks.push({
+          x: st.x + 18 + Math.random() * 32,
+          y: st.y + 4,
+          vx: (Math.random() - 0.5) * 26,
+          vy: -52 - Math.random() * 38,
+          life: 0.45,
+          r: 2.5,
+          color: Math.random() < 0.5 ? '#ef4444' : '#fde047'
+        });
+      }
+      if (Math.random() < 0.35) {
+        state.hangarSparks.push({
+          x: st.x + 22 + Math.random() * 24,
+          y: st.y - 6,
+          vx: (Math.random() - 0.5) * 18,
+          vy: -36 - Math.random() * 22,
+          life: 0.65,
+          r: 6 + Math.random() * 5,
+          isSmoke: true,
+          color: 'rgba(148, 163, 184, 0.55)'
+        });
+      }
     }
     if ((st.type === 'A' || st.type === 'P') && st.item && !st.onFire) {
       if (st.item.kind === 'raw') {
@@ -981,7 +1003,7 @@ export function updateStage1(dt) {
     const sp = state.hangarSparks[i];
     sp.x += sp.vx * dt;
     sp.y += sp.vy * dt;
-    sp.vy += 180 * dt;
+    if (!sp.isSmoke) sp.vy += 180 * dt;
     sp.life -= dt;
     if (sp.life <= 0) state.hangarSparks.splice(i, 1);
   }
@@ -1299,14 +1321,53 @@ export function drawStage1(ctx) {
       if (s.item) drawItemBadge(ctx, s.x + TILE / 2, s.y + 18, s.item);
 
       if (s.onFire) {
-        const fl = 8 + Math.sin(performance.now() * 0.02 + s.c) * 4;
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath(); ctx.arc(s.x + TILE / 2, s.y + 14, 14 + fl * 0.3, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#fde047';
-        ctx.beginPath(); ctx.arc(s.x + TILE / 2, s.y + 16, 8 + fl * 0.2, 0, Math.PI * 2); ctx.fill();
+        const now = performance.now();
+        const sway = Math.sin(now * 0.015 + s.c * 1.7) * 5;
+        const pulse = 0.55 + 0.45 * Math.sin(now * 0.012);
+        const cx = s.x + TILE / 2;
+        const baseY = s.y + 26;
+
+        // Pulsing red danger halo over burning bench
+        ctx.save();
+        ctx.fillStyle = `rgba(239, 68, 68, ${0.24 + pulse * 0.22})`;
+        ctx.beginPath(); ctx.roundRect(s.x, s.y - 8, TILE, TILE, 11); ctx.fill();
+        ctx.strokeStyle = `rgba(248, 113, 113, ${0.65 + pulse * 0.35})`;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(s.x - 1, s.y - 9, TILE + 2, TILE + 2);
+
+        // Multi-layered animated flame silhouette
+        ctx.fillStyle = '#ea580c';
+        ctx.beginPath();
+        ctx.moveTo(cx - 18, baseY);
+        ctx.quadraticCurveTo(cx - 22, baseY - 18, cx - 8 + sway * 0.4, baseY - 30 - pulse * 6);
+        ctx.quadraticCurveTo(cx + 2, baseY - 22, cx + 6 + sway * 0.7, baseY - 38 - pulse * 8);
+        ctx.quadraticCurveTo(cx + 22, baseY - 20, cx + 18, baseY);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.moveTo(cx - 11, baseY);
+        ctx.quadraticCurveTo(cx - 13, baseY - 12, cx - 2 + sway * 0.5, baseY - 24 - pulse * 4);
+        ctx.quadraticCurveTo(cx + 12, baseY - 14, cx + 11, baseY);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#fef9c3';
+        ctx.beginPath();
+        ctx.arc(cx + sway * 0.2, baseY - 6, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Bold FIRE label pill
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath(); ctx.roundRect(cx - 22, s.y - 26, 44, 15, 5); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 9.5px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
+        ctx.fillText('FIRE!', cx, s.y - 15);
+        ctx.restore();
+
         if (s.fireProg > 0) {
-          ctx.fillStyle = '#0f172a'; ctx.fillRect(s.x + 9, s.y - 16, 50, 7);
-          ctx.fillStyle = '#38bdf8'; ctx.fillRect(s.x + 9, s.y - 16, 50 * s.fireProg, 7);
+          ctx.fillStyle = '#0f172a'; ctx.fillRect(s.x + 9, s.y - 36, 50, 7);
+          ctx.fillStyle = '#38bdf8'; ctx.fillRect(s.x + 9, s.y - 36, 50 * s.fireProg, 7);
         }
       } else if (s.item && s.progress > 0 && s.item.id !== 'burned') {
         const bw = 50, bh = 7, bx = s.x + (TILE - bw) / 2, by = s.y - 14;
@@ -1333,9 +1394,15 @@ export function drawStage1(ctx) {
   }
 
   for (const sp of state.hangarSparks) {
-    ctx.globalAlpha = Math.max(0, sp.life * 2.5);
+    ctx.globalAlpha = Math.max(0, sp.isSmoke ? sp.life * 0.9 : sp.life * 2.4);
     ctx.fillStyle = sp.color;
-    ctx.fillRect(sp.x, sp.y, 3, 3);
+    if (sp.r) {
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, sp.r, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillRect(sp.x, sp.y, 3, 3);
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -1411,10 +1478,33 @@ export function drawStage1(ctx) {
     ctx.restore();
   }
 
+  // Compact Fire Alert Pill below Top Gantry when any bench is burning
+  const burningSt = state.stations.find(st => st.onFire);
+  if (state.stage === 'STAGE1' && burningSt) {
+    const hasCo2 = lead?.holding?.kind === 'extinguisher';
+    const flash = Math.floor(performance.now() / 260) % 2 === 0;
+    const msg = hasCo2
+      ? 'EXTINGUISH FIRE! Face Burning Bench and Hold [SPACE]!'
+      : 'BENCH FIRE! Grab CO2 Extinguisher (Red Crate Left) + Hold [SPACE]!';
+    ctx.save();
+    ctx.fillStyle = flash ? 'rgba(185, 28, 28, 0.95)' : 'rgba(127, 29, 29, 0.95)';
+    ctx.strokeStyle = '#fca5a5';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 260, 46, 520, 28, 12); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px "Plus Jakarta Sans", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(msg, LOGICAL_W / 2, 64);
+    ctx.restore();
+  }
+
   // Compact Floating Action Pill above Active Player (never obscures crate labels)
   if (facing && lead) {
     let hint = '';
-    if (facing.type === 'CRATE' && !lead.holding) hint = `[SPACE] ${RAW_ITEMS[facing.crateItem].name}`;
+    if (facing.onFire && lead.holding?.kind === 'extinguisher') hint = '[HOLD SPACE] Extinguish Fire!';
+    else if (facing.onFire) hint = 'FIRE! Need CO2 Extinguisher';
+    else if (facing.type === 'F' && facing.hasExtinguisher && !lead.holding) hint = '[SPACE] Grab CO2';
+    else if (facing.type === 'CRATE' && !lead.holding) hint = `[SPACE] ${RAW_ITEMS[facing.crateItem].name}`;
     else if (facing.type === 'W' && facing.item && facing.item.kind === 'raw') hint = `[HOLD SPACE] Weld ${Math.round(facing.progress * 100)}%`;
     else if (facing.type === '>' && lead.holding && lead.holding.kind === 'tray' && lead.holding.parts.length === 2) hint = `[SPACE] Submit 🚀`;
     else if (lead.holding && facing.item && ((lead.holding.kind === 'tray' && facing.item.kind === 'proc') || (lead.holding.kind === 'proc' && facing.item.kind === 'tray'))) hint = `[SPACE] Plate Tray`;

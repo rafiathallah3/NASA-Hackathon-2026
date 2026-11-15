@@ -29,6 +29,7 @@ export const state = {
   coopMode: '4P_AI', // '4P_AI' | 'LOCAL_2P' | 'NET_4P' | 'SOLO'
   activeCrewIndex: 0,
   muted: false,
+  paused: false,
   lastTime: 0,
 
   // Scene Transition & Decisions
@@ -182,6 +183,7 @@ export function resetRunState() {
   };
 
   state.stageTimer = 0;
+  state.paused = false;
   state.elapsedStage1 = 0;
   state.orders = [];
   state.flyingDeliveries = [];

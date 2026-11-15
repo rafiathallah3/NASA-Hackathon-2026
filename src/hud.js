@@ -204,6 +204,37 @@ export function getCmlLevel(shippedCount = state.shippedCount) {
   return 'CML-1 Cocktail Napkin';
 }
 
+const STAGE_LABELS = {
+  TRANSITION: 'Stage Transition',
+  STAGE1: 'Stage 1A: Assembly Hangar',
+  STAGE1B: 'Stage 1B: Rocket Liftoff',
+  STAGE2: 'Stage 2: Orbital Mission Control',
+  STAGE3A: 'Stage 3A: Lunar Descent',
+  STAGE3B: 'Stage 3B: Lunar Surface EVA',
+  STAGE3C: 'Stage 3C: Lunar Ascent & TEI',
+  STAGE4: 'Stage 4: Earth Reentry'
+};
+
+export function syncPauseUI() {
+  const canPause = state.stage !== 'MENU' && state.stage !== 'STAGE5';
+  const isPaused = Boolean(state.paused && canPause);
+  const pauseBtn = document.getElementById('btn-pause');
+  if (pauseBtn) {
+    pauseBtn.disabled = !canPause;
+    pauseBtn.textContent = isPaused ? '▶ Resume' : '⏸ Pause';
+    pauseBtn.classList.toggle('paused', isPaused);
+  }
+  const overlay = document.getElementById('pause-overlay');
+  if (overlay) {
+    overlay.classList.toggle('hidden', !isPaused);
+  }
+  const sub = document.getElementById('pause-stage-label');
+  if (sub) {
+    const label = STAGE_LABELS[state.stage] || 'Active Mission';
+    sub.textContent = `${label} frozen. Press ESC or Resume to continue.`;
+  }
+}
+
 export function updateClockHUD() {
   const pill = document.getElementById('clock-pill');
   const disp = document.getElementById('clock-display');
@@ -221,6 +252,8 @@ export function updateClockHUD() {
     disp.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     pill.classList.toggle('clock-urgent', state.stageTimer <= 12);
   }
+  pill.classList.toggle('clock-paused', Boolean(state.paused && state.stage !== 'MENU' && state.stage !== 'STAGE5'));
+  syncPauseUI();
 }
 
 export function updateBottomHUD() {

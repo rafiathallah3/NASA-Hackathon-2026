@@ -1,13 +1,13 @@
 import { LOGICAL_W, LOGICAL_H, RECIPES, SCIENCE_OBJECTIVES } from './config.js';
 import { state, resetRunState, auditScienceBaselineRequirements, logBlackBox } from './state.js';
 import { broadcastNet, registerNetStageHandler } from './net.js';
-import { selectActiveCrew, cycleCoopMode, showMenuModal, renderTicketsHUD, updateBottomHUD, updateClockHUD, showMissionToast, hideMissionToast } from './hud.js';
+import { selectActiveCrew, cycleCoopMode, showMenuModal, renderTicketsHUD, updateBottomHUD, updateClockHUD, syncPauseUI, showMissionToast, hideMissionToast } from './hud.js';
 import { startTransition, skipTransition, updateTransition, drawTransition } from './transitions.js';
 import { initStage1, buildStage1Map, handleStage1Interact, handleStage1Dash, handleStage1Throw, handleStage1CanvasClick, skipStage1Tutorial, updateStage1, drawStage1 } from './stages/stage1.js';
 import { startStage1B, handleStage1BSeparation, updateStage1B, drawStage1B } from './stages/stage1b.js';
 import { startStage2, handleStage2Interact, handleStage2CanvasClick, toggleBreaker, updateStage2, drawStage2 } from './stages/stage2.js';
 import {
-  startStage3A, updateStage3A, drawStage3A,
+  startStage3A, handleStage3AContinue, updateStage3A, drawStage3A,
   startStage3B, handleStage3BInteract, updateStage3B, drawStage3B,
   startStage3CMoonLaunch, handleStage3CTEIBurn, updateStage3C, drawStage3C
 } from './stages/stage3.js';
@@ -35,7 +35,29 @@ function resizeCanvas() {
 new ResizeObserver(resizeCanvas).observe(document.getElementById('game-wrap'));
 window.addEventListener('resize', resizeCanvas);
 
+export function setPaused(paused) {
+  const canPause = state.stage !== 'MENU' && state.stage !== 'STAGE5';
+  const target = Boolean(paused) && canPause;
+  state.paused = target;
+  if (target) {
+    for (const k of Object.keys(state.keys)) state.keys[k] = false;
+  }
+  syncPauseUI();
+  updateClockHUD();
+}
+
+export function togglePause() {
+  if (state.stage === 'MENU' || state.stage === 'STAGE5') return false;
+  const mainModal = document.getElementById('modal');
+  if (!state.paused && ((mainModal && !mainModal.classList.contains('hidden')) || state.dilemma)) {
+    return false;
+  }
+  setPaused(!state.paused);
+  return state.paused;
+}
+
 function goToDebrief() {
+  setPaused(false);
   hideMissionToast();
   startStage5Debrief(startGame, openMenu);
 }
@@ -47,7 +69,8 @@ function toStage1B() {
     badge: 'LAUNCH COMPLEX 39B',
     title: 'PAYLOAD FAIRING SEALED & PAD ROLLOUT',
     subtitle: 'Transferring spacecraft telemetry to launch control...',
-    duration: 2.2,
+    nextStage: 'STAGE 1B: ROCKET LIFTOFF',
+    duration: 4.8,
     onComplete: startStage1B
   });
 }
@@ -59,7 +82,8 @@ function toStage2() {
     badge: 'ORBITAL INSERTION BURN',
     title: 'ENTERING TRANSLUNAR CRUISE DECK',
     subtitle: 'Pressurizing Orion / Gateway mission control consoles...',
-    duration: 2.2,
+    nextStage: 'STAGE 2: ORBITAL MISSION CONTROL',
+    duration: 4.8,
     onComplete: startStage2
   });
 }
@@ -72,7 +96,8 @@ function toStage3A() {
     badge: 'LUNAR ORBIT RENDEZVOUS',
     title: `HLS LANDER UNDOCKING OVER ${objLoc}`,
     subtitle: 'Igniting descent engines for Point A landing pad approach...',
-    duration: 2.2,
+    nextStage: 'STAGE 3A: LUNAR DESCENT LANDING',
+    duration: 4.8,
     onComplete: startStage3A
   });
 }
@@ -84,7 +109,8 @@ function toStage3B() {
     badge: 'SURFACE OPERATIONS',
     title: 'DEPLOYING DUAL LTV LUNAR ROVERS',
     subtitle: 'Point A secured. Drive to Point B Crater, Seismic Array, and Relay Dish.',
-    duration: 2.2,
+    nextStage: 'STAGE 3B: MOON ROVER EVA',
+    duration: 4.8,
     onComplete: startStage3B
   });
 }
@@ -96,7 +122,8 @@ function toStage3C() {
     badge: 'LUNAR LIFTOFF PREP',
     title: 'SAMPLES STOWED IN ASCENT CAPSULE',
     subtitle: 'Separating from descent base for orbital return burn...',
-    duration: 2.0,
+    nextStage: 'STAGE 3C: LUNAR ASCENT & TEI',
+    duration: 4.5,
     onComplete: startStage3CMoonLaunch
   });
 }
@@ -108,7 +135,8 @@ function toStage4() {
     badge: 'EARTH ENTRY INTERFACE',
     title: 'SKIP-REENTRY CORRIDOR OVER PACIFIC OCEAN',
     subtitle: 'Roll capsule to cool heatshield & align with Carrier USS Midway!',
-    duration: 2.4,
+    nextStage: 'STAGE 4: EARTH REENTRY & SPLASHDOWN',
+    duration: 5.0,
     onComplete: startStage4EarthReturn
   });
 }
@@ -169,6 +197,7 @@ function openScienceAuditModal(audit) {
 }
 
 function advanceStageManual(fromNet = false) {
+  setPaused(false);
   if (state.stage === 'STAGE1') {
     const audit = auditScienceBaselineRequirements();
     if (!fromNet && !audit.passed) {
@@ -202,6 +231,7 @@ function startGame(fromNet = false) {
   document.getElementById('modal').classList.add('hidden');
   resetRunState();
   initStage1();
+  syncPauseUI();
   if (!fromNet && state.coopMode === 'NET_4P') {
     broadcastNet({
       type: 'STAGE_SYNC',
@@ -217,6 +247,7 @@ function startGame(fromNet = false) {
 
 function openMenu() {
   state.stage = 'MENU';
+  setPaused(false);
   buildStage1Map();
   updateClockHUD();
   draw();
@@ -272,7 +303,24 @@ document.getElementById('btn-mute').addEventListener('click', (e) => {
   e.currentTarget.textContent = state.muted ? '🔇' : '🔊';
 });
 
+document.getElementById('btn-pause')?.addEventListener('click', () => {
+  togglePause();
+});
+document.getElementById('btn-pause-resume')?.addEventListener('click', () => {
+  setPaused(false);
+});
+document.getElementById('btn-pause-guide')?.addEventListener('click', () => {
+  document.getElementById('guide-modal')?.classList.remove('hidden');
+});
+document.getElementById('btn-pause-menu')?.addEventListener('click', () => {
+  setPaused(false);
+  hideMissionToast();
+  resetRunState();
+  openMenu();
+});
+
 canvas.addEventListener('click', (e) => {
+  if (state.paused) return;
   if (state.stage === 'TRANSITION') {
     skipTransition();
     return;
@@ -286,11 +334,36 @@ canvas.addEventListener('click', (e) => {
   }
   if (state.stage === 'STAGE2') {
     handleStage2CanvasClick(lx, ly);
+    return;
+  }
+  if (state.stage === 'STAGE3A') {
+    handleStage3AContinue(toStage3B);
   }
 });
 
 // Keyboard Controls
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') {
+    if (!e.repeat) {
+      const guideModal = document.getElementById('guide-modal');
+      const mainModal = document.getElementById('modal');
+      if (guideModal && !guideModal.classList.contains('hidden')) {
+        guideModal.classList.add('hidden');
+      } else if (state.paused) {
+        setPaused(false);
+      } else if (state.stage === 'STAGE1' && mainModal && !mainModal.classList.contains('hidden')) {
+        mainModal.classList.add('hidden');
+      } else if (state.stage === 'STAGE2' && state.activeMiniGame) {
+        state.activeMiniGame = null;
+      } else {
+        togglePause();
+      }
+    }
+    return;
+  }
+
+  if (state.paused) return;
+
   state.keys[e.code] = true;
 
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code) && state.stage !== 'MENU' && state.stage !== 'STAGE5') {
@@ -342,6 +415,8 @@ window.addEventListener('keydown', (e) => {
       handleStage1BSeparation();
     } else if (state.stage === 'STAGE2') {
       handleStage2Interact();
+    } else if (state.stage === 'STAGE3A' && state.lander?.landed && !state.lander?.crashed) {
+      handleStage3AContinue(toStage3B);
     } else if (state.stage === 'STAGE3B') {
       handleStage3BInteract(state.rover, toStage3C);
     } else if (state.stage === 'STAGE3C') {
@@ -354,6 +429,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Enter' && !e.repeat) {
     if (state.stage === 'TRANSITION') skipTransition();
     else if (state.stage === 'STAGE1') handleStage1Interact(state.players[1]);
+    else if (state.stage === 'STAGE3A' && state.lander?.landed && !state.lander?.crashed) handleStage3AContinue(toStage3B);
     else if (state.stage === 'STAGE3B') handleStage3BInteract(state.rover2, toStage3C);
     else if (state.stage === 'STAGE4') handleStage4CoolantPurge();
   }
@@ -366,18 +442,6 @@ window.addEventListener('keydown', (e) => {
     skipStage1Tutorial();
     return;
   }
-
-  if (e.code === 'Escape') {
-    const guideModal = document.getElementById('guide-modal');
-    const mainModal = document.getElementById('modal');
-    if (!guideModal.classList.contains('hidden')) {
-      guideModal.classList.add('hidden');
-    } else if (state.stage === 'STAGE1' && mainModal && !mainModal.classList.contains('hidden')) {
-      mainModal.classList.add('hidden');
-    } else if (state.stage === 'STAGE2' && state.activeMiniGame) {
-      state.activeMiniGame = null;
-    }
-  }
 });
 
 window.addEventListener('keyup', (e) => {
@@ -386,6 +450,7 @@ window.addEventListener('keyup', (e) => {
 
 function update(dt) {
   if (state.stage === 'MENU' || state.stage === 'STAGE5') return;
+  if (state.paused) return;
   if (!document.getElementById('guide-modal').classList.contains('hidden')) return;
   if (!document.getElementById('modal').classList.contains('hidden')) return;
   if (state.dilemma) return;
@@ -402,6 +467,7 @@ function update(dt) {
 
   const pausedAbort =
     (state.stage === 'STAGE1B' && state.ascent.aborted) ||
+    (state.stage === 'STAGE3A' && (state.lander?.landed || state.lander?.crashed)) ||
     (state.stage === 'STAGE4' && state.reentry.aborted);
   if (state.stage !== 'STAGE1' && !pausedAbort) {
     state.stageTimer = Math.max(0, state.stageTimer - dt);
@@ -414,7 +480,11 @@ function update(dt) {
     initStage1();
   });
   else if (state.stage === 'STAGE2') updateStage2(dt, toStage3A);
-  else if (state.stage === 'STAGE3A') updateStage3A(dt, toStage3B);
+  else if (state.stage === 'STAGE3A') updateStage3A(dt, toStage3B, () => {
+    resetRunState();
+    state.stage = 'MENU';
+    showMenuModal(() => startGame(false));
+  });
   else if (state.stage === 'STAGE3B') updateStage3B(dt, toStage3C);
   else if (state.stage === 'STAGE3C') updateStage3C(dt, toStage4);
   else if (state.stage === 'STAGE4') updateStage4(dt, goToDebrief, () => {
@@ -481,6 +551,14 @@ function loop(now) {
   }
 }
 
-resizeCanvas();
-openMenu();
-updateBottomHUD();
+try {
+  resizeCanvas();
+  openMenu();
+  updateBottomHUD();
+  window.__ORBITAL_BOOTED = true;
+} catch (err) {
+  console.error('Orbital Kitchen startup failed:', err);
+  if (typeof window.__showOrbitalBootError === 'function') {
+    window.__showOrbitalBootError(err?.message || String(err));
+  }
+}

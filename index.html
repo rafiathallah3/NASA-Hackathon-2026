@@ -4,7 +4,28 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ORBITAL KITCHEN: 4P 2.5D Lunar Sample Return</title>
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=8" />
+  <script type="importmap">
+    {
+      "imports": {
+        "./src/audio.js": "./src/audio.js?v=8",
+        "./src/config.js": "./src/config.js?v=8",
+        "./src/dilemmas.js": "./src/dilemmas.js?v=8",
+        "./src/hud.js": "./src/hud.js?v=8",
+        "./src/main.js": "./src/main.js?v=8",
+        "./src/net.js": "./src/net.js?v=8",
+        "./src/sprites.js": "./src/sprites.js?v=8",
+        "./src/state.js": "./src/state.js?v=8",
+        "./src/transitions.js": "./src/transitions.js?v=8",
+        "./src/stages/stage1.js": "./src/stages/stage1.js?v=8",
+        "./src/stages/stage1b.js": "./src/stages/stage1b.js?v=8",
+        "./src/stages/stage2.js": "./src/stages/stage2.js?v=8",
+        "./src/stages/stage3.js": "./src/stages/stage3.js?v=8",
+        "./src/stages/stage4.js": "./src/stages/stage4.js?v=8",
+        "./src/stages/stage5.js": "./src/stages/stage5.js?v=8"
+      }
+    }
+  </script>
 </head>
 <body>
 
@@ -39,6 +60,7 @@
     <button id="btn-coop" class="btn-hud btn-bot" type="button">Crew: 4P AI</button>
     <button id="btn-guide" class="btn-hud btn-guide" type="button" title="Mission Guide & Controls">Guide</button>
     <button id="btn-mute" class="btn-hud btn-guide" type="button" title="Toggle Sound">🔊</button>
+    <button id="btn-pause" class="btn-hud btn-pause" type="button" title="Pause / Resume Game (ESC)">⏸ Pause</button>
     <button id="btn-skip" class="btn-hud btn-launch" type="button" title="Launch rocket when your parts are ready">🚀 LAUNCH MISSION</button>
     <button id="btn-next" class="btn-hud btn-next" type="button">Next Stage</button>
     <div class="pill-box">
@@ -55,6 +77,18 @@
 <div id="game-wrap">
   <canvas id="game" width="1120" height="620"></canvas>
   <div id="mission-toast" class="mission-toast hidden"></div>
+  <div id="pause-overlay" class="pause-overlay hidden" role="dialog" aria-label="Game Paused">
+    <div class="pause-card">
+      <div class="pause-badge">FLIGHT HOLD</div>
+      <h2>MISSION PAUSED</h2>
+      <p id="pause-stage-label" class="pause-sub">Simulation frozen. Press ESC or click Resume to continue.</p>
+      <div class="pause-actions">
+        <button id="btn-pause-resume" class="btn-play" type="button">▶ Resume Mission</button>
+        <button id="btn-pause-guide" class="btn-secondary" type="button">Controls Guide</button>
+        <button id="btn-pause-menu" class="btn-secondary" type="button">Mission Setup</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="hud-bottom">
@@ -73,7 +107,7 @@
 </div>
 
 <!-- MAIN BRIEFING / STAGE 5 DEBRIEF MODAL -->
-<div id="modal" class="modal-backdrop">
+<div id="modal" class="modal-backdrop hidden">
   <div class="modal-card" id="modal-content"></div>
 </div>
 
@@ -108,6 +142,40 @@
   </div>
 </div>
 
-<script type="module" src="./src/main.js?v=2"></script>
+<script>
+  (function () {
+    window.__ORBITAL_BOOTED = false;
+    var firstBootErr = '';
+    window.__showOrbitalBootError = function (reason) {
+      if (window.__ORBITAL_BOOTED) return;
+      var modal = document.getElementById('modal');
+      var content = document.getElementById('modal-content');
+      if (!modal || !content) return;
+      var msg = reason || firstBootErr || (location.protocol === 'file:'
+        ? 'Browser blocked ES modules on file:// URL. Serve the project with a local HTTP server (e.g. python3 -m http.server).'
+        : 'Game modules did not finish loading cleanly (likely a stale browser cache). Try a hard refresh.');
+      content.innerHTML =
+        '<h1>Unable to Start Orbital Kitchen</h1>' +
+        '<p class="sub" id="boot-err-msg"></p>' +
+        '<div class="modal-actions">' +
+          '<button id="btn-boot-reload" class="btn-play" type="button">Reload Game</button>' +
+        '</div>';
+      var p = document.getElementById('boot-err-msg');
+      if (p) p.textContent = String(msg);
+      var btn = document.getElementById('btn-boot-reload');
+      if (btn) btn.addEventListener('click', function () { window.location.reload(); });
+      modal.classList.remove('hidden');
+    };
+    window.addEventListener('error', function (ev) {
+      if (!window.__ORBITAL_BOOTED && !firstBootErr) {
+        firstBootErr = ev && ev.message ? ev.message : 'Script load error';
+      }
+    });
+    setTimeout(function () {
+      if (!window.__ORBITAL_BOOTED) window.__showOrbitalBootError(firstBootErr);
+    }, 3500);
+  })();
+</script>
+<script type="module" src="./src/main.js?v=8" onerror="window.__showOrbitalBootError && window.__showOrbitalBootError('Failed to load src/main.js module.')"></script>
 </body>
 </html>

@@ -1,8 +1,10 @@
 import { LOGICAL_W, LOGICAL_H } from '../config.js';
 import { state, getVehicle, logBlackBox } from '../state.js';
 import { playTone } from '../audio.js';
-import { addFloatText, drawCanvasControlBar } from '../sprites.js';
+import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
 import { setStageBanner, updateBottomHUD } from '../hud.js';
+
+const ASCENT_STARS = createStarfield(75, LOGICAL_W, LOGICAL_H, 11815);
 
 export function startStage1B() {
   const modal = document.getElementById('modal');
@@ -217,16 +219,40 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
     a.srbRot += dt * 0.65;
   }
 
-  // Exhaust smoke puffs
-  if (Math.random() < 0.7) {
+  // Exhaust smoke puffs + engine stall/damage fire sparks anchored to active nozzle
+  const isStall = a.thrust < 0.25;
+  const engineBurning = a.integrity < 55 || a.thrust > 0.93;
+  const sinT = Math.sin(a.tilt);
+  const cosT = Math.cos(a.tilt);
+  const nozDist = a.separated ? 14 : 52;
+  if (Math.random() < (isStall ? 0.55 : 0.78)) {
+    const nozX = LOGICAL_W / 2 - sinT * nozDist + (Math.random() - 0.5) * 14;
+    const nozY = a.rocketY + cosT * nozDist;
+    const exhSpeed = isStall ? (55 + Math.random() * 55) : (145 + a.thrust * 135);
     state.lunarParticles.push({
-      x: LOGICAL_W / 2 - Math.sin(a.tilt) * 45 + (Math.random() - 0.5) * 20,
-      y: a.rocketY + 46,
-      vx: (Math.random() - 0.5) * 90,
-      vy: 140 + a.thrust * 120,
-      life: 0.65,
-      size: 6 + Math.random() * 8,
-      color: Math.random() < 0.35 ? '#fbbf24' : 'rgba(226, 232, 240, 0.8)'
+      x: nozX,
+      y: nozY,
+      vx: -sinT * exhSpeed + (Math.random() - 0.5) * (isStall ? 115 : 80),
+      vy: cosT * exhSpeed,
+      life: isStall ? 0.85 : 0.65,
+      size: isStall ? (8 + Math.random() * 8) : (5 + Math.random() * 7),
+      color: isStall
+        ? 'rgba(100, 116, 139, 0.75)'
+        : engineBurning && Math.random() < 0.55
+          ? (Math.random() < 0.5 ? '#ef4444' : '#f97316')
+          : (Math.random() < 0.35 ? '#fbbf24' : 'rgba(226, 232, 240, 0.82)')
+    });
+  }
+  if (engineBurning && Math.random() < 0.5) {
+    const fireDist = a.separated ? 2 : 38;
+    state.lunarParticles.push({
+      x: LOGICAL_W / 2 - sinT * fireDist + (Math.random() - 0.5) * 32,
+      y: a.rocketY + cosT * fireDist + (Math.random() - 0.5) * 10,
+      vx: -sinT * 50 + (Math.random() - 0.5) * 90,
+      vy: cosT * (40 + Math.random() * 70),
+      life: 0.48,
+      size: 4 + Math.random() * 4,
+      color: Math.random() < 0.4 ? '#fde047' : '#ef4444'
     });
   }
 
@@ -243,14 +269,12 @@ export function drawStage1B(ctx) {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
 
-  // Ascending stars
-  ctx.fillStyle = '#e2e8f0';
-  for (let i = 0; i < 55; i++) {
-    ctx.globalAlpha = Math.min(1, altRatio + 0.2);
-    const sy = ((i * 73) + a.padScroll * (0.4 + (i % 3) * 0.2)) % LOGICAL_H;
-    ctx.fillRect((i * 199) % LOGICAL_W, sy, 2, 2);
-  }
-  ctx.globalAlpha = 1;
+  // Ascending organic starfield
+  drawStarfield(ctx, ASCENT_STARS, LOGICAL_W, LOGICAL_H, {
+    offsetY: a.padScroll * 0.45,
+    alphaMul: Math.min(1, altRatio + 0.25),
+    nowSec: performance.now() * 0.001
+  });
 
   // Pad 39B Launch Tower falling away at bottom
   const towerY = 540 + a.padScroll;
@@ -343,10 +367,23 @@ export function drawStage1B(ctx) {
   }
 
   if (a.warningMsg) {
-    ctx.fillStyle = '#dc2626';
-    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 205, 152, 410, 36, 12); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 15px Fredoka, sans-serif';
-    ctx.fillText(a.warningMsg, LOGICAL_W / 2, 175);
+    const warnPulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.014);
+    ctx.save();
+    // Subtle critical vignette so stall/fire danger is unmistakable without covering the rocket
+    const vig = ctx.createRadialGradient(LOGICAL_W / 2, LOGICAL_H / 2, 240, LOGICAL_W / 2, LOGICAL_H / 2, 660);
+    vig.addColorStop(0, 'rgba(220, 38, 38, 0)');
+    vig.addColorStop(1, `rgba(220, 38, 38, ${0.14 + warnPulse * 0.16})`);
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+    const wx = LOGICAL_W - 188, wy = 118;
+    ctx.fillStyle = 'rgba(153, 27, 27, 0.94)';
+    ctx.strokeStyle = '#fca5a5';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(wx - 166, wy - 20, 332, 40, 12); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Fredoka, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(a.warningMsg, wx, wy + 5);
+    ctx.restore();
   }
 
   if (a.sepWindowOpen && !a.separated) {
@@ -368,11 +405,99 @@ export function drawStage1B(ctx) {
   ctx.translate(LOGICAL_W / 2, a.rocketY);
   ctx.rotate(a.tilt);
 
-  const flameLen = 40 + a.thrust * 72 + Math.random() * 18;
-  ctx.fillStyle = '#f97316';
-  ctx.beginPath(); ctx.moveTo(-18, 42); ctx.lineTo(0, 42 + flameLen); ctx.lineTo(18, 42); ctx.fill();
-  ctx.fillStyle = '#fef08a';
-  ctx.beginPath(); ctx.moveTo(-9, 42); ctx.lineTo(0, 42 + flameLen * 0.65); ctx.lineTo(9, 42); ctx.fill();
+  const bOff = a.separated ? a.boosterDropY : 0;
+  const srbX = a.separated ? (a.srbSpreadX || 0) : 0;
+  const srbR = a.separated ? (a.srbRot || 0) : 0;
+  const isStall = a.thrust < 0.25;
+  const engineFire = a.integrity < 55 || a.thrust > 0.93;
+  const nowMs = performance.now();
+  const pulse = Math.sin(nowMs * 0.025);
+
+  const drawFallingCoreAndSRBs = () => {
+    ctx.save();
+    if (a.separated) {
+      ctx.globalAlpha = Math.max(0.25, 1 - bOff / 260);
+    }
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 3;
+    // Core Booster Engine Nozzle Bell
+    ctx.fillStyle = '#334155';
+    ctx.beginPath();
+    ctx.moveTo(-10, 45 + bOff);
+    ctx.lineTo(-14, 52 + bOff);
+    ctx.lineTo(14, 52 + bOff);
+    ctx.lineTo(10, 45 + bOff);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Core Booster Hull
+    ctx.fillStyle = a.separated ? '#94a3b8' : '#e2e8f0';
+    ctx.beginPath(); ctx.roundRect(-23, 6 + bOff, 46, 40, 6); ctx.fill(); ctx.stroke();
+
+    // Twin Side SRBs
+    ctx.save();
+    ctx.translate(-28 - srbX, 28 + bOff * 0.85);
+    ctx.rotate(-srbR);
+    ctx.fillStyle = '#f97316';
+    ctx.beginPath(); ctx.roundRect(-6, -16, 11, 34, 4); ctx.fill(); ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(28 + srbX, 28 + bOff * 0.85);
+    ctx.rotate(srbR);
+    ctx.fillStyle = '#f97316';
+    ctx.beginPath(); ctx.roundRect(-5, -16, 11, 34, 4); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    ctx.restore();
+  };
+
+  // When separated, render spent dropping booster behind the active upper-stage plume
+  if (a.separated) {
+    drawFallingCoreAndSRBs();
+  }
+
+  // Thrust-accurate exhaust flame anchored directly to the active stage's nozzle
+  const nozzleY = a.separated ? 11 : 51;
+  const flameWidth = a.separated ? 14 : 18;
+  if (isStall) {
+    // Weak sputtering stall cough
+    const cough = 6 + (a.thrust / 0.25) * 18 + Math.max(0, pulse) * 8;
+    ctx.fillStyle = 'rgba(249, 115, 22, 0.72)';
+    ctx.beginPath(); ctx.moveTo(-9, nozzleY); ctx.lineTo(pulse * 3, nozzleY + cough); ctx.lineTo(9, nozzleY); ctx.fill();
+  } else {
+    const flameLen = (a.separated ? 18 : 24) + a.thrust * 82 + pulse * 8;
+    const outerCol = a.thrust > 0.93 ? '#ef4444' : '#f97316';
+    ctx.fillStyle = outerCol;
+    ctx.beginPath(); ctx.moveTo(-flameWidth, nozzleY); ctx.lineTo(0, nozzleY + flameLen); ctx.lineTo(flameWidth, nozzleY); ctx.fill();
+    ctx.fillStyle = '#fef08a';
+    ctx.beginPath(); ctx.moveTo(-flameWidth * 0.5, nozzleY); ctx.lineTo(0, nozzleY + flameLen * 0.65); ctx.lineTo(flameWidth * 0.5, nozzleY); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(-flameWidth * 0.22, nozzleY); ctx.lineTo(0, nozzleY + flameLen * 0.28); ctx.lineTo(flameWidth * 0.22, nozzleY); ctx.fill();
+
+    // Twin SRB side plumes while still attached
+    if (!a.separated) {
+      const srbLen = flameLen * 0.56;
+      for (const side of [-1, 1]) {
+        const sx = side * 28;
+        ctx.fillStyle = outerCol;
+        ctx.beginPath(); ctx.moveTo(sx - 5, 45); ctx.lineTo(sx, 45 + srbLen); ctx.lineTo(sx + 5, 45); ctx.fill();
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath(); ctx.moveTo(sx - 2.5, 45); ctx.lineTo(sx, 45 + srbLen * 0.58); ctx.lineTo(sx + 2.5, 45); ctx.fill();
+      }
+    }
+  }
+
+  // Upper Stage Second-Stage Engine Nozzle Bell (tucked inside interstage until separation)
+  ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(-8, 5);
+  ctx.lineTo(-11, 13);
+  ctx.lineTo(11, 13);
+  ctx.lineTo(8, 5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
 
   // Upper Stage + Fairing
   ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 3;
@@ -382,26 +507,30 @@ export function drawStage1B(ctx) {
   ctx.fillStyle = '#ef4444';
   ctx.beginPath(); ctx.moveTo(-21, -50); ctx.lineTo(0, -86); ctx.lineTo(21, -50); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-  // Side SRBs & Core Booster (peel outward on stage separation)
-  const bOff = a.separated ? a.boosterDropY : 0;
-  const srbX = a.separated ? (a.srbSpreadX || 0) : 0;
-  const srbR = a.separated ? (a.srbRot || 0) : 0;
-  ctx.fillStyle = a.separated ? '#94a3b8' : '#e2e8f0';
-  ctx.beginPath(); ctx.roundRect(-23, 6 + bOff, 46, 40, 6); ctx.fill(); ctx.stroke();
+  // Before separation, draw attached Core Booster & SRBs cleanly in front of the flame root
+  if (!a.separated) {
+    drawFallingCoreAndSRBs();
+  }
 
-  ctx.save();
-  ctx.translate(-28 - srbX, 28 + bOff * 0.85);
-  ctx.rotate(-srbR);
-  ctx.fillStyle = '#f97316';
-  ctx.beginPath(); ctx.roundRect(-6, -16, 11, 34, 4); ctx.fill(); ctx.stroke();
-  ctx.restore();
-
-  ctx.save();
-  ctx.translate(28 + srbX, 28 + bOff * 0.85);
-  ctx.rotate(srbR);
-  ctx.fillStyle = '#f97316';
-  ctx.beginPath(); ctx.roundRect(-5, -16, 11, 34, 4); ctx.fill(); ctx.stroke();
-  ctx.restore();
+  // Visible engine-bay fire tongues anchored cleanly to the active rocket engine skirt
+  if (engineFire) {
+    const sway = Math.sin(nowMs * 0.03) * 4;
+    const fireBaseY = a.separated ? 6 : 44;
+    const skirtX = a.separated ? 17 : 21;
+    for (const side of [-1, 1]) {
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.moveTo(side * (skirtX - 3), fireBaseY + 2);
+      ctx.quadraticCurveTo(side * (skirtX + 10), fireBaseY - 8, side * (skirtX + 4) + sway, fireBaseY - 22);
+      ctx.quadraticCurveTo(side * (skirtX - 2), fireBaseY - 10, side * (skirtX - 7), fireBaseY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#fde047';
+      ctx.beginPath();
+      ctx.arc(side * skirtX, fireBaseY - 5, 4.5 + Math.abs(pulse) * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   ctx.restore();
 

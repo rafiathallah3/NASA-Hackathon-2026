@@ -2,9 +2,11 @@ import { LOGICAL_W, LOGICAL_H } from '../config.js';
 import { state, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
-import { addFloatText, drawCanvasControlBar } from '../sprites.js';
+import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
+
+const REENTRY_STARS = createStarfield(65, LOGICAL_W, 280, 40415);
 
 export function startStage4EarthReturn() {
   const modal = document.getElementById('modal');
@@ -487,11 +489,12 @@ export function drawStage4(ctx) {
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
 
-    // Stars above ionosphere
-    ctx.fillStyle = '#e2e8f0';
-    for (let i = 0; i < 45; i++) {
-      ctx.fillRect((i * 191) % LOGICAL_W, (i * 47) % 240, 2, 2);
-    }
+    // Stars above ionosphere (seeded organic distribution)
+    drawStarfield(ctx, REENTRY_STARS, LOGICAL_W, 280, {
+      maxY: 250,
+      alphaMul: 0.85,
+      nowSec: performance.now() * 0.001
+    });
 
     // Glowing Earth limb + Aurora band
     ctx.fillStyle = '#1d4ed8';

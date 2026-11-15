@@ -2,9 +2,11 @@ import { LOGICAL_W, LOGICAL_H, SHIP_W, SHIP_H, CREW_ROSTER } from '../config.js'
 import { state, getScenario, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
-import { addFloatText, drawChibiEngineer, drawCanvasControlBar } from '../sprites.js';
+import { addFloatText, drawChibiEngineer, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
+
+const CRUISE_STARS = createStarfield(90, LOGICAL_W, LOGICAL_H, 20261);
 
 const ROOMS = [
   { id: 'REACTOR', name: 'REACTOR & POWER BAY', x: 70,   y: 70,  w: 540, h: 360, floor: '#182236', accent: '#f59e0b' },
@@ -477,17 +479,94 @@ export function handleStage2CanvasClick(lx, ly) {
   }
 }
 
+const CTRL_RADIUS = 18;
+const HOLO_TABLE_BOX = { x: 670, y: 86, w: 540, h: 120 };
+const SHIP_COLLIDERS = [...WALLS, HOLO_TABLE_BOX];
+
+function resolveCircleBox(nx, ny, r, box) {
+  const cx = Math.max(box.x, Math.min(nx, box.x + box.w));
+  const cy = Math.max(box.y, Math.min(ny, box.y + box.h));
+  const dx = nx - cx;
+  const dy = ny - cy;
+  const distSq = dx * dx + dy * dy;
+  if (distSq >= r * r) return { x: nx, y: ny };
+  if (distSq > 1e-6) {
+    const dist = Math.sqrt(distSq);
+    const push = r - dist;
+    return { x: nx + (dx / dist) * push, y: ny + (dy / dist) * push };
+  }
+  const left = nx - box.x;
+  const right = box.x + box.w - nx;
+  const top = ny - box.y;
+  const bottom = box.y + box.h - ny;
+  const minEdge = Math.min(left, right, top, bottom);
+  if (minEdge === left) return { x: box.x - r, y: ny };
+  if (minEdge === right) return { x: box.x + box.w + r, y: ny };
+  if (minEdge === top) return { x: nx, y: box.y - r };
+  return { x: nx, y: box.y + box.h + r };
+}
+
 function moveCtrlPlayer(p, dx, dy) {
-  const r = 16;
-  const blocked = (nx, ny) => {
-    if (nx < 88 || nx > SHIP_W - 88 || ny < 88 || ny > SHIP_H - 88) return true;
-    for (const w of WALLS) {
-      if (nx + r > w.x && nx - r < w.x + w.w && ny + r > w.y && ny - r < w.y + w.h) return true;
+  const stepDist = Math.hypot(dx, dy);
+  const steps = Math.max(1, Math.ceil(stepDist / 6));
+  const sx = dx / steps;
+  const sy = dy / steps;
+  let nx = p.x;
+  let ny = p.y;
+  for (let s = 0; s < steps; s++) {
+    nx += sx;
+    ny += sy;
+    for (let iter = 0; iter < 2; iter++) {
+      for (const box of SHIP_COLLIDERS) {
+        const res = resolveCircleBox(nx, ny, CTRL_RADIUS, box);
+        nx = res.x;
+        ny = res.y;
+      }
+      nx = Math.max(70 + CTRL_RADIUS, Math.min(SHIP_W - 70 - CTRL_RADIUS, nx));
+      ny = Math.max(70 + CTRL_RADIUS, Math.min(SHIP_H - 70 - CTRL_RADIUS, ny));
     }
-    return false;
-  };
-  if (dx !== 0 && !blocked(p.x + dx, p.y)) p.x += dx;
-  if (dy !== 0 && !blocked(p.x, p.y + dy)) p.y += dy;
+  }
+  p.x = nx;
+  p.y = ny;
+}
+
+function segmentIntersectsBox(ax, ay, bx, by, box, pad = 20) {
+  const minX = box.x - pad;
+  const maxX = box.x + box.w + pad;
+  const minY = box.y - pad;
+  const maxY = box.y + box.h + pad;
+  const dx = bx - ax;
+  const dy = by - ay;
+  let t0 = 0;
+  let t1 = 1;
+  const checks = [
+    [-dx, ax - minX],
+    [dx, maxX - ax],
+    [-dy, ay - minY],
+    [dy, maxY - ay]
+  ];
+  for (const [p, q] of checks) {
+    if (Math.abs(p) < 1e-8) {
+      if (q < 0) return false;
+    } else {
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) return false;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return false;
+        if (r < t1) t1 = r;
+      }
+    }
+  }
+  return t0 <= t1;
+}
+
+function hasClearShipLOS(ax, ay, bx, by, pad = 20) {
+  for (const box of SHIP_COLLIDERS) {
+    if (segmentIntersectsBox(ax, ay, bx, by, box, pad)) return false;
+  }
+  return true;
 }
 
 function getShipRoomId(x, y) {
@@ -500,38 +579,108 @@ function getShipRoomId(x, y) {
   return x < 910 ? 'ENGINE' : 'COMMS';
 }
 
-const ROOM_SPINE_DOOR_X = {
-  REACTOR: 350,
-  BRIDGE: 940,
-  SCI_LAB: 1540,
-  ENGINE: 430,
-  COMMS: 1370
+const ROOM_DOORS = {
+  REACTOR: [
+    { to: 'BRIDGE',  from: { x: 556, y: 270 }, into: { x: 664, y: 270 }, door: { x: 610, y: 270 } },
+    { to: 'HALLWAY', from: { x: 350, y: 376 }, into: { x: 350, y: 480 }, door: { x: 350, y: 430 } }
+  ],
+  BRIDGE: [
+    { to: 'REACTOR', from: { x: 664, y: 270 }, into: { x: 556, y: 270 }, door: { x: 610, y: 270 } },
+    { to: 'SCI_LAB', from: { x: 1216, y: 270 }, into: { x: 1324, y: 270 }, door: { x: 1270, y: 270 } },
+    { to: 'HALLWAY', from: { x: 940, y: 376 }, into: { x: 940, y: 480 }, door: { x: 940, y: 430 } }
+  ],
+  SCI_LAB: [
+    { to: 'BRIDGE',  from: { x: 1324, y: 270 }, into: { x: 1216, y: 270 }, door: { x: 1270, y: 270 } },
+    { to: 'HALLWAY', from: { x: 1540, y: 376 }, into: { x: 1540, y: 480 }, door: { x: 1540, y: 430 } }
+  ],
+  HALLWAY: [
+    { to: 'REACTOR', from: { x: 350, y: 480 }, into: { x: 350, y: 376 }, door: { x: 350, y: 430 } },
+    { to: 'BRIDGE',  from: { x: 940, y: 480 }, into: { x: 940, y: 376 }, door: { x: 940, y: 430 } },
+    { to: 'SCI_LAB', from: { x: 1540, y: 480 }, into: { x: 1540, y: 376 }, door: { x: 1540, y: 430 } },
+    { to: 'ENGINE',  from: { x: 430, y: 480 }, into: { x: 430, y: 584 }, door: { x: 430, y: 530 } },
+    { to: 'COMMS',   from: { x: 1370, y: 480 }, into: { x: 1370, y: 584 }, door: { x: 1370, y: 530 } }
+  ],
+  ENGINE: [
+    { to: 'HALLWAY', from: { x: 430, y: 584 }, into: { x: 430, y: 480 }, door: { x: 430, y: 530 } },
+    { to: 'COMMS',   from: { x: 856, y: 730 }, into: { x: 964, y: 730 }, door: { x: 910, y: 730 } }
+  ],
+  COMMS: [
+    { to: 'HALLWAY', from: { x: 1370, y: 584 }, into: { x: 1370, y: 480 }, door: { x: 1370, y: 530 } },
+    { to: 'ENGINE',  from: { x: 964, y: 730 }, into: { x: 856, y: 730 }, door: { x: 910, y: 730 } }
+  ]
 };
 
+function findFirstShipDoor(startRoom, goalRoom) {
+  if (startRoom === goalRoom) return null;
+  const visited = new Set([startRoom]);
+  const queue = [];
+  for (const edge of (ROOM_DOORS[startRoom] || [])) {
+    queue.push({ room: edge.to, firstEdge: edge });
+    visited.add(edge.to);
+  }
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (cur.room === goalRoom) return cur.firstEdge;
+    for (const edge of (ROOM_DOORS[cur.room] || [])) {
+      if (!visited.has(edge.to)) {
+        visited.add(edge.to);
+        queue.push({ room: edge.to, firstEdge: cur.firstEdge });
+      }
+    }
+  }
+  return null;
+}
+
+function pointNearSeg(px, py, ax, ay, bx, by, maxPerpDist) {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const lenSq = vx * vx + vy * vy;
+  if (lenSq < 1) return false;
+  const t = ((px - ax) * vx + (py - ay) * vy) / lenSq;
+  if (t < -0.1 || t > 1.05) return false;
+  const projX = ax + t * vx;
+  const projY = ay + t * vy;
+  return Math.hypot(px - projX, py - projY) <= maxPerpDist;
+}
+
 function steerShipBot(b, tx, ty, dt) {
-  const botRoom = getShipRoomId(b.x, b.y);
-  const targetRoom = getShipRoomId(tx, ty);
   let wx = tx;
   let wy = ty;
 
-  if (botRoom !== targetRoom) {
-    if (botRoom !== 'HALLWAY') {
-      const exitDoorX = ROOM_SPINE_DOOR_X[botRoom] || 940;
-      if (Math.abs(b.x - exitDoorX) > 24) {
-        wx = exitDoorX;
-        wy = b.y < 430 ? Math.min(b.y, 385) : Math.max(b.y, 575);
-      } else {
-        wx = exitDoorX;
-        wy = 480;
+  // Use straight path only when cleanly unobstructed with 20px wall/table corner margin
+  if (!hasClearShipLOS(b.x, b.y, tx, ty, 20)) {
+    const botRoom = getShipRoomId(b.x, b.y);
+    const targetRoom = getShipRoomId(tx, ty);
+    if (botRoom !== targetRoom) {
+      const edge = findFirstShipDoor(botRoom, targetRoom);
+      if (edge) {
+        const atApproach = Math.hypot(b.x - edge.from.x, b.y - edge.from.y) <= 18;
+        const inDoorCorridor = pointNearSeg(b.x, b.y, edge.from.x, edge.from.y, edge.into.x, edge.into.y, 18);
+        if (atApproach || inDoorCorridor) {
+          wx = edge.into.x;
+          wy = edge.into.y;
+        } else {
+          wx = edge.from.x;
+          wy = edge.from.y;
+        }
       }
     } else {
-      const enterDoorX = ROOM_SPINE_DOOR_X[targetRoom] || tx;
-      if (Math.abs(b.x - enterDoorX) > 24) {
-        wx = enterDoorX;
-        wy = 480;
-      } else {
-        wx = tx;
-        wy = ty;
+      // Bot just crossed a room boundary line while still inside wall doorway band: clear the nearest door portal first
+      let nearestPortal = null;
+      let bestDist = Infinity;
+      for (const edge of (ROOM_DOORS[botRoom] || [])) {
+        const dDoor = Math.hypot(b.x - edge.door.x, b.y - edge.door.y);
+        if (dDoor < 78 && dDoor < bestDist) {
+          bestDist = dDoor;
+          nearestPortal = edge.from;
+        }
+      }
+      if (nearestPortal) {
+        wx = nearestPortal.x;
+        wy = nearestPortal.y;
+      } else if (botRoom === 'BRIDGE') {
+        wx = 940;
+        wy = 270;
       }
     }
   }
@@ -539,10 +688,11 @@ function steerShipBot(b, tx, ty, dt) {
   const dx = wx - b.x;
   const dy = wy - b.y;
   const d = Math.hypot(dx, dy);
-  if (d > 10) {
+  if (d > 6) {
+    const step = Math.min(d, 210 * dt);
     b.angle = Math.atan2(dy, dx);
     b.walk += 0.2;
-    moveCtrlPlayer(b, (dx / d) * 210 * dt, (dy / d) * 210 * dt);
+    moveCtrlPlayer(b, (dx / d) * step, (dy / d) * step);
   }
   return Math.hypot(tx - b.x, ty - b.y);
 }
@@ -808,16 +958,154 @@ export function updateStage2(dt, onNextStage) {
   updateBottomHUD();
 }
 
+function drawShipBayDecorations(ctx, nowMs) {
+  const glowPulse = 0.5 + 0.5 * Math.sin(nowMs * 0.005);
+
+  // Subtle inset metallic deck plating in each room
+  ctx.save();
+  for (const rm of ROOMS) {
+    ctx.strokeStyle = rm.accent;
+    ctx.globalAlpha = 0.14;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(rm.x + 12, rm.y + 12, rm.w - 24, rm.h - 24);
+  }
+  ctx.globalAlpha = 1;
+
+  // Spine Deck transverse structural hull ribs
+  ctx.fillStyle = '#273549';
+  for (let rx = 160; rx < 1760; rx += 180) {
+    ctx.fillRect(rx - 4, 434, 8, 92);
+  }
+
+  // Bay directional floor decals near doorways
+  ctx.font = 'bold 10px JetBrains Mono, monospace';
+  ctx.textAlign = 'center';
+  const doorSigns = [
+    { x: 350,  y: 454, txt: '▲ REACTOR', col: '#f59e0b' },
+    { x: 940,  y: 454, txt: '▲ BRIDGE',  col: '#38bdf8' },
+    { x: 1540, y: 454, txt: '▲ SCI LAB', col: '#a855f7' },
+    { x: 430,  y: 514, txt: '▼ ENGINE',  col: '#ef4444' },
+    { x: 1370, y: 514, txt: '▼ COMMS',   col: '#10b981' }
+  ];
+  for (const ds of doorSigns) {
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    ctx.beginPath(); ctx.roundRect(ds.x - 42, ds.y - 10, 84, 15, 4); ctx.fill();
+    ctx.fillStyle = ds.col;
+    ctx.fillText(ds.txt, ds.x, ds.y + 1);
+  }
+
+  // 1. REACTOR BAY: Glowing Fission Reactor Core + Coolant Manifolds
+  const rcX = 485, rcY = 162;
+  const rcGrad = ctx.createRadialGradient(rcX, rcY, 10, rcX, rcY, 54);
+  rcGrad.addColorStop(0, `rgba(245, 158, 11, ${0.42 + glowPulse * 0.25})`);
+  rcGrad.addColorStop(1, 'rgba(245, 158, 11, 0)');
+  ctx.fillStyle = rcGrad;
+  ctx.beginPath(); ctx.arc(rcX, rcY, 54, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#64748b'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(rcX, rcY, 36, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#0f172a'; ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(rcX, rcY, 22, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = `rgba(253, 224, 71, ${0.65 + glowPulse * 0.35})`;
+  ctx.beginPath(); ctx.arc(rcX, rcY, 11, 0, Math.PI * 2); ctx.fill();
+  // Coolant feed pipes along upper Reactor bulkhead
+  ctx.strokeStyle = '#475569'; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.moveTo(115, 92); ctx.lineTo(485, 92); ctx.lineTo(485, 126); ctx.stroke();
+  ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(115, 92); ctx.lineTo(485, 92); ctx.lineTo(485, 126); ctx.stroke();
+
+  // 2. BRIDGE: Panoramic Starfield Viewports + Helm Crew Seats
+  for (const wx of [735, 1145]) {
+    ctx.fillStyle = '#030712'; ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(wx - 68, 66, 136, 14, 5); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(186, 230, 253, 0.7)';
+    ctx.fillRect(wx - 48, 71, 3, 3);
+    ctx.fillRect(wx + 12, 70, 2, 2);
+    ctx.fillRect(wx + 44, 73, 3, 3);
+  }
+  for (const seatX of [810, 1070]) {
+    ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#475569'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(seatX - 18, 222, 36, 24, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#0284c7';
+    ctx.fillRect(seatX - 12, 240, 24, 6);
+  }
+
+  // 3. SCIENCE LAB: Cryo-Sample Containment Rack + Spectroscopy Workbench
+  ctx.fillStyle = '#1e1b4b'; ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.roundRect(1310, 96, 118, 40, 8); ctx.fill(); ctx.stroke();
+  for (let i = 0; i < 4; i++) {
+    ctx.fillStyle = i % 2 === 0 ? '#38bdf8' : '#c084fc';
+    ctx.beginPath(); ctx.arc(1330 + i * 26, 116, 7, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = '#0f172a'; ctx.strokeStyle = '#64748b'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.roundRect(1660, 96, 112, 42, 8); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillRect(1672, 106, 36, 20);
+  ctx.fillStyle = '#22c55e';
+  ctx.fillRect(1716, 108, 42, 16);
+
+  // 4. ENGINEERING BAY: Twin Ion Thruster Bells + Hazard Caution Border + Tool Lockers
+  ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)'; ctx.lineWidth = 4;
+  ctx.setLineDash([12, 10]);
+  ctx.strokeRect(92, 550, 796, 340);
+  ctx.setLineDash([]);
+  // Tool lockers beside Engine Wrench Rack
+  ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#64748b'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.roundRect(102, 566, 94, 34, 6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(112, 574, 22, 18); ctx.fillRect(142, 574, 22, 18);
+  // Twin Thruster Core Chambers along rear Engine bulkhead
+  for (const tx of [185, 345]) {
+    const tGrad = ctx.createRadialGradient(tx, 855, 6, tx, 855, 42);
+    tGrad.addColorStop(0, `rgba(56, 189, 248, ${0.45 + glowPulse * 0.25})`);
+    tGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    ctx.fillStyle = tGrad;
+    ctx.beginPath(); ctx.arc(tx, 855, 42, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(tx - 32, 828, 64, 48, 10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath(); ctx.arc(tx, 852, 13, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // 5. COMMS & AIRLOCK: EVA Suit Lockers + Circular Floor Airlock Hatch + Telemetry Array
+  ctx.fillStyle = '#0f172a'; ctx.strokeStyle = '#10b981'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.roundRect(985, 558, 152, 38, 8); ctx.fill(); ctx.stroke();
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = '#e2e8f0';
+    ctx.beginPath(); ctx.roundRect(1002 + i * 44, 566, 26, 22, 5); ctx.fill();
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(1007 + i * 44, 570, 16, 6);
+  }
+  // Floor Airlock Hatch
+  const ax = 1210, ay = 785;
+  ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#64748b'; ctx.lineWidth = 3.5;
+  ctx.beginPath(); ctx.arc(ax, ay, 48, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
+  ctx.beginPath(); ctx.arc(ax, ay, 36, 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath(); ctx.arc(ax, ay, 18, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 9.5px JetBrains Mono, monospace';
+  ctx.fillText('EVA AIRLOCK', ax, ay + 62);
+  // Deep-Space Relay Rack
+  ctx.fillStyle = '#0f172a'; ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(1675, 795, 96, 68, 8); ctx.fill(); ctx.stroke();
+  for (let r = 0; r < 3; r++) {
+    ctx.fillStyle = (Math.floor(nowMs / 400) + r) % 2 === 0 ? '#4ade80' : '#0ea5e9';
+    ctx.beginPath(); ctx.arc(1694 + r * 24, 816, 4, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
 export function drawStage2(ctx) {
-  // Deep space parallax starfield
+  const nowMs = performance.now();
+  // Deep space organic parallax starfield
   ctx.fillStyle = '#050814';
   ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-  ctx.fillStyle = '#e2e8f0';
-  for (let i = 0; i < 65; i++) {
-    const sx = ((i * 211) - state.stage2Cam.x * 0.2 + LOGICAL_W * 4) % LOGICAL_W;
-    const sy = ((i * 113) - state.stage2Cam.y * 0.2 + LOGICAL_H * 4) % LOGICAL_H;
-    ctx.fillRect(sx, sy, (i % 3 === 0) ? 2.5 : 1.5, (i % 3 === 0) ? 2.5 : 1.5);
-  }
+  drawStarfield(ctx, CRUISE_STARS, LOGICAL_W, LOGICAL_H, {
+    offsetX: state.stage2Cam.x * 0.14,
+    offsetY: state.stage2Cam.y * 0.14,
+    nowSec: nowMs * 0.001
+  });
 
   ctx.save();
   ctx.translate(-state.stage2Cam.x, -state.stage2Cam.y);
@@ -839,12 +1127,14 @@ export function drawStage2(ctx) {
       ctx.beginPath(); ctx.moveTo(gx, rm.y); ctx.lineTo(gx, rm.y + rm.h); ctx.stroke();
     }
     ctx.fillStyle = rm.accent;
-    ctx.globalAlpha = 0.22;
+    ctx.globalAlpha = 0.24;
     ctx.font = 'bold 20px Fredoka, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(rm.name, rm.x + rm.w / 2, rm.y + 34);
     ctx.globalAlpha = 1;
   }
+
+  drawShipBayDecorations(ctx, nowMs);
 
   // Conduits along Spine Deck
   ctx.strokeStyle = 'rgba(56, 189, 248, 0.22)';
@@ -855,7 +1145,7 @@ export function drawStage2(ctx) {
   ctx.moveTo(680, 720); ctx.lineTo(680, 480);
   ctx.stroke();
 
-  // Sliding Airlock Doors
+  // Sliding Airlock Doors with proximity LEDs
   for (const d of DOORS) {
     const open = state.ctrlPlayers.some(p => Math.hypot(p.x - d.x, p.y - d.y) < 110);
     if (!open) {
@@ -864,6 +1154,12 @@ export function drawStage2(ctx) {
       if (d.vertical) ctx.fillRect(d.x - 4, d.y - 58, 8, 116);
       else ctx.fillRect(d.x - 58, d.y - 4, 116, 8);
       ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = open ? '#4ade80' : '#f59e0b';
+    if (d.vertical) {
+      ctx.beginPath(); ctx.arc(d.x, d.y - 60, 4, 0, Math.PI * 2); ctx.arc(d.x, d.y + 60, 4, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.arc(d.x - 60, d.y, 4, 0, Math.PI * 2); ctx.arc(d.x + 60, d.y, 4, 0, Math.PI * 2); ctx.fill();
     }
   }
 

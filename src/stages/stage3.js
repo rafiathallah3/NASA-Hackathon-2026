@@ -2,9 +2,43 @@ import { LOGICAL_W, LOGICAL_H, LUNAR_W, LUNAR_H, CREW_ROSTER, SCIENCE_OBJECTIVES
 import { state, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
-import { addFloatText, drawCanvasControlBar } from '../sprites.js';
+import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
+
+const SKY_HORIZON_WORLD_Y = 260;
+const LUNAR_STARS = createStarfield(95, LOGICAL_W, 300, 30315);
+const TEI_STARS = createStarfield(95, LOGICAL_W, LOGICAL_H, 30399);
+
+function buildStaticLunarSurfaceFeatures() {
+  let seed = 918273;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const patches = [];
+  for (let i = 0; i < 42; i++) {
+    patches.push({
+      x: 80 + rnd() * (LUNAR_W - 160),
+      y: 320 + rnd() * (LUNAR_H - 380),
+      rx: 48 + rnd() * 95,
+      ry: 18 + rnd() * 34,
+      dark: rnd() < 0.65
+    });
+  }
+  const pebbles = [];
+  for (let i = 0; i < 160; i++) {
+    pebbles.push({
+      x: 40 + rnd() * (LUNAR_W - 80),
+      y: 315 + rnd() * (LUNAR_H - 360),
+      rx: 2.5 + rnd() * 4.5,
+      ry: 1.4 + rnd() * 2.2,
+      light: rnd() < 0.4
+    });
+  }
+  return { patches, pebbles };
+}
+const LUNAR_SURFACE = buildStaticLunarSurfaceFeatures();
 
 function getObjectiveSampleFlavor(objectiveId, sampleCount = 1, sciMul = 1) {
   const highYield = sampleCount >= 2 || sciMul > 1;
@@ -36,7 +70,7 @@ function build25DLunarTerrain() {
     { x: 1180, y: 490,  rx: 44, ry: 20, isTarget: false },
     { x: 1480, y: 1080, rx: 60, ry: 28, isTarget: false },
     { x: 1620, y: 420,  rx: 50, ry: 22, isTarget: false },
-    { x: 1980, y: 690,  rx: 88, ry: 42, isTarget: true }
+    { x: 1920, y: 780,  rx: 84, ry: 38, isTarget: true }
   ];
 
   state.lunarBoulders = [
@@ -50,9 +84,9 @@ function build25DLunarTerrain() {
   ];
 
   state.scienceNodes = [
-    { id: 'basalt',   name: 'Basalt Ridge',     x: 840,  y: 410,  scanned: false, pts: 65 },
+    { id: 'basalt',   name: 'Basalt Ridge',     x: 840,  y: 445,  scanned: false, pts: 65 },
     { id: 'ice',      name: 'Shadowed Ice Core', x: 1120, y: 1090, scanned: false, pts: 75 },
-    { id: 'regolith', name: 'South Rim Vein',    x: 1580, y: 360,  scanned: false, pts: 75 }
+    { id: 'regolith', name: 'South Rim Vein',    x: 1580, y: 425,  scanned: false, pts: 75 }
   ];
 
   state.evaTasks = [
@@ -122,6 +156,13 @@ export function startStage3A() {
     padRadius: 105,
     windMul: 1.0,
     landed: false,
+    crashed: false,
+    crashReason: '',
+    landingPts: 0,
+    landingSpeedMs: 0,
+    landingOnPad: false,
+    readyToContinue: false,
+    continueBtnRect: null,
     targetSiteName,
     targetScienceLabel
   };
@@ -192,22 +233,92 @@ export function startStage3A() {
   });
 }
 
-export function updateStage3A(dt, onNextStage) {
+function triggerStage3AAbort(reason, onAbortToMenu) {
   const l = state.lander;
+  l.crashed = true;
+  l.crashReason = reason;
+  l.thrusting = false;
+  l.hoverTrim = false;
+  state.screenShake = 0.45;
+  for (let i = 0; i < 28; i++) {
+    const ang = (i / 28) * Math.PI * 2;
+    const spd = 70 + Math.random() * 140;
+    state.lunarParticles.push({
+      x: l.x + (Math.random() - 0.5) * 20,
+      y: l.y - 12,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd * 0.55 - 35,
+      life: 0.9,
+      size: 4 + Math.random() * 5,
+      color: i % 3 === 0 ? '#ef4444' : i % 3 === 1 ? '#f97316' : '#fde047'
+    });
+  }
+  logBlackBox('STAGE 3A', `LUNAR CRASH: ${reason}`, 'warn');
+  playTone(95, 'sawtooth', 0.5, 0.16);
+  updateBottomHUD();
 
-  // Smooth post-touchdown suspension settle before advancing (never snap!)
+  const modal = document.getElementById('modal');
+  const mc = document.getElementById('modal-content');
+  if (modal && mc) {
+    modal.classList.remove('hidden');
+    mc.innerHTML = `
+      <div style="text-align:center;">
+        <h2 style="color:#f87171;margin:0 0 8px;">Lunar Landing Failed: Game Over</h2>
+        <p class="sub" style="margin-bottom:16px;">${reason}</p>
+        <div class="config-panel" style="text-align:left;margin-bottom:20px;">
+          <div><b style="color:#fde047;">[SPACE / ArrowUp]</b> Fire retro-thrust to keep vertical speed below <b style="color:#4ade80;">7.5 m/s</b> at touchdown (<= 4.2 m/s for Textbook).</div>
+          <div style="margin-top:6px;"><b style="color:#fde047;">[SHIFT]</b> Engage Hover Trim near the surface to cushion descent gently.</div>
+          <div style="margin-top:6px;"><b style="color:#fde047;">[WASD]</b> Keep the lander level and aligned with the <b style="color:#38bdf8;">Point A</b> pad ring.</div>
+        </div>
+        <div class="modal-actions" style="justify-content:center;">
+          <button id="btn-crash-menu" class="btn-secondary" type="button">Return to Menu</button>
+          <button id="btn-retry-landing" class="btn-primary" style="background:#f87171;color:#0b111e;" type="button">Retry Lunar Descent</button>
+        </div>
+      </div>
+    `;
+    const retryBtn = document.getElementById('btn-retry-landing');
+    const menuBtn = document.getElementById('btn-crash-menu');
+    if (retryBtn) {
+      retryBtn.onclick = () => {
+        modal.classList.add('hidden');
+        startStage3A();
+      };
+    }
+    if (menuBtn) {
+      menuBtn.onclick = () => {
+        modal.classList.add('hidden');
+        if (onAbortToMenu) onAbortToMenu();
+      };
+    }
+  }
+}
+
+export function handleStage3AContinue(onNextStage) {
+  const l = state.lander;
+  if (state.stage !== 'STAGE3A' || !l || !l.landed || l.crashed) return false;
+  if (!l.readyToContinue && l.settleTimer < 0.35) return false;
+  playTone(640, 'triangle', 0.16, 0.1);
+  if (onNextStage) onNextStage();
+  return true;
+}
+
+export function updateStage3A(dt, onNextStage, onAbortToMenu) {
+  const l = state.lander;
+  if (l.crashed) return;
+
+  // Smooth post-touchdown suspension settle; wait for explicit player Continue click/key
   if (l.landed) {
     l.tiltX *= Math.pow(0.08, dt);
     l.legCompress = Math.max(0, l.legCompress - dt * 1.4);
     l.settleTimer += dt;
-    // Smooth camera pan stays locked cleanly on landed rocket
-    const tx = Math.max(0, Math.min(LUNAR_W - LOGICAL_W, l.x - LOGICAL_W / 2 + 120));
-    const ty = Math.max(0, Math.min(LUNAR_H - LOGICAL_H, l.y - LOGICAL_H / 2));
+    if (l.settleTimer >= 0.65) {
+      l.readyToContinue = true;
+    }
+    // Smooth camera pan frames landed rocket cleanly above bottom Touchdown Card
+    const tx = Math.max(0, Math.min(LUNAR_W - LOGICAL_W, l.x - LOGICAL_W / 2));
+    const ty = Math.max(0, Math.min(LUNAR_H - LOGICAL_H, l.y - LOGICAL_H / 2 + 45));
     state.lunarCam.x += (tx - state.lunarCam.x) * Math.min(1, dt * 4);
     state.lunarCam.y += (ty - state.lunarCam.y) * Math.min(1, dt * 4);
-    if (l.settleTimer >= 1.55) {
-      onNextStage();
-    }
     return;
   }
 
@@ -300,11 +411,24 @@ export function updateStage3A(dt, onNextStage) {
 
   if (l.z <= 0) {
     l.z = 0;
+    l.thrusting = false;
+    l.hoverTrim = false;
+    const vSpd = Math.abs(l.vz * 0.24);
+    const tiltAbs = Math.abs(l.tiltX);
+
+    if (vSpd > 7.5 || tiltAbs > 0.35) {
+      const reason = vSpd > 7.5
+        ? `Descent impact velocity too high (${vSpd.toFixed(1)} m/s vs 7.5 m/s limit). Fire [SPACE] retro-thrust earlier!`
+        : `Lander touched down tilted too far (${Math.round((tiltAbs * 180) / Math.PI)} deg) and toppled on the lunar surface.`;
+      triggerStage3AAbort(reason, onAbortToMenu);
+      return;
+    }
+
     l.landed = true;
     l.legCompress = 0.65;
     l.settleTimer = 0;
+    l.readyToContinue = false;
     state.screenShake = 0.25;
-    const vSpd = Math.abs(l.vz * 0.24);
     const padDist = Math.hypot(l.x - l.padX, (l.y - l.padY) * 1.4);
     const onPad = padDist <= (l.padRadius || 105);
 
@@ -314,26 +438,33 @@ export function updateStage3A(dt, onNextStage) {
       l.padY = l.y;
     }
 
+    let pts = 85;
     if (onPad && vSpd <= 4.2) {
       l.hardLandingPenalty = false;
+      pts = 200;
       state.landingGrade = 'TEXTBOOK 4P BUTTER LANDING (+200⭐)';
       state.score += 200;
-      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 105, 'TEXTBOOK 4P TOUCHDOWN! +200⭐', '#4ade80');
+      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 125, 'TEXTBOOK 4P TOUCHDOWN! +200⭐', '#4ade80');
       logBlackBox('STAGE 3A', `Textbook landing at Point A (${vSpd.toFixed(1)} m/s, ${Math.round(l.fuel)}% fuel left).`, 'good');
     } else if (onPad && vSpd <= 6.8) {
       l.hardLandingPenalty = false;
+      pts = 140;
       state.landingGrade = 'SAFE TOUCHDOWN (+140⭐)';
       state.score += 140;
-      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 105, 'SAFE LANDING! +140⭐', '#38bdf8');
+      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 125, 'SAFE LANDING! +140⭐', '#38bdf8');
       logBlackBox('STAGE 3A', `Safe touchdown at Point A (${vSpd.toFixed(1)} m/s).`, 'good');
     } else {
       l.hardLandingPenalty = true;
       l.shockRepaired = false;
+      pts = 85;
       state.landingGrade = onPad ? 'HARD PAD TOUCHDOWN (+85⭐ • -28Wh SHOCK)' : 'FIELD LANDING (+85⭐ • -28Wh SHOCK)';
       state.score += 85;
-      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 105, 'HARD TOUCHDOWN! ROVER BATTERY SHOCK (-28Wh)!', '#fbbf24');
+      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 125, 'HARD TOUCHDOWN! ROVER BATTERY SHOCK (-28Wh)!', '#fbbf24');
       logBlackBox('STAGE 3A', `Hard touchdown (${vSpd.toFixed(1)} m/s) caused -28 Wh rover battery shock (repairable at Lander).`, 'warn');
     }
+    l.landingPts = pts;
+    l.landingSpeedMs = vSpd;
+    l.landingOnPad = onPad;
     playSuccessChord();
     showMissionToast('Lunar Touchdown', state.landingGrade);
   }
@@ -351,6 +482,7 @@ export function startStage3B() {
   state.sampleCollected = false;
   state.samplesCollectedCount = 0;
   state.sampleYieldText = '';
+  state.stage3BLaunch = { countdown: 0, launching: false };
 
   const px = state.lander.padX || 430;
   const py = state.lander.padY || 730;
@@ -368,6 +500,7 @@ export function startStage3B() {
     maxBattery: maxBatt,
     hasSample: false,
     sampleStowed: false,
+    boarded: false,
     drilling: false,
     drillProgress: 0,
     armAnim: 0,
@@ -386,6 +519,7 @@ export function startStage3B() {
     maxBattery: maxBatt,
     hasSample: false,
     sampleStowed: false,
+    boarded: false,
     drilling: false,
     drillProgress: 0,
     armAnim: 0,
@@ -396,15 +530,63 @@ export function startStage3B() {
   setStageBanner(
     'STAGE 3B: LUNAR SURFACE EVA',
     'Explore the Moon & Drill Point B Crater',
-    'Follow the checklist and directional arrows. Park both rovers together for 2x drill speed, finish EVA tasks, and return to the lander.',
+    'Drill Point B Crater, return with all active crew to Point A Rocket, and board together for Moon Ascent.',
     `<kbd>WASD</kbd> LTV-1 &nbsp;•&nbsp; <kbd>IJKL</kbd> LTV-2 (2P) &nbsp;•&nbsp; <kbd>SHIFT</kbd> Hop &nbsp;•&nbsp; <kbd>SPACE</kbd> Task / Tether`,
     { showTickets: false, showSkip: false, showNext: true }
   );
   updateBottomHUD();
 }
 
+function getRequiredStage3BRovers() {
+  return state.coopMode === 'SOLO' ? [state.rover] : [state.rover, state.rover2];
+}
+
+function tryBoardRoverAtLander(rv, radius = 125) {
+  if (!rv || rv.boarded) return false;
+  const sampleReady = state.sampleCollected || state.rover.hasSample || state.rover2.hasSample;
+  if (!sampleReady) return false;
+  if (Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) > radius) return false;
+  if (rv.hasSample && !rv.sampleStowed) return false;
+
+  rv.boarded = true;
+  rv.drilling = false;
+  rv.vx = 0;
+  rv.vy = 0;
+  rv.x = state.lander.padX;
+  rv.y = state.lander.padY;
+
+  const req = getRequiredStage3BRovers();
+  const boardedCount = req.filter(r => r.boarded).length;
+  const tag = rv.id.split(' ')[0];
+
+  if (state.sampleCollected && boardedCount === req.length) {
+    if (!state.stage3BLaunch?.launching) {
+      state.stage3BLaunch = { countdown: 1.0, launching: true };
+      addFloatText(
+        state.lander.padX - state.lunarCam.x,
+        state.lander.padY - state.lunarCam.y - 155,
+        `ALL CREW ABOARD (${boardedCount}/${req.length})! HATCH SEALED!`,
+        '#4ade80'
+      );
+      showMissionToast('All Crew Aboard', `${boardedCount}/${req.length} crew inside Point A Rocket. Launching Ascent Stage!`);
+      playSuccessChord();
+    }
+  } else {
+    addFloatText(
+      state.lander.padX - state.lunarCam.x,
+      state.lander.padY - state.lunarCam.y - 140,
+      `${tag} BOARDED (${boardedCount}/${req.length}) - WAITING FOR CREW`,
+      '#38bdf8'
+    );
+    showMissionToast(`${tag} Boarded`, `Crew inside Rocket: ${boardedCount}/${req.length}. Waiting for remaining crew & core sample.`);
+    playTone(580, 'triangle', 0.14, 0.1);
+  }
+  updateBottomHUD();
+  return true;
+}
+
 export function handleStage3BInteract(rv, onNextStage) {
-  if (!rv) return;
+  if (!rv || rv.boarded) return;
   for (const sn of state.scienceNodes) {
     if (!sn.scanned && Math.hypot(rv.x - sn.x, rv.y - sn.y) < 68) {
       sn.scanned = true;
@@ -491,9 +673,6 @@ export function handleStage3BInteract(rv, onNextStage) {
       );
       playSuccessChord();
       updateBottomHUD();
-      setTimeout(() => {
-        if (state.stage === 'STAGE3B' && onNextStage) onNextStage();
-      }, 1000);
     } else if (stowedCount >= 2 && (state.samplesCollectedCount || 0) < 2) {
       state.samplesCollectedCount = 2;
       const dualSciBonus = objective?.dualSampleBonus || 0;
@@ -512,11 +691,16 @@ export function handleStage3BInteract(rv, onNextStage) {
       updateBottomHUD();
     }
   }
+
+  for (const r of getRequiredStage3BRovers()) {
+    tryBoardRoverAtLander(r, 125);
+  }
 }
 
 function updateSingleRover(rv, input, targetCrater, dt) {
+  if (!rv || rv.boarded) return;
   const other = rv === state.rover ? state.rover2 : state.rover;
-  const tethered = other && state.coopMode !== 'SOLO' && Math.hypot(rv.x - other.x, rv.y - other.y) < 130;
+  const tethered = other && !other.boarded && state.coopMode !== 'SOLO' && Math.hypot(rv.x - other.x, rv.y - other.y) < 130;
   const coopMult = tethered ? 2.0 : 1.0;
 
   const atCrater = Math.hypot(rv.x - targetCrater.x, rv.y - targetCrater.y) < 92;
@@ -628,7 +812,7 @@ function updateSingleRover(rv, input, targetCrater, dt) {
   }
 
   let nextX = Math.max(90, Math.min(LUNAR_W - 90, rv.x + rv.vx * dt));
-  let nextY = Math.max(255, Math.min(LUNAR_H - 70, rv.y + rv.vy * dt));
+  let nextY = Math.max(335, Math.min(LUNAR_H - 70, rv.y + rv.vy * dt));
 
   if (rv.z < 14) {
     for (const b of state.lunarBoulders) {
@@ -654,11 +838,16 @@ function updateSingleRover(rv, input, targetCrater, dt) {
 }
 
 function updateCompanionRoverAI(rv, targetCrater, dt) {
-  let goalX = state.lander.padX + 48, goalY = state.lander.padY + 25;
-  const unscanned = state.scienceNodes.find(s => !s.scanned);
-  const nextEva = state.evaTasks.find(t => !t.done);
+  if (!rv || rv.boarded) return;
+  let goalX = state.lander.padX + 12, goalY = state.lander.padY + 12;
+  const sampleReady = state.sampleCollected || state.rover.hasSample || rv.hasSample;
+  const unscanned = !sampleReady ? state.scienceNodes.find(s => !s.scanned) : null;
+  const nextEva = !sampleReady ? state.evaTasks.find(t => !t.done) : null;
 
-  if (unscanned) {
+  if (sampleReady) {
+    goalX = state.lander.padX + 12;
+    goalY = state.lander.padY + 12;
+  } else if (unscanned) {
     goalX = unscanned.x; goalY = unscanned.y;
   } else if (nextEva) {
     goalX = nextEva.x; goalY = nextEva.y;
@@ -786,10 +975,23 @@ export function updateStage3B(dt, onNextStage) {
   state.lunarCam.x += (camTargetX - state.lunarCam.x) * Math.min(1, dt * 6);
   state.lunarCam.y += (camTargetY - state.lunarCam.y) * Math.min(1, dt * 6);
 
-  const r1AtPadWithNew = state.rover.hasSample && !state.rover.sampleStowed && Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 92;
-  const r2AtPadWithNew = state.rover2.hasSample && !state.rover2.sampleStowed && Math.hypot(state.rover2.x - state.lander.padX, state.rover2.y - state.lander.padY) < 92;
+  const r1AtPadWithNew = state.rover.hasSample && !state.rover.sampleStowed && Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 115;
+  const r2AtPadWithNew = state.rover2.hasSample && !state.rover2.sampleStowed && Math.hypot(state.rover2.x - state.lander.padX, state.rover2.y - state.lander.padY) < 115;
   if (r1AtPadWithNew || r2AtPadWithNew) {
     handleStage3BInteract(r1AtPadWithNew ? state.rover : state.rover2, onNextStage);
+  }
+
+  for (const r of getRequiredStage3BRovers()) {
+    tryBoardRoverAtLander(r, 115);
+  }
+
+  if (state.stage3BLaunch?.launching) {
+    state.stage3BLaunch.countdown = Math.max(0, state.stage3BLaunch.countdown - dt);
+    if (state.stage3BLaunch.countdown <= 0) {
+      state.stage3BLaunch.launching = false;
+      if (state.stage === 'STAGE3B' && onNextStage) onNextStage();
+      return;
+    }
   }
 
   updateBottomHUD();
@@ -919,25 +1121,32 @@ export function updateStage3C(dt, onNextStage) {
 // ============================================================================
 // 2.5D LUNAR RENDERERS (3A, 3B, 3C WITH CAMERA + RADAR MAP)
 // ============================================================================
+function getLunarHorizonY() {
+  return Math.max(76, SKY_HORIZON_WORLD_Y - state.lunarCam.y);
+}
+
 function draw25DLunarWorld(ctx) {
   const cx = state.lunarCam.x;
   const cy = state.lunarCam.y;
-  const horizonY = Math.max(85, 220 - cy * 0.45);
+  const horizonY = getLunarHorizonY();
 
-  ctx.fillStyle = '#070b14';
+  ctx.fillStyle = '#060a14';
   ctx.fillRect(0, 0, LOGICAL_W, horizonY);
 
-  ctx.fillStyle = '#e2e8f0';
-  for (let i = 0; i < 60; i++) {
-    const sx = ((i * 197) - cx * 0.08 + LOGICAL_W * 4) % LOGICAL_W;
-    const sy = (i * 53) % Math.max(40, horizonY - 20);
-    ctx.fillRect(sx, sy, 2, 2);
-  }
+  // Stationary seeded starfield clipped cleanly above horizon (never jumps vertically or aligns in grids)
+  drawStarfield(ctx, LUNAR_STARS, LOGICAL_W, 300, {
+    offsetX: cx * 0.04,
+    maxY: horizonY - 6,
+    nowSec: performance.now() * 0.001
+  });
 
   // Earth in lunar sky with atmospheric halo
   ctx.save();
-  const earthX = 920 - cx * 0.06;
-  const earthY = Math.max(48, 76 - cy * 0.05);
+  ctx.beginPath();
+  ctx.rect(0, 0, LOGICAL_W, horizonY);
+  ctx.clip();
+  const earthX = 920 - cx * 0.05;
+  const earthY = Math.max(38, Math.min(horizonY - 36, 72 - cy * 0.03));
   ctx.beginPath(); ctx.arc(earthX, earthY, 32, 0, Math.PI * 2);
   ctx.fillStyle = '#1d4ed8'; ctx.fill();
   ctx.fillStyle = '#22c55e';
@@ -946,59 +1155,145 @@ function draw25DLunarWorld(ctx) {
   ctx.beginPath(); ctx.ellipse(earthX - 5, earthY - 13, 14, 4, 0.3, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = 'rgba(147, 197, 253, 0.55)'; ctx.lineWidth = 4;
   ctx.beginPath(); ctx.arc(earthX, earthY, 34, 0, Math.PI * 2); ctx.stroke();
-  ctx.restore();
 
-  // Distant Moon Mountain Ridge with sunlit rim (parallax)
-  ctx.fillStyle = '#1e2638';
+  // Far mountain ridge silhouette
+  ctx.fillStyle = '#161e30';
   ctx.beginPath();
   ctx.moveTo(0, horizonY);
-  for (let x = 0; x <= LOGICAL_W; x += 35) {
-    const wx = x + cx * 0.28;
-    ctx.lineTo(x, horizonY - 26 - Math.sin(wx * 0.008) * 20 - Math.cos(wx * 0.019) * 11);
+  for (let x = 0; x <= LOGICAL_W; x += 28) {
+    const wx = x + cx * 0.22;
+    ctx.lineTo(x, horizonY - 28 - Math.sin(wx * 0.0065) * 18 - Math.cos(wx * 0.014) * 11);
   }
   ctx.lineTo(LOGICAL_W, horizonY);
+  ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.28)';
-  ctx.lineWidth = 2;
+
+  // Foreground Moon mountain ridge locked to horizonY with sunlit rim
+  ctx.fillStyle = '#232e44';
+  ctx.beginPath();
+  ctx.moveTo(0, horizonY);
+  for (let x = 0; x <= LOGICAL_W; x += 24) {
+    const wx = x + cx * 0.42;
+    ctx.lineTo(x, horizonY - 14 - Math.sin(wx * 0.009 + 1.1) * 14 - Math.cos(wx * 0.022) * 8);
+  }
+  ctx.lineTo(LOGICAL_W, horizonY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(203, 213, 225, 0.24)';
+  ctx.lineWidth = 1.5;
   ctx.stroke();
+  ctx.restore();
 
   const plainGrad = ctx.createLinearGradient(0, horizonY, 0, LOGICAL_H);
   plainGrad.addColorStop(0, '#475569');
-  plainGrad.addColorStop(0.45, '#334155');
+  plainGrad.addColorStop(0.42, '#334155');
   plainGrad.addColorStop(1, '#1e293b');
   ctx.fillStyle = plainGrad;
   ctx.fillRect(0, horizonY, LOGICAL_W, LOGICAL_H - horizonY);
+
+  // Horizon atmospheric terminator seam so terrain reads cleanly behind distant mountains
+  const seam = ctx.createLinearGradient(0, horizonY, 0, horizonY + 28);
+  seam.addColorStop(0, 'rgba(15, 23, 42, 0.45)');
+  seam.addColorStop(1, 'rgba(15, 23, 42, 0)');
+  ctx.fillStyle = seam;
+  ctx.fillRect(0, horizonY, LOGICAL_W, 28);
 }
 
 function drawLunarCratersAndPad(ctx) {
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.09)';
-  ctx.lineWidth = 1.5;
-  for (let gx = 100; gx < LUNAR_W; gx += 180) {
-    ctx.beginPath(); ctx.moveTo(gx, 240); ctx.lineTo(gx, LUNAR_H); ctx.stroke();
+  const horizonY = getLunarHorizonY();
+  const minWorldY = state.lunarCam.y + horizonY;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(state.lunarCam.x, minWorldY, LOGICAL_W, LOGICAL_H - horizonY + 24);
+  ctx.clip();
+
+  // Stationary regolith mare patches & scattered pebbles (replaces flat floating 2D grid)
+  for (const mp of LUNAR_SURFACE.patches) {
+    if (mp.y + mp.ry < minWorldY) continue;
+    ctx.fillStyle = mp.dark ? 'rgba(15, 23, 42, 0.22)' : 'rgba(148, 163, 184, 0.09)';
+    ctx.beginPath();
+    ctx.ellipse(mp.x, mp.y, mp.rx, mp.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
-  for (let gy = 260; gy < LUNAR_H; gy += 110) {
-    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(LUNAR_W, gy); ctx.stroke();
+  for (const pb of LUNAR_SURFACE.pebbles) {
+    if (pb.y < minWorldY) continue;
+    ctx.fillStyle = pb.light ? 'rgba(203, 213, 225, 0.22)' : 'rgba(15, 23, 42, 0.36)';
+    ctx.beginPath();
+    ctx.ellipse(pb.x, pb.y, pb.rx, pb.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   for (const cr of state.lunarCraters) {
-    ctx.fillStyle = cr.isTarget ? '#1e293b' : '#273246';
-    ctx.strokeStyle = cr.isTarget ? '#f59e0b' : '#64748b';
-    ctx.lineWidth = cr.isTarget ? 3.5 : 2;
+    if (cr.y + cr.ry + 16 < minWorldY) continue;
+    if (cr.isTarget) {
+      // Soft regolith ejecta blanket around Point B crater
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.13)';
+      ctx.beginPath();
+      ctx.ellipse(cr.x, cr.y, cr.rx + 16, cr.ry + 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Raised outer crater rim slope
+      ctx.fillStyle = '#334155';
+      ctx.strokeStyle = 'rgba(203, 213, 225, 0.35)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(cr.x, cr.y, cr.rx + 6, cr.ry + 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Deep shaded crater depression
+      const basinGrad = ctx.createLinearGradient(cr.x, cr.y - cr.ry, cr.x, cr.y + cr.ry);
+      basinGrad.addColorStop(0, '#0b1120');
+      basinGrad.addColorStop(0.58, '#172033');
+      basinGrad.addColorStop(1, '#263246');
+      ctx.fillStyle = basinGrad;
+      ctx.beginPath();
+      ctx.ellipse(cr.x, cr.y + 1, cr.rx - 4, cr.ry - 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Inner geological terraced ledge & subtle amber survey marker
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      ctx.ellipse(cr.x, cr.y + 2, cr.rx * 0.72, cr.ry * 0.66, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Shadowed northern cliff overhang arc
+      ctx.strokeStyle = 'rgba(2, 6, 23, 0.78)';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.ellipse(cr.x, cr.y + 2, cr.rx - 5, cr.ry - 4, 0, Math.PI * 1.08, Math.PI * 1.92);
+      ctx.stroke();
+
+      ctx.fillStyle = '#fde047';
+      ctx.font = 'bold 12px Fredoka, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('POINT B: TARGET CRATER', cr.x, cr.y + cr.ry + 20);
+      continue;
+    }
+
+    // Outer raised rim highlight + sunken basin
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.16)';
+    ctx.beginPath();
+    ctx.ellipse(cr.x, cr.y, cr.rx + 7, cr.ry + 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#273246';
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.ellipse(cr.x, cr.y, cr.rx, cr.ry, 0, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
 
-    ctx.strokeStyle = 'rgba(15, 23, 42, 0.55)';
+    // Interior crater wall shading (sunlit far rim, shadowed near wall)
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.65)';
+    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.ellipse(cr.x, cr.y + 4, cr.rx * 0.85, cr.ry * 0.78, 0, Math.PI, Math.PI * 2);
     ctx.stroke();
-
-    if (cr.isTarget) {
-      ctx.fillStyle = '#fde047';
-      ctx.font = 'bold 13px Fredoka, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('POINT B: TARGET CRATER', cr.x, cr.y + cr.ry + 20);
-    }
   }
 
   // Point A Landing Pad
@@ -1032,6 +1327,7 @@ function drawLunarCratersAndPad(ctx) {
     ctx.font = 'bold 10.5px Fredoka, sans-serif';
     ctx.fillText(state.lander.targetSiteName.toUpperCase(), px, py + 72);
   }
+  ctx.restore();
 }
 
 function drawLunarRadarMap(ctx) {
@@ -1081,7 +1377,8 @@ function drawLunarRadarMap(ctx) {
 }
 
 // BIGGER, DETAILED HEROIC ARTEMIS-CLASS LUNAR ROCKET LANDER (~2x scale!)
-function draw25DLander(ctx, x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampOpen = false, ascentLaunched = false) {
+function draw25DLander(ctx, x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampOpen = false, ascentLaunched = false, legCompress = 0) {
+  const footBottom = 11 + legAnim * 18;
   const shadowScale = Math.max(0.45, 1 - z / 320);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.beginPath();
@@ -1089,7 +1386,7 @@ function draw25DLander(ctx, x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampO
   ctx.fill();
 
   if (z > 2) {
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
     ctx.setLineDash([5, 5]);
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - z); ctx.stroke();
@@ -1097,7 +1394,8 @@ function draw25DLander(ctx, x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampO
   }
 
   ctx.save();
-  ctx.translate(x, y - z);
+  // Anchor footpad bottoms squarely onto (x, y - z) so landing indicator never passes up past the rocket
+  ctx.translate(x, y - z - footBottom + legCompress * 5);
   ctx.rotate(tiltX);
 
   // Main Engine Plume
@@ -1182,7 +1480,7 @@ function draw25DLander(ctx, x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampO
 
   if (rampOpen) {
     ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(34, -4); ctx.lineTo(74, 24); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(34, 0); ctx.lineTo(74, footBottom); ctx.stroke();
   }
 
   ctx.restore();
@@ -1196,14 +1494,20 @@ export function drawStage3A(ctx) {
   ctx.translate(-state.lunarCam.x, -state.lunarCam.y);
   drawLunarCratersAndPad(ctx);
 
-  ctx.strokeStyle = 'rgba(168, 85, 247, 0.45)';
-  ctx.lineWidth = 2;
+  const padDist = Math.hypot(l.x - l.padX, (l.y - l.padY) * 1.4);
+  const aligned = padDist <= (l.padRadius || 105);
+
+  // Ground touchdown predictor ring directly underneath lander footpads
+  ctx.strokeStyle = l.landed
+    ? 'rgba(74, 222, 128, 0.72)'
+    : aligned
+      ? 'rgba(74, 222, 128, 0.65)'
+      : 'rgba(168, 85, 247, 0.55)';
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.ellipse(l.x, l.y, 58, 26, 0, 0, Math.PI * 2);
   ctx.stroke();
 
-  const padDist = Math.hypot(l.x - l.padX, (l.y - l.padY) * 1.4);
-  const aligned = padDist <= (l.padRadius || 105);
   const beamGrad = ctx.createLinearGradient(0, l.padY - 260, 0, l.padY);
   beamGrad.addColorStop(0, 'rgba(56, 189, 248, 0.02)');
   beamGrad.addColorStop(1, aligned ? 'rgba(74, 222, 128, 0.25)' : 'rgba(251, 191, 36, 0.15)');
@@ -1216,30 +1520,80 @@ export function drawStage3A(ctx) {
   ctx.closePath();
   ctx.fill();
 
-  const compressPx = (l.legCompress || 0) * 8;
-  draw25DLander(ctx, l.x, l.y + compressPx, l.z, l.tiltX, l.legAnim, l.thrusting, l.hoverTrim || l.p2AssistActive, false, false);
+  draw25DLander(ctx, l.x, l.y, l.z, l.tiltX, l.legAnim, l.thrusting, l.hoverTrim || l.p2AssistActive, false, false, l.legCompress || 0);
 
-  const vSpd = Math.abs(l.vz * 0.24).toFixed(1);
-  const ly = l.y - l.z;
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-  ctx.strokeStyle = Number(vSpd) <= 5.0 ? '#4ade80' : '#ef4444';
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.roundRect(l.x + 56, ly - 74, 124, 44, 8); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px JetBrains Mono, monospace'; ctx.textAlign = 'left';
-  ctx.fillText(`V:${vSpd} m/s`, l.x + 64, ly - 56);
-  ctx.fillStyle = (l.hoverTrim || l.p2AssistActive) ? '#38bdf8' : '#94a3b8';
-  ctx.fillText(l.p2AssistActive ? 'P2 TRIMMING' : `ALT:${Math.round(l.z * 0.45)}m`, l.x + 64, ly - 39);
+  const vSpdNum = Math.abs(l.vz * 0.24);
+  const vSpd = vSpdNum.toFixed(1);
+  const footBottom = 11 + l.legAnim * 18;
+  const ly = l.y - l.z - footBottom;
+  if (!l.landed && !l.crashed) {
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.strokeStyle = vSpdNum <= 4.2 ? '#4ade80' : vSpdNum <= 7.5 ? '#fbbf24' : '#ef4444';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(l.x + 56, ly - 74, 130, 44, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px JetBrains Mono, monospace'; ctx.textAlign = 'left';
+    ctx.fillText(`V:${vSpd} m/s`, l.x + 64, ly - 56);
+    ctx.fillStyle = (l.hoverTrim || l.p2AssistActive) ? '#38bdf8' : '#94a3b8';
+    ctx.fillText(l.p2AssistActive ? 'P2 TRIMMING' : `ALT:${Math.round(l.z * 0.45)}m`, l.x + 64, ly - 39);
+  }
 
   drawLunarParticles(ctx);
   ctx.restore();
 
   drawLunarRadarMap(ctx);
 
-  drawCanvasControlBar(ctx, LOGICAL_W, [
-    { key: 'SPACE / W', label: 'Retro-Thrust' },
-    { key: 'WASD', label: 'Align Blue Pad' },
-    { key: 'I / J / L', label: 'P2 RCS Trim' }
-  ]);
+  if (l.landed && !l.crashed) {
+    const cw = 520, ch = 148;
+    const cx = LOGICAL_W / 2 - cw / 2;
+    const cy = LOGICAL_H - 178;
+    const pulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.008);
+    const accent = l.hardLandingPenalty ? '#fbbf24' : '#4ade80';
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(cx, cy, cw, ch, 16); ctx.fill(); ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = accent;
+    ctx.font = 'bold 12px JetBrains Mono, monospace';
+    ctx.fillText('LUNAR SURFACE CONTACT CONFIRMED', LOGICAL_W / 2, cy + 24);
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 19px Fredoka, sans-serif';
+    ctx.fillText(state.landingGrade, LOGICAL_W / 2, cy + 50);
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = 'bold 12px JetBrains Mono, monospace';
+    ctx.fillText(
+      `Touchdown: ${l.landingSpeedMs.toFixed(1)} m/s  •  Zone: ${l.landingOnPad ? 'Point A Pad' : 'Lunar Plain'}  •  Fuel: ${Math.round(l.fuel)}%`,
+      LOGICAL_W / 2,
+      cy + 74
+    );
+
+    const bx = cx + 56, by = cy + 92, bw = cw - 112, bh = 40;
+    l.continueBtnRect = { x: bx, y: by, w: bw, h: bh };
+    const btnGrad = ctx.createLinearGradient(bx, by, bx + bw, by);
+    btnGrad.addColorStop(0, '#0284c7');
+    btnGrad.addColorStop(1, '#16a34a');
+    ctx.fillStyle = btnGrad;
+    ctx.strokeStyle = `rgba(253, 224, 71, ${0.55 + pulse * 0.45})`;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 11); ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px Fredoka, sans-serif';
+    ctx.fillText('CONTINUE TO STAGE 3B: DEPLOY ROVERS  [SPACE / CLICK] ▶', LOGICAL_W / 2, by + 25);
+    ctx.restore();
+  } else {
+    l.continueBtnRect = null;
+    drawCanvasControlBar(ctx, LOGICAL_W, [
+      { key: 'SPACE / W', label: 'Retro-Thrust' },
+      { key: 'WASD', label: 'Align Blue Pad' },
+      { key: 'SHIFT', label: 'Hover Trim' }
+    ]);
+  }
 }
 
 function draw25DSingleRover(ctx, rv, crewA, crewB) {
@@ -1340,13 +1694,16 @@ function draw25DSingleRover(ctx, rv, crewA, crewB) {
 export function drawStage3B(ctx) {
   draw25DLunarWorld(ctx);
 
+  const minWorldY = state.lunarCam.y + getLunarHorizonY();
+
   ctx.save();
   ctx.translate(-state.lunarCam.x, -state.lunarCam.y);
   drawLunarCratersAndPad(ctx);
 
-  // Subtle Lunar Regolith Tire Tracks
+  // Subtle Lunar Regolith Tire Tracks (clipped cleanly below horizon)
   ctx.fillStyle = 'rgba(15, 23, 42, 0.35)';
   for (const tr of state.roverTracks) {
+    if (tr.y - 8 < minWorldY) continue;
     ctx.save();
     ctx.translate(tr.x, tr.y);
     ctx.rotate(tr.angle);
@@ -1356,10 +1713,16 @@ export function drawStage3B(ctx) {
   }
 
   const targetCrater = state.lunarCraters.find(c => c.isTarget);
-  const anySample = state.rover.hasSample || state.rover2.hasSample;
+  const anySample = state.rover.hasSample || state.rover2.hasSample || state.sampleCollected;
+  const reqRovers = getRequiredStage3BRovers();
+  const boardedCount = reqRovers.filter(r => r.boarded).length;
 
-  // Co-Op Power Tether between LTV-1 and LTV-2 when close
-  const tethered = state.coopMode !== 'SOLO' && Math.hypot(state.rover.x - state.rover2.x, state.rover.y - state.rover2.y) < 130;
+  // Co-Op Power Tether between LTV-1 and LTV-2 when close and both deployed
+  const tethered =
+    state.coopMode !== 'SOLO' &&
+    !state.rover.boarded &&
+    !state.rover2.boarded &&
+    Math.hypot(state.rover.x - state.rover2.x, state.rover.y - state.rover2.y) < 130;
   if (tethered) {
     ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
     ctx.lineWidth = 3;
@@ -1373,34 +1736,17 @@ export function drawStage3B(ctx) {
     ctx.fillText('⚡ CO-OP 2x TETHER', (state.rover.x + state.rover2.x) / 2, (state.rover.y + state.rover2.y) / 2 - 26);
   }
 
-  ctx.strokeStyle = 'rgba(16, 185, 129, 0.28)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([4, 6]);
-  ctx.beginPath();
-  ctx.moveTo(state.lander.padX, state.lander.padY - 70);
-  ctx.lineTo(state.rover.x, state.rover.y - 18);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  ctx.strokeStyle = anySample ? 'rgba(74, 222, 128, 0.45)' : 'rgba(56, 189, 248, 0.35)';
-  ctx.lineWidth = 3;
-  ctx.setLineDash([8, 8]);
-  ctx.beginPath();
-  ctx.moveTo(state.lander.padX + 75, state.lander.padY);
-  ctx.lineTo(targetCrater.x, targetCrater.y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
   const depthList = [
     { kind: 'rocket', y: state.lander.padY },
-    { kind: 'rover1', y: state.rover.y },
-    ...(state.coopMode !== 'SOLO' ? [{ kind: 'rover2', y: state.rover2.y }] : []),
+    ...(!state.rover.boarded ? [{ kind: 'rover1', y: state.rover.y }] : []),
+    ...(state.coopMode !== 'SOLO' && !state.rover2.boarded ? [{ kind: 'rover2', y: state.rover2.y }] : []),
     ...state.lunarBoulders.map(b => ({ kind: 'boulder', y: b.y, obj: b })),
     ...state.scienceNodes.map(s => ({ kind: 'science', y: s.y, obj: s })),
     ...state.evaTasks.map(t => ({ kind: 'eva', y: t.y, obj: t }))
   ].sort((a, b) => a.y - b.y);
 
   for (const item of depthList) {
+    if (item.kind !== 'rocket' && item.y < minWorldY) continue;
     if (item.kind === 'rocket') {
       draw25DLander(ctx, state.lander.padX, state.lander.padY, 0, 0, 1, false, false, true, false);
     } else if (item.kind === 'rover1') {
@@ -1409,23 +1755,58 @@ export function drawStage3B(ctx) {
       draw25DSingleRover(ctx, state.rover2, CREW_ROSTER[1], CREW_ROSTER[3]);
     } else if (item.kind === 'boulder') {
       const b = item.obj;
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.beginPath(); ctx.ellipse(b.x + 4, b.y + 4, b.r * 1.1, b.r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+      // Grounded shadow + seated faceted boulder with zero air gap
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
+      ctx.beginPath(); ctx.ellipse(b.x + 5, b.y + 1, b.r * 1.18, b.r * 0.46, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#475569'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(b.x, b.y - b.r * 0.35, b.r, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.r, b.y + 1);
+      ctx.lineTo(b.x - b.r * 0.82, b.y - b.r * 0.58);
+      ctx.lineTo(b.x - b.r * 0.15, b.y - b.r * 0.95);
+      ctx.lineTo(b.x + b.r * 0.65, b.y - b.r * 0.65);
+      ctx.lineTo(b.x + b.r, b.y + 1);
+      ctx.quadraticCurveTo(b.x, b.y + 5, b.x - b.r, b.y + 1);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      // Sunlit top-left facet highlight
+      ctx.fillStyle = 'rgba(203, 213, 225, 0.25)';
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.r * 0.78, b.y - b.r * 0.48);
+      ctx.lineTo(b.x - b.r * 0.15, b.y - b.r * 0.88);
+      ctx.lineTo(b.x + b.r * 0.15, b.y - b.r * 0.35);
+      ctx.lineTo(b.x - b.r * 0.45, b.y - b.r * 0.12);
+      ctx.closePath();
+      ctx.fill();
     } else if (item.kind === 'science') {
       const sn = item.obj;
-      ctx.fillStyle = sn.scanned ? '#64748b' : '#38bdf8';
-      ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+      // Grounded contact shadow + seated mineral rock formation
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.48)';
+      ctx.beginPath(); ctx.ellipse(sn.x + 3, sn.y + 2, 20, 8, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(sn.x - 9, sn.y); ctx.lineTo(sn.x, sn.y - 22); ctx.lineTo(sn.x + 9, sn.y);
+      ctx.moveTo(sn.x - 14, sn.y + 2);
+      ctx.lineTo(sn.x - 9, sn.y - 14);
+      ctx.lineTo(sn.x - 1, sn.y - 25);
+      ctx.lineTo(sn.x + 10, sn.y - 12);
+      ctx.lineTo(sn.x + 15, sn.y + 2);
       ctx.closePath(); ctx.fill(); ctx.stroke();
+      // Glowing mineral/ice seam inlaid onto rock
+      ctx.strokeStyle = sn.scanned ? '#64748b' : '#38bdf8';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(sn.x - 6, sn.y - 3);
+      ctx.lineTo(sn.x - 1, sn.y - 19);
+      ctx.lineTo(sn.x + 5, sn.y - 5);
+      ctx.stroke();
       if (!sn.scanned && Math.hypot(state.rover.x - sn.x, state.rover.y - sn.y) < 75) {
         ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(`[SPACE] Scan ${sn.name} (+${sn.pts}⭐)`, sn.x, sn.y - 30);
+        ctx.fillText(`[SPACE] Scan ${sn.name} (+${sn.pts}⭐)`, sn.x, sn.y - 34);
       }
     } else if (item.kind === 'eva') {
       const ev = item.obj;
+      // Ground contact pad & shadow under EVA instrument
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
+      ctx.beginPath(); ctx.ellipse(ev.x + 2, ev.y + 2, 18, 7.5, 0, 0, Math.PI * 2); ctx.fill();
       if (ev.kind === 'SEISMIC') {
         if (ev.done) {
           const pulse = ((performance.now() * 0.04) % 45);
@@ -1434,41 +1815,98 @@ export function drawStage3B(ctx) {
           ctx.beginPath(); ctx.ellipse(ev.x, ev.y, 14 + pulse, (14 + pulse) * 0.48, 0, 0, Math.PI * 2); ctx.stroke();
         }
         ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(ev.x, ev.y - 22); ctx.lineTo(ev.x - 12, ev.y); ctx.moveTo(ev.x, ev.y - 22); ctx.lineTo(ev.x + 12, ev.y); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ev.x, ev.y - 20); ctx.lineTo(ev.x - 12, ev.y + 1);
+        ctx.moveTo(ev.x, ev.y - 20); ctx.lineTo(ev.x + 12, ev.y + 1);
+        ctx.moveTo(ev.x, ev.y - 20); ctx.lineTo(ev.x, ev.y + 3);
+        ctx.stroke();
         ctx.fillStyle = ev.done ? '#4ade80' : '#f59e0b'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.roundRect(ev.x - 10, ev.y - 28, 20, 12, 4); ctx.fill(); ctx.stroke();
       } else {
         if (ev.done) {
-          ctx.strokeStyle = 'rgba(74, 222, 128, 0.45)';
+          const beamGrad = ctx.createLinearGradient(ev.x + 2, ev.y - 24, ev.x + 95, ev.y - 165);
+          beamGrad.addColorStop(0, 'rgba(74, 222, 128, 0.65)');
+          beamGrad.addColorStop(1, 'rgba(74, 222, 128, 0)');
+          ctx.strokeStyle = beamGrad;
           ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.moveTo(ev.x, ev.y - 26); ctx.lineTo(ev.x + 140, 110); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(ev.x + 2, ev.y - 24); ctx.lineTo(ev.x + 95, ev.y - 165); ctx.stroke();
         }
-        ctx.fillStyle = '#334155'; ctx.fillRect(ev.x - 6, ev.y - 12, 12, 12);
+        // Connected tripod base + pedestal mast + dish reflector
+        ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(ev.x, ev.y - 14); ctx.lineTo(ev.x - 10, ev.y + 1);
+        ctx.moveTo(ev.x, ev.y - 14); ctx.lineTo(ev.x + 10, ev.y + 1);
+        ctx.stroke();
+        ctx.fillStyle = '#334155'; ctx.fillRect(ev.x - 6, ev.y - 16, 12, 10);
+        ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(ev.x, ev.y - 16); ctx.lineTo(ev.x, ev.y - 22); ctx.stroke();
         ctx.fillStyle = ev.done ? '#4ade80' : '#a78bfa'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(ev.x, ev.y - 20, 14, 0.1 * Math.PI, 0.9 * Math.PI); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(ev.x, ev.y - 24, 13, 0.12 * Math.PI, 0.88 * Math.PI); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(ev.x, ev.y - 20); ctx.lineTo(ev.x + 3, ev.y - 29); ctx.stroke();
       }
       if (!ev.done && Math.hypot(state.rover.x - ev.x, state.rover.y - ev.y) < 76) {
         ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(ev.progress > 0 ? `${ev.name}: ${Math.round(ev.progress * 100)}%` : `[HOLD SPACE] Deploy ${ev.name} (+${ev.pts}⭐)`, ev.x, ev.y - 38);
+        ctx.fillText(ev.progress > 0 ? `${ev.name}: ${Math.round(ev.progress * 100)}%` : `[HOLD SPACE] Deploy ${ev.name} (+${ev.pts}⭐)`, ev.x, ev.y - 42);
       }
     }
   }
 
-  if (!state.rover.hasSample) {
-    ctx.fillStyle = '#4ade80'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+  if (targetCrater && !state.rover.hasSample && !state.sampleCollected) {
+    const tPulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.005);
+    ctx.save();
+    ctx.translate(targetCrater.x, targetCrater.y);
+
+    // Core-drill laser glow on crater floor
+    const boreGlow = ctx.createRadialGradient(0, 0, 2, 0, 0, 24);
+    boreGlow.addColorStop(0, `rgba(74, 222, 128, ${0.42 * tPulse})`);
+    boreGlow.addColorStop(1, 'rgba(74, 222, 128, 0)');
+    ctx.fillStyle = boreGlow;
     ctx.beginPath();
-    ctx.moveTo(targetCrater.x - 10, targetCrater.y);
-    ctx.lineTo(targetCrater.x - 4, targetCrater.y - 24);
-    ctx.lineTo(targetCrater.x + 4, targetCrater.y - 24);
-    ctx.lineTo(targetCrater.x + 10, targetCrater.y);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.ellipse(0, 2, 24, 11, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Grounded tripod struts inside the crater basin
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(-12, 3);
+    ctx.lineTo(-4, -14);
+    ctx.moveTo(12, 3);
+    ctx.lineTo(4, -14);
+    ctx.moveTo(0, 5);
+    ctx.lineTo(0, -14);
+    ctx.stroke();
+
+    // Brushed metallic + gold core-drill head & glowing laser rod
+    ctx.fillStyle = '#eab308';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.roundRect(-8, -22, 16, 11, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(0, -11);
+    ctx.lineTo(0, 2);
+    ctx.stroke();
+
+    // Top telemetry beacon pulse
+    ctx.fillStyle = '#4ade80';
+    ctx.beginPath();
+    ctx.arc(0, -26, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
 
     if (Math.hypot(state.rover.x - targetCrater.x, state.rover.y - targetCrater.y) < 92) {
       ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(state.rover.drilling ? `DRILLING SAMPLE... ${Math.round(state.rover.drillProgress * 100)}%` : '[HOLD SPACE] DRILL CORE SAMPLE', targetCrater.x, targetCrater.y - 36);
+      ctx.fillText(state.rover.drilling ? `DRILLING SAMPLE... ${Math.round(state.rover.drillProgress * 100)}%` : '[HOLD SPACE] DRILL CORE SAMPLE', targetCrater.x, targetCrater.y - 38);
       if (state.rover.drilling) {
-        ctx.fillStyle = '#0f172a'; ctx.fillRect(targetCrater.x - 45, targetCrater.y - 54, 90, 9);
-        ctx.fillStyle = '#4ade80'; ctx.fillRect(targetCrater.x - 43, targetCrater.y - 52, 86 * state.rover.drillProgress, 5);
+        ctx.fillStyle = '#0f172a'; ctx.fillRect(targetCrater.x - 45, targetCrater.y - 56, 90, 9);
+        ctx.fillStyle = '#4ade80'; ctx.fillRect(targetCrater.x - 43, targetCrater.y - 54, 86 * state.rover.drillProgress, 5);
       }
     }
   }
@@ -1480,10 +1918,16 @@ export function drawStage3B(ctx) {
     Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 130
   ) {
     ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('🔧 [SPACE] REPAIR LANDING SHOCK (+28Wh BATTERY)', state.lander.padX, state.lander.padY - 122);
+    ctx.fillText('🔧 [SPACE] REPAIR LANDING SHOCK (+28Wh BATTERY)', state.lander.padX, state.lander.padY - 150);
   } else if (anySample) {
     ctx.fillStyle = '#4ade80'; ctx.font = 'bold 13px Fredoka, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('⬇️ BOARD ROCKET FOR MOON LAUNCH! ⬇️', state.lander.padX, state.lander.padY - 122);
+    if (state.stage3BLaunch?.launching) {
+      ctx.fillText(`🚀 HATCH SEALED! IGNITION IN ${state.stage3BLaunch.countdown.toFixed(1)}s`, state.lander.padX, state.lander.padY - 150);
+    } else if (boardedCount < reqRovers.length) {
+      ctx.fillText(`⬇️ GATHER INSIDE ROCKET TO LAUNCH (CREW ${boardedCount}/${reqRovers.length}) ⬇️`, state.lander.padX, state.lander.padY - 150);
+    } else {
+      ctx.fillText('⬇️ ALL CREW AT ROCKET - STOWING CORE SAMPLE! ⬇️', state.lander.padX, state.lander.padY - 150);
+    }
   }
 
   drawLunarParticles(ctx);
@@ -1493,11 +1937,17 @@ export function drawStage3B(ctx) {
   const scannedCount = state.scienceNodes.filter(s => s.scanned).length;
   const doneEvaCount = state.evaTasks.filter(t => t.done).length;
   const needsRepair = state.lander.hardLandingPenalty && !state.lander.shockRepaired;
+  const allCrewBoarded = state.sampleCollected && boardedCount === reqRovers.length;
+  const rocketStatusText = state.stage3BLaunch?.launching
+    ? `Launching (${state.stage3BLaunch.countdown.toFixed(1)}s)`
+    : anySample
+      ? `Crew ${boardedCount}/${reqRovers.length} Boarded`
+      : 'Awaiting Core Sample';
   const checklistRows = [
     { done: scannedCount === state.scienceNodes.length, text: `1. 🔬 Science Ridges: ${scannedCount}/${state.scienceNodes.length} Scanned` },
     { done: doneEvaCount === state.evaTasks.length,     text: `2. 🛠️ EVA Instruments: ${doneEvaCount}/${state.evaTasks.length} Online` },
     { done: anySample,                                  text: `3. 🧪 Point B Crater Core: ${anySample ? 'EXTRACTED ✅' : 'Hold [SPACE] at Crater'}` },
-    { done: state.sampleCollected,                      text: `4. 🚀 Point A Rocket: ${anySample ? 'Drive Back & [SPACE]!' : 'Awaiting Core Sample'}` }
+    { done: allCrewBoarded,                             text: `4. 🚀 Point A Rocket: ${rocketStatusText}` }
   ];
   if (needsRepair) {
     checklistRows.unshift({ done: false, warn: true, text: '🔧 Lander Pad: [SPACE] Repair Shock (-28Wh)' });
@@ -1506,7 +1956,7 @@ export function drawStage3B(ctx) {
   ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
   ctx.strokeStyle = anySample ? '#4ade80' : '#38bdf8';
   ctx.lineWidth = 2.2;
-  ctx.beginPath(); ctx.roundRect(14, 14, 304, cardH, 12); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(14, 14, 308, cardH, 12); ctx.fill(); ctx.stroke();
   ctx.fillStyle = anySample ? '#4ade80' : '#38bdf8';
   ctx.font = 'bold 12px Fredoka, sans-serif';
   ctx.textAlign = 'left';
@@ -1520,7 +1970,12 @@ export function drawStage3B(ctx) {
   // Off-Screen Directional Waypoint Arrows for Lunar EVA Objectives
   const evaWaypoints = [];
   if (anySample) {
-    evaWaypoints.push({ x: state.lander.padX, y: state.lander.padY, label: '🚀 BOARD ROCKET', col: '#4ade80' });
+    if (!state.rover.boarded || !state.sampleCollected) {
+      evaWaypoints.push({ x: state.lander.padX, y: state.lander.padY, label: `🚀 BOARD ROCKET (${boardedCount}/${reqRovers.length})`, col: '#4ade80' });
+    }
+    if (state.rover.boarded && state.coopMode !== 'SOLO' && !state.rover2.boarded) {
+      evaWaypoints.push({ x: state.rover2.x, y: state.rover2.y, label: '🚐 LTV-2 EN ROUTE', col: '#38bdf8' });
+    }
   } else {
     if (targetCrater) {
       evaWaypoints.push({ x: targetCrater.x, y: targetCrater.y, label: '🧪 POINT B CRATER', col: '#fde047' });
@@ -1601,7 +2056,7 @@ export function drawStage3C(ctx) {
 
     // Big White Crew Ascent Stage blasting off vertically!
     ctx.save();
-    ctx.translate(state.lander.padX, ml.capsuleY - 62);
+    ctx.translate(state.lander.padX, ml.capsuleY - 91);
     ctx.rotate(ml.tilt);
 
     if (ml.thrusting) {
@@ -1646,77 +2101,297 @@ export function drawStage3C(ctx) {
   } else {
     ctx.fillStyle = '#050811';
     ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-    ctx.fillStyle = '#e2e8f0';
-    for (let i = 0; i < 65; i++) {
-      ctx.fillRect((i * 173) % LOGICAL_W, (i * 97) % LOGICAL_H, 2, 2);
-    }
+    drawStarfield(ctx, TEI_STARS, LOGICAL_W, LOGICAL_H, {
+      offsetX: ml.progress * 45,
+      nowSec: performance.now() * 0.001
+    });
 
-    const moonR = Math.max(36, 95 - ml.progress * 55);
-    ctx.fillStyle = '#64748b';
-    ctx.beginPath(); ctx.arc(170, 340, moonR, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#475569';
-    ctx.beginPath(); ctx.arc(155, 325, moonR * 0.22, 0, Math.PI * 2); ctx.arc(190, 355, moonR * 0.16, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#cbd5e1'; ctx.font = 'bold 13px Fredoka, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('MOON (DEPARTED)', 170, 340 + moonR + 24);
+    const nowSec = performance.now() * 0.001;
+    const moonX = 160;
+    const moonY = 345;
+    const moonR = Math.max(38, 86 - ml.progress * 44);
 
-    const earthR = 52 + ml.progress * 88;
+    // Realistic shaded Lunar sphere (departed)
     ctx.save();
-    ctx.beginPath(); ctx.arc(920, 310, earthR, 0, Math.PI * 2);
-    ctx.fillStyle = '#1d4ed8'; ctx.fill();
+    ctx.beginPath();
+    ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
+    const moonGrad = ctx.createRadialGradient(
+      moonX - moonR * 0.35, moonY - moonR * 0.35, moonR * 0.1,
+      moonX, moonY, moonR * 1.05
+    );
+    moonGrad.addColorStop(0, '#cbd5e1');
+    moonGrad.addColorStop(0.55, '#64748b');
+    moonGrad.addColorStop(1, '#1e293b');
+    ctx.fillStyle = moonGrad;
+    ctx.fill();
+    ctx.clip();
+    // Subtle mare basins & craters clipped inside Moon limb
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.38)';
+    ctx.beginPath();
+    ctx.ellipse(moonX - moonR * 0.22, moonY - moonR * 0.14, moonR * 0.34, moonR * 0.24, -0.3, 0, Math.PI * 2);
+    ctx.ellipse(moonX + moonR * 0.18, moonY + moonR * 0.16, moonR * 0.26, moonR * 0.2, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(203, 213, 225, 0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(moonX - moonR * 0.32, moonY + moonR * 0.28, moonR * 0.12, 0, Math.PI * 2);
+    ctx.arc(moonX + moonR * 0.26, moonY - moonR * 0.26, moonR * 0.09, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = 'bold 12px Fredoka, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('MOON (DEPARTED)', moonX, moonY + moonR + 24);
+
+    // Realistic shaded Planet Earth framed cleanly inside right viewport (zero clipping)
+    const earthX = 900;
+    const earthY = 325;
+    const earthR = 54 + ml.progress * 44; // max radius 98 -> right edge 998 < 1120
+
+    // Outer atmospheric blue scattering aura
+    const atmoHalo = ctx.createRadialGradient(earthX, earthY, earthR * 0.85, earthX, earthY, earthR * 1.38);
+    atmoHalo.addColorStop(0, 'rgba(56, 189, 248, 0.36)');
+    atmoHalo.addColorStop(0.55, 'rgba(56, 189, 248, 0.12)');
+    atmoHalo.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    ctx.fillStyle = atmoHalo;
+    ctx.beginPath();
+    ctx.arc(earthX, earthY, earthR * 1.38, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(earthX, earthY, earthR, 0, Math.PI * 2);
+    const oceanGrad = ctx.createRadialGradient(
+      earthX - earthR * 0.38, earthY - earthR * 0.35, earthR * 0.08,
+      earthX + earthR * 0.15, earthY + earthR * 0.15, earthR * 1.15
+    );
+    oceanGrad.addColorStop(0, '#38bdf8');
+    oceanGrad.addColorStop(0.45, '#1d4ed8');
+    oceanGrad.addColorStop(0.85, '#1e3a8a');
+    oceanGrad.addColorStop(1, '#091124');
+    ctx.fillStyle = oceanGrad;
+    ctx.fill();
+    ctx.clip();
+
+    // Sculpted continents (North Pacific / Americas + Pacific Islands / Asia-Australia contours)
     ctx.fillStyle = '#22c55e';
     ctx.beginPath();
-    ctx.arc(900, 290, earthR * 0.34, 0, Math.PI * 2);
-    ctx.arc(945, 330, earthR * 0.28, 0, Math.PI * 2);
+    ctx.moveTo(earthX - earthR * 0.55, earthY - earthR * 0.62);
+    ctx.bezierCurveTo(earthX - earthR * 0.08, earthY - earthR * 0.72, earthX + earthR * 0.16, earthY - earthR * 0.38, earthX + earthR * 0.02, earthY - earthR * 0.08);
+    ctx.bezierCurveTo(earthX - earthR * 0.08, earthY + earthR * 0.08, earthX - earthR * 0.34, earthY + earthR * 0.04, earthX - earthR * 0.45, earthY - earthR * 0.16);
+    ctx.bezierCurveTo(earthX - earthR * 0.64, earthY - earthR * 0.3, earthX - earthR * 0.68, earthY - earthR * 0.52, earthX - earthR * 0.55, earthY - earthR * 0.62);
+    ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = 'rgba(125, 211, 252, 0.55)'; ctx.lineWidth = 6;
-    ctx.beginPath(); ctx.arc(920, 310, earthR + 4, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
-    ctx.fillStyle = '#bae6fd'; ctx.font = 'bold 14px Fredoka, sans-serif';
-    ctx.fillText('PLANET EARTH (ENTRY INTERFACE)', 920, 310 + earthR + 26);
 
-    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 3; ctx.setLineDash([8, 8]);
-    ctx.beginPath(); ctx.moveTo(230, 340); ctx.quadraticCurveTo(550, 210, 825, 305); ctx.stroke();
+    ctx.fillStyle = '#16a34a';
+    ctx.beginPath();
+    ctx.moveTo(earthX + earthR * 0.04, earthY + earthR * 0.04);
+    ctx.bezierCurveTo(earthX + earthR * 0.42, earthY - earthR * 0.02, earthX + earthR * 0.54, earthY + earthR * 0.35, earthX + earthR * 0.22, earthY + earthR * 0.62);
+    ctx.bezierCurveTo(earthX + earthR * 0.05, earthY + earthR * 0.66, earthX - earthR * 0.06, earthY + earthR * 0.34, earthX + earthR * 0.04, earthY + earthR * 0.04);
+    ctx.closePath();
+    ctx.fill();
+
+    // Subtle arid highland tint inside continents
+    ctx.fillStyle = 'rgba(234, 179, 8, 0.32)';
+    ctx.beginPath();
+    ctx.ellipse(earthX - earthR * 0.25, earthY - earthR * 0.32, earthR * 0.14, earthR * 0.09, -0.4, 0, Math.PI * 2);
+    ctx.ellipse(earthX + earthR * 0.22, earthY + earthR * 0.26, earthR * 0.12, earthR * 0.08, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Polar ice cap highlight
+    ctx.fillStyle = 'rgba(241, 245, 249, 0.72)';
+    ctx.beginPath();
+    ctx.ellipse(earthX, earthY - earthR * 0.94, earthR * 0.48, earthR * 0.14, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Wispy orbital cloud bands gently drifting
+    const cloudShift = Math.sin(nowSec * 0.4) * earthR * 0.04;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.38)';
+    ctx.beginPath();
+    ctx.ellipse(earthX - earthR * 0.26 + cloudShift, earthY - earthR * 0.12, earthR * 0.44, earthR * 0.07, -0.18, 0, Math.PI * 2);
+    ctx.ellipse(earthX + earthR * 0.12 - cloudShift, earthY + earthR * 0.18, earthR * 0.5, earthR * 0.065, -0.12, 0, Math.PI * 2);
+    ctx.ellipse(earthX - earthR * 0.05 + cloudShift, earthY - earthR * 0.52, earthR * 0.36, earthR * 0.055, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Night-side terminator shadow crescent on bottom-right
+    const nightShade = ctx.createLinearGradient(earthX - earthR * 0.35, earthY - earthR * 0.35, earthX + earthR * 0.88, earthY + earthR * 0.85);
+    nightShade.addColorStop(0, 'rgba(2, 6, 23, 0)');
+    nightShade.addColorStop(0.58, 'rgba(2, 6, 23, 0.12)');
+    nightShade.addColorStop(1, 'rgba(2, 6, 23, 0.78)');
+    ctx.fillStyle = nightShade;
+    ctx.fillRect(earthX - earthR, earthY - earthR, earthR * 2, earthR * 2);
+    ctx.restore();
+
+    // Crisp atmospheric Fresnel rim + Entry Interface corridor marker arc
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.68)';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.arc(earthX, earthY, earthR + 1.5, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const eiPointX = earthX - earthR - 14;
+    const eiPointY = earthY - 12;
+    ctx.strokeStyle = 'rgba(251, 146, 60, 0.75)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(earthX, earthY, earthR + 14, Math.PI * 0.82, Math.PI * 1.18);
+    ctx.stroke();
+
+    ctx.fillStyle = '#bae6fd';
+    ctx.font = 'bold 13px Fredoka, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('PLANET EARTH (ENTRY INTERFACE)', earthX, earthY + earthR + 28);
+
+    // Trajectory anchored cleanly from Moon departure rim to Earth atmospheric entry point
+    const p0 = { x: moonX + moonR + 8, y: moonY - 4 };
+    const p1 = { x: 520, y: 205 };
+    const p2 = { x: eiPointX, y: eiPointY };
+
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 7]);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.quadraticCurveTo(p1.x, p1.y, p2.x, p2.y);
+    ctx.stroke();
     ctx.setLineDash([]);
 
+    // Entry Interface target ring at curve endpoint
+    ctx.fillStyle = '#fb923c';
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p2.x, p2.y, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
     // Highlight Optimal Green TEI Burn Window on trajectory arc (t = 0.36 .. 0.68)
-    ctx.strokeStyle = 'rgba(74, 222, 128, 0.85)';
+    ctx.strokeStyle = 'rgba(74, 222, 128, 0.9)';
     ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
     ctx.beginPath();
     for (let st = 0.36; st <= 0.68; st += 0.02) {
-      const wx = (1 - st) * (1 - st) * 230 + 2 * (1 - st) * st * 550 + st * st * 825;
-      const wy = (1 - st) * (1 - st) * 340 + 2 * (1 - st) * st * 210 + st * st * 305;
+      const omt = 1 - st;
+      const wx = omt * omt * p0.x + 2 * omt * st * p1.x + st * st * p2.x;
+      const wy = omt * omt * p0.y + 2 * omt * st * p1.y + st * st * p2.y;
       if (st === 0.36) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
     }
     ctx.stroke();
+    ctx.lineCap = 'butt';
 
+    // Detailed Orion Crew + Service Module aligned along curve tangent
     const t = ml.progress;
-    const cx = (1 - t) * (1 - t) * 230 + 2 * (1 - t) * t * 550 + t * t * 825;
-    const cy = (1 - t) * (1 - t) * 340 + 2 * (1 - t) * t * 210 + t * t * 305;
+    const omt = 1 - t;
+    const cx = omt * omt * p0.x + 2 * omt * t * p1.x + t * t * p2.x;
+    const cy = omt * omt * p0.y + 2 * omt * t * p1.y + t * t * p2.y;
+    const tx = 2 * omt * (p1.x - p0.x) + 2 * t * (p2.x - p1.x);
+    const ty = 2 * omt * (p1.y - p0.y) + 2 * t * (p2.y - p1.y);
+    const craftAngle = Math.atan2(ty, tx);
+
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.rotate(0.2);
+    ctx.rotate(craftAngle);
     if (ml.teiBurnDone) {
-      ctx.fillStyle = '#38bdf8';
-      ctx.beginPath(); ctx.moveTo(-22, -6); ctx.lineTo(-52 - Math.random() * 14, 0); ctx.lineTo(-22, 6); ctx.fill();
+      const flameLen = 28 + Math.random() * 14;
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.beginPath();
+      ctx.moveTo(-22, -6);
+      ctx.lineTo(-22 - flameLen, 0);
+      ctx.lineTo(-22, 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#e0f2fe';
+      ctx.beginPath();
+      ctx.moveTo(-22, -3);
+      ctx.lineTo(-22 - flameLen * 0.55, 0);
+      ctx.lineTo(-22, 3);
+      ctx.closePath();
+      ctx.fill();
     }
-    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.moveTo(22, 0); ctx.lineTo(-16, -16); ctx.lineTo(-16, 16); ctx.closePath(); ctx.fill(); ctx.stroke();
+    // Solar array wings
+    ctx.fillStyle = '#1e3a8a';
+    ctx.strokeStyle = '#60a5fa';
+    ctx.lineWidth = 1.2;
+    ctx.fillRect(-14, -24, 11, 14);
+    ctx.strokeRect(-14, -24, 11, 14);
+    ctx.fillRect(-14, 10, 11, 14);
+    ctx.strokeRect(-14, 10, 11, 14);
+    // Engine nozzle & Service Module cylinder
+    ctx.fillStyle = '#334155';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(-16, -5);
+    ctx.lineTo(-23, -8);
+    ctx.lineTo(-23, 8);
+    ctx.lineTo(-16, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#cbd5e1';
+    ctx.beginPath();
+    ctx.roundRect(-16, -8, 18, 16, 3);
+    ctx.fill();
+    ctx.stroke();
+    // Conical Orion Crew Capsule + NASA accent
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath();
+    ctx.moveTo(2, -10);
+    ctx.lineTo(20, -4.5);
+    ctx.lineTo(20, 4.5);
+    ctx.lineTo(2, 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#1d4ed8';
+    ctx.fillRect(3, -8, 3, 16);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(10, -3.5, 5, 3);
+    ctx.fillRect(10, 0.5, 5, 3);
     ctx.restore();
 
     if (!ml.teiBurnDone) {
       const inTeiWin = ml.progress >= 0.36 && ml.progress <= 0.68;
-      ctx.fillStyle = inTeiWin ? '#16a34a' : '#f97316';
-      ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 220, 52, 440, 56, 14); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 15px Fredoka, sans-serif';
+      const cardW = 470;
+      const cardX = LOGICAL_W / 2 - cardW / 2;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.strokeStyle = inTeiWin ? '#4ade80' : '#f97316';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.roundRect(cardX, 34, cardW, 66, 14);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = inTeiWin ? '#4ade80' : '#fb923c';
+      ctx.font = 'bold 11px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('TRANS-EARTH INJECTION CORRIDOR', LOGICAL_W / 2, 52);
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 14px Fredoka, sans-serif';
       ctx.fillText(
-        inTeiWin ? '🟢 IN GREEN TEI WINDOW: PRESS [SPACE]!' : 'WAIT FOR GREEN TEI WINDOW, THEN PRESS [SPACE]!',
+        inTeiWin ? '🟢 IN GREEN TEI WINDOW: PRESS [SPACE] NOW!' : 'WAIT FOR GREEN TEI WINDOW, THEN PRESS [SPACE]',
         LOGICAL_W / 2,
-        75
+        71
       );
-      const tbx = LOGICAL_W / 2 - 170, tby = 86, tbw = 340, tbh = 12;
-      ctx.fillStyle = '#0f172a'; ctx.fillRect(tbx, tby, tbw, tbh);
-      ctx.fillStyle = 'rgba(74, 222, 128, 0.65)'; ctx.fillRect(tbx + tbw * 0.36, tby + 1, tbw * 0.32, tbh - 2);
-      ctx.fillStyle = '#fde047'; ctx.fillRect(tbx + tbw * ml.progress - 3, tby - 2, 6, tbh + 4);
+
+      const tbx = LOGICAL_W / 2 - 180, tby = 80, tbw = 360, tbh = 12;
+      ctx.fillStyle = '#1e293b';
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(tbx, tby, tbw, tbh, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(74, 222, 128, 0.78)';
+      ctx.beginPath();
+      ctx.roundRect(tbx + tbw * 0.36, tby + 2, tbw * 0.32, tbh - 4, 4);
+      ctx.fill();
+      ctx.fillStyle = '#fde047';
+      ctx.beginPath();
+      ctx.roundRect(tbx + tbw * ml.progress - 3, tby - 2, 6, tbh + 4, 2);
+      ctx.fill();
     }
     drawLunarParticles(ctx);
   }
