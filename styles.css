@@ -909,6 +909,652 @@ kbd {
 .btn-secondary:hover { filter: brightness(1.15); }
 .btn-secondary:active { transform: translateY(2px); box-shadow: inset 0 4px 0 0 rgba(0, 0, 0, 0.35), var(--frame); }
 
+/* ==========================================================================
+   TITLE / SPLASH SCREEN (pre-game step 1, see showTitleScreen in src/hud.js)
+   Full-bleed attract screen. While it is up, showTitleScreen tags #modal with
+   .title-splash-open and #modal-content with .title-splash-card; hideTitleScreen
+   removes both, so Mission Setup / Lobby / Stage 5 Debrief keep the stock look.
+   ========================================================================== */
+.modal-backdrop.title-splash-open {
+  background: #05070f;
+  padding: 0;
+  align-items: flex-start;   /* card uses margin:auto, so tall content scrolls instead of clipping */
+  overflow-y: auto;
+}
+.modal-card.title-splash-card {
+  width: min(900px, 96vw);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 28px 0 56px;
+  background: none;
+  box-shadow: none;
+}
+.modal-card.title-splash-card::before { display: none; }
+
+/* --- Sky: the game's own layered space background, scaled with `cover` ------------ */
+.title-splash-sky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ts-layer {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center bottom;
+  image-rendering: pixelated;
+}
+.ts-back   { background-image: url('Assets/background/layered/bg-back.png'); }
+.ts-stars  { background-image: url('Assets/background/layered/bg-stars.png'); animation: tsStarsPulse 2.4s steps(1, end) infinite; }
+.ts-planet { background-image: url('Assets/background/layered/bg-planet.png'); }
+
+/* Extra twinkling stars: 2px squares, the big ones are a 1-art-pixel plus sign */
+.ts-star {
+  --sc: #eef1f8;
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: var(--sc);
+  animation: tsTwinkle 1.8s steps(1, end) infinite;
+}
+.ts-star-cyan { --sc: var(--cyan); }
+.ts-star-big { box-shadow: 2px 0 var(--sc), -2px 0 var(--sc), 0 2px var(--sc), 0 -2px var(--sc); }
+
+/* Liftoff loop: the stack waits behind the planet limb, then climbs off the top.
+   It is drawn BEFORE .ts-planet in the DOM, so the limb hides the pad. */
+.ts-rocket {
+  position: absolute;
+  left: 13%;
+  bottom: 5vh;
+  width: 42px;
+  height: 176px;
+  animation: tsLaunch 12s steps(320, end) 1.2s infinite;
+}
+.ts-rocket img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  animation: tsShake 0.16s steps(1, end) infinite;
+}
+
+/* Marching hazard tape top + bottom, same stripe as every other modal */
+.ts-stripe {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: var(--hazard-stripe) repeat-x;
+  background-size: 24px 8px;
+  image-rendering: pixelated;
+  animation: tsTape 1.2s steps(12, end) infinite;
+}
+.ts-stripe-top { top: 0; }
+.ts-stripe-bottom { bottom: 0; }
+
+@keyframes tsStarsPulse { 0% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes tsTwinkle { 0% { opacity: 1; } 40% { opacity: 0.2; } 60% { opacity: 1; } }
+@keyframes tsLaunch { 0%, 22% { transform: translateY(0); } 100% { transform: translateY(-125vh); } }
+@keyframes tsShake { 0% { transform: translateX(0); } 50% { transform: translateX(2px); } }
+@keyframes tsTape { to { background-position: 24px 0; } }
+@keyframes tsBob { 0% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+@keyframes tsHint { 50% { opacity: 0.3; } }
+
+/* --- Foreground ----------------------------------------------------------------- */
+.title-splash-card .ts-logo {
+  width: min(660px, 92vw, 70vh);
+  margin: 0;
+}
+.ts-logo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  user-select: none;
+  animation: tsBob 2.4s steps(1, end) infinite;
+}
+.title-splash-card .ts-tagline {
+  margin: 2px 0 0;
+  font-size: 26px;
+  letter-spacing: 5px;
+  text-transform: uppercase;
+  color: var(--cyan);
+  text-shadow: 2px 2px 0 var(--ink);
+}
+
+.ts-crew {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+}
+.ts-chip {
+  --c: var(--hazard);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px 5px 3px;
+  background: rgba(6, 8, 15, 0.82);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  box-shadow: var(--frame);
+}
+.ts-chip b {
+  font-weight: 400;
+  padding: 3px 7px 4px;
+  background: var(--c);
+  color: var(--ink);
+}
+.ts-c1 { --c: var(--hazard); }
+.ts-c2 { --c: var(--red); }
+.ts-c3 { --c: var(--purple); }
+.ts-c4 { --c: var(--green); }
+
+.title-splash-btn {
+  --sky: #8fd3ff;
+  --sky-hi: #d6f1ff;
+  --sky-lo: #3f8fc9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-width: 230px;
+  margin-top: 26px;
+  background: var(--sky);
+  color: var(--ink);
+  border: 0;
+  border-radius: 0;
+  padding: 10px 46px 14px;
+  font-family: var(--font);
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: inset 0 2px 0 0 var(--sky-hi), inset 0 -4px 0 0 var(--sky-lo), var(--frame), 0 4px 0 0 rgba(0, 0, 0, 0.5);
+  animation: titleBtnBlink 1.2s steps(1, end) infinite;
+}
+/* Pixel play arrow: one 4px cell + box-shadow cells (widths 1,2,3,4,3,2,1), centred by the lift */
+.title-splash-btn::before {
+  content: '';
+  flex: none;
+  width: 4px;
+  height: 4px;
+  margin-right: 12px;
+  background: var(--ink);
+  transform: translateY(-12px);
+  box-shadow:
+    0 4px var(--ink), 4px 4px var(--ink),
+    0 8px var(--ink), 4px 8px var(--ink), 8px 8px var(--ink),
+    0 12px var(--ink), 4px 12px var(--ink), 8px 12px var(--ink), 12px 12px var(--ink),
+    0 16px var(--ink), 4px 16px var(--ink), 8px 16px var(--ink),
+    0 20px var(--ink), 4px 20px var(--ink),
+    0 24px var(--ink);
+}
+.title-splash-btn:hover { background: var(--sky-hi); }
+.title-splash-btn:focus-visible { outline: 0; }
+.title-splash-btn:active {
+  animation: none;
+  transform: translateY(2px);
+  box-shadow: inset 0 4px 0 0 var(--sky-lo), var(--frame);
+}
+/* Attract-mode frame blink: hard two-state swap, no easing */
+@keyframes titleBtnBlink {
+  0% { box-shadow: inset 0 2px 0 0 var(--sky-hi), inset 0 -4px 0 0 var(--sky-lo), var(--frame), 0 4px 0 0 rgba(0, 0, 0, 0.5); }
+  50% { box-shadow: inset 0 2px 0 0 var(--sky-hi), inset 0 -4px 0 0 var(--sky-lo), var(--frame-cyan), 0 4px 0 0 rgba(0, 0, 0, 0.5); }
+}
+.title-splash-card .ts-hint {
+  margin: 14px 0 0;
+  font-size: 20px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-shadow: 2px 2px 0 var(--ink);
+  animation: tsHint 1.2s steps(1, end) infinite;
+}
+
+/* Official NASA Space Apps mark, untouched: black-on-transparent artwork, so it gets
+   its own small light chip. Native proportions, smooth scaling (not pixel art). */
+.ts-nasa {
+  position: fixed;
+  right: 24px;
+  bottom: 28px;
+  width: 116px;
+  padding: 8px 10px;
+  background: #f7f7f7;
+  box-shadow: var(--frame), 0 4px 0 0 rgba(0, 0, 0, 0.5);
+}
+.ts-nasa img {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: auto; /* page-level pixelated is inherited; override it here */
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-stars, .ts-star, .ts-rocket, .ts-rocket img, .ts-stripe,
+  .ts-logo img, .title-splash-btn, .title-splash-card .ts-hint { animation: none; }
+  .ts-rocket { display: none; }
+}
+@media (max-height: 560px) {
+  .modal-card.title-splash-card { padding: 16px 0 40px; }
+  .title-splash-card .ts-logo { width: min(660px, 92vw, 62vh); }
+  .title-splash-card .ts-tagline { font-size: 20px; letter-spacing: 3px; }
+  .ts-crew { margin-top: 10px; }
+  .ts-chip { font-size: 18px; }
+  .title-splash-btn { margin-top: 14px; font-size: 32px; padding: 6px 34px 10px; min-width: 190px; }
+  .title-splash-card .ts-hint { display: none; }
+  .ts-nasa { width: 88px; right: 16px; bottom: 20px; }
+}
+@media (max-width: 560px) {
+  .title-splash-card .ts-tagline { font-size: 20px; letter-spacing: 2px; }
+  .ts-chip { font-size: 18px; }
+  .ts-nasa { position: static; width: 104px; margin-top: 20px; }
+  .ts-rocket { left: 6%; }
+}
+
+/* ==========================================================================
+   CREW LOBBY (pre-game step 2, see src/lobby-ui.js)
+   Scoped to #modal-content.lobby-card; Mission Setup / Debrief are untouched.
+   ========================================================================== */
+.modal-card:focus { outline: 0; }
+.modal-card.lobby-card {
+  width: min(1040px, 96vw);
+  max-width: 96vw;
+  padding: 20px 24px 18px;
+}
+.lobby-card h1 { margin: 2px 0 4px; }
+
+.lobby-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.lobby-head-copy { flex: 1 1 300px; min-width: 0; }
+.lobby-sub {
+  font-size: 17px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+.lobby-code-box {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: 8px 10px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  box-shadow: var(--bevel), var(--frame-cyan);
+}
+.lobby-code-label { font-size: 15px; letter-spacing: 1px; text-transform: uppercase; color: var(--cyan); }
+.lobby-code { display: flex; gap: 4px; user-select: text; cursor: text; }
+.lobby-code span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 38px;
+  background: var(--ink);
+  color: var(--hazard);
+  font-size: 32px;
+  line-height: 1;
+  text-shadow: 2px 2px 0 var(--lo);
+  box-shadow: var(--bevel);
+}
+.lobby-code-actions { display: flex; gap: 6px; }
+
+.lobby-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 10px 6px;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel-3);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: inset 0 2px 0 0 rgba(255, 255, 255, 0.16), inset 0 -3px 0 0 rgba(0, 0, 0, 0.35), var(--frame);
+}
+.lobby-mini-btn .px-ico { vertical-align: 0; }
+.lobby-mini-btn:hover { filter: brightness(1.15); }
+.lobby-mini-btn:active { transform: translateY(2px); box-shadow: inset 0 3px 0 0 rgba(0, 0, 0, 0.35), var(--frame); }
+.lobby-mini-btn:focus-visible,
+.swatch:focus-visible,
+.tile:focus-visible,
+.lobby-toggle:focus-visible,
+.slot-btn:focus-visible,
+.lobby-card .btn-play:focus-visible,
+.lobby-card .btn-secondary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+
+.lobby-body {
+  display: grid;
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.lobby-panel {
+  min-width: 0;
+  padding: 10px 12px 12px;
+  background: var(--panel-2);
+  box-shadow: var(--bevel), var(--frame);
+}
+.lobby-card .lobby-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 17px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--cyan);
+  text-shadow: none;
+}
+.lobby-count { color: var(--hazard); }
+
+/* --- crew list (Among Us style rows) --- */
+.lobby-slots { list-style: none; display: grid; gap: 8px; }
+.lobby-slot {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 68px;
+  padding: 6px 8px 6px 14px;
+  background: var(--panel);
+  box-shadow: var(--bevel), var(--frame);
+}
+.lobby-slot::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: var(--role);
+}
+.lobby-slot.is-you { box-shadow: var(--bevel), var(--frame-hazard); }
+.lobby-slot.is-open { background: var(--lo); }
+.lobby-slot.is-open::before { opacity: 0.45; }
+
+.slot-seat { display: flex; flex-direction: column; gap: 2px; line-height: 1; }
+.slot-seat b { font-size: 21px; color: var(--role); }
+.slot-seat small { font-size: 12px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted); }
+
+.slot-portrait {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  background: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--lo);
+}
+.slot-portrait canvas { display: block; width: 56px; height: 56px; image-rendering: pixelated; }
+.slot-portrait.is-empty { box-shadow: inset 0 0 0 2px var(--panel-3); }
+.slot-q { font-size: 34px; color: var(--panel-3); text-shadow: 2px 2px 0 var(--lo); }
+
+.slot-info { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.slot-name {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slot-waiting { color: var(--muted); font-size: 19px; }
+.slot-waiting::after { content: ''; animation: lobbyDots 1.2s steps(1, end) infinite; }
+@keyframes lobbyDots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+.slot-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.slot-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 3px;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--panel-3);
+}
+.slot-tag .px-ico { --cell: 1px; vertical-align: 0; }
+.slot-tag.tag-host { color: var(--hazard); box-shadow: inset 0 0 0 2px var(--hazard-lo); }
+.slot-tag.tag-you { color: var(--green); box-shadow: inset 0 0 0 2px var(--green-lo); }
+.slot-tag.tag-bot { color: var(--cyan); box-shadow: inset 0 0 0 2px var(--cyan-lo); }
+.slot-hint { font-size: 14px; color: var(--muted); }
+
+.slot-side { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.slot-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.slot-state .px-ico { vertical-align: 0; }
+.slot-state.is-ready { color: var(--green); }
+.slot-state.is-wait { color: var(--hazard); }
+.slot-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 5px;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel-3);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: inset 0 2px 0 0 rgba(255, 255, 255, 0.16), inset 0 -2px 0 0 rgba(0, 0, 0, 0.35), var(--frame);
+}
+.slot-btn .px-ico { --cell: 1px; vertical-align: 0; }
+.slot-btn:hover { filter: brightness(1.15); }
+.slot-btn:active { transform: translateY(2px); }
+
+/* --- astronaut customizer --- */
+.lobby-custom-grid { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; }
+.lobby-preview { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.lobby-preview-stage {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 150px;
+  height: 238px;
+  padding-bottom: 8px;
+  background: var(--ink) var(--dots);
+  background-size: 16px 16px;
+  box-shadow: inset 0 0 0 2px var(--lo), var(--frame);
+}
+.lobby-preview-stage::after {
+  content: '';
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 6px;
+  height: 6px;
+  background: var(--panel-3);
+  box-shadow: inset 0 2px 0 0 var(--hi);
+}
+.lobby-preview-canvas { position: relative; z-index: 1; display: block; image-rendering: pixelated; }
+.lobby-turn { display: flex; gap: 6px; width: 100%; }
+.lobby-turn .lobby-mini-btn { flex: 1; }
+.lobby-random { width: 100%; }
+
+.lobby-fields { display: grid; align-content: start; gap: 9px; min-width: 0; }
+.lobby-field { display: grid; gap: 4px; min-width: 0; transition: none; }
+.lobby-field.is-dim { opacity: 0.45; }
+.lobby-field-label { font-size: 15px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.lobby-field-label em { margin-left: 6px; font-style: normal; letter-spacing: 0; text-transform: none; color: var(--hazard); }
+.lobby-field-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.lobby-hint { font-style: normal; font-size: 14px; color: var(--muted); }
+
+.lobby-name-row { display: flex; gap: 6px; }
+.lobby-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 2px 10px 4px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 22px;
+  letter-spacing: 1px;
+  user-select: text;
+  box-shadow: inset 0 2px 0 0 var(--lo), var(--frame);
+}
+.lobby-input:focus { outline: 0; box-shadow: inset 0 2px 0 0 var(--lo), var(--frame-hazard); }
+
+.swatch-row,
+.tile-row { display: flex; flex-wrap: wrap; gap: 5px; padding: 3px; }
+.swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--sw);
+  cursor: pointer;
+  box-shadow: inset 0 2px 0 0 rgba(255, 255, 255, 0.28), inset 0 -3px 0 0 rgba(0, 0, 0, 0.3), var(--frame);
+}
+.swatch:hover { filter: brightness(1.12); }
+.swatch:active { transform: translateY(2px); }
+.swatch.selected {
+  box-shadow: inset 0 2px 0 0 rgba(255, 255, 255, 0.28), inset 0 -3px 0 0 rgba(0, 0, 0, 0.3), var(--frame-hazard), 0 0 0 4px var(--ink);
+}
+
+.tile {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: var(--bevel), var(--frame);
+}
+.tile canvas { display: block; width: 34px; height: 30px; image-rendering: pixelated; }
+.tile.tile-flag { width: 54px; }
+.tile.tile-flag canvas { width: 46px; height: 32px; }
+.tile:hover { background: var(--panel-3); }
+.tile:active { transform: translateY(2px); }
+.tile.selected {
+  background: #33301f;
+  color: var(--hazard);
+  box-shadow: inset 0 2px 0 0 #5a5030, inset 0 -2px 0 0 var(--lo), var(--frame-hazard), 0 0 0 4px var(--ink);
+}
+
+.lobby-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 6px;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel-3);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 17px;
+  line-height: 1;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: inset 0 2px 0 0 rgba(255, 255, 255, 0.16), inset 0 -3px 0 0 rgba(0, 0, 0, 0.35), var(--frame);
+}
+.lobby-toggle .px-ico { vertical-align: 0; }
+.lobby-toggle:hover { filter: brightness(1.15); }
+.lobby-toggle:active { transform: translateY(2px); }
+.lobby-toggle[aria-checked='true'] {
+  background: #1d3a2b;
+  color: var(--green);
+  box-shadow: inset 0 2px 0 0 #2f6a4a, inset 0 -3px 0 0 var(--lo), var(--frame-green);
+}
+
+/* --- footer --- */
+.lobby-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 14px; }
+.lobby-status {
+  display: flex;
+  align-items: center;
+  flex: 1 1 280px;
+  gap: 8px;
+  min-width: 0;
+  font-size: 18px;
+  line-height: 1.25;
+  color: var(--muted);
+}
+.lobby-status .px-ico { vertical-align: 0; }
+.lobby-status.is-wait { color: var(--hazard); }
+.lobby-foot-actions { display: flex; gap: 12px; margin-left: auto; padding: 4px; }
+.btn-play:disabled {
+  cursor: not-allowed;
+  background: var(--panel-3);
+  color: var(--muted);
+  box-shadow: inset 0 2px 0 0 rgba(255, 255, 255, 0.12), inset 0 -4px 0 0 rgba(0, 0, 0, 0.35), var(--frame), 0 4px 0 0 rgba(0, 0, 0, 0.5);
+}
+.btn-play:disabled:hover { filter: none; }
+.btn-play:disabled:active { transform: none; }
+
+@media (max-width: 900px) {
+  .lobby-head { flex-direction: column; align-items: stretch; }
+  .lobby-head-copy { flex: 0 0 auto; }
+  .lobby-code-box { justify-content: space-between; }
+  .lobby-body { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .modal-card.lobby-card { padding: 16px 12px 14px; }
+  .lobby-code-box { flex-wrap: wrap; }
+  .lobby-custom-grid { grid-template-columns: 1fr; justify-items: center; }
+  .lobby-fields { justify-self: stretch; }
+  .lobby-slot { grid-template-columns: 34px 48px minmax(0, 1fr) auto; gap: 6px; padding-left: 12px; }
+  .slot-portrait, .slot-portrait canvas { width: 48px; height: 48px; }
+  .lobby-foot-actions { width: 100%; justify-content: flex-end; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slot-waiting::after { animation: none; content: '...'; }
+}
+
 .guide-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

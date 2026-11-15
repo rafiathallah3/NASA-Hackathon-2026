@@ -10,12 +10,21 @@ const ASSET_PATHS = {
   charIdle: 'Assets/Character/Character_Idle.png',
   charCarry: 'Assets/Character/Character_Carry.png',
 
+  // Astronaut customization overlays (composited by src/avatar.js)
+  hairSheet: 'Assets/Hair/Pixel Art Hairstyle Customization Sheet.png',
+  badgeSheet: 'Assets/Badges/Badge.png',
+  helmetSheet: 'Assets/Helmet/Helmet_Character.png',
+
   // Space & FX Layers (Stages 1B, 2, 4)
   spaceBack: 'Assets/background/layered/bg-back.png',
   spacePlanet: 'Assets/background/layered/bg-planet.png',
   spaceStars: 'Assets/background/layered/bg-stars.png',
   asteroidLg: 'Assets/asteroids/asteroid.png',
-  asteroidSm: 'Assets/asteroids/asteroid-small.png'
+  asteroidSm: 'Assets/asteroids/asteroid-small.png',
+
+  // Stage 2 Spacecraft Deck & Props
+  stage2Bg: 'Assets/Stage2/Stage2_Map_Bg.png',
+  stage2PropsSheet: 'Assets/Stage2/Stage2_Props_Sheet.png'
 };
 
 const ITEM_PATHS = {
@@ -142,6 +151,18 @@ export const SHEET_SLICES = {
     calibrate:  { x: 1300, y: 361, w: 477, h: 735 },
     charger:    { x: 2062, y: 314, w: 472, h: 787 },
     charge:     { x: 2062, y: 314, w: 472, h: 787 }
+  },
+  stage2PropsSheet: {
+    door_h_closed: { x: 0,   y: 0,   w: 140, h: 48 },
+    door_h_open:   { x: 144, y: 0,   w: 140, h: 48 },
+    door_v_closed: { x: 288, y: 0,   w: 32,  h: 128 },
+    door_v_open:   { x: 324, y: 0,   w: 32,  h: 128 },
+    tool_rack:     { x: 360, y: 0,   w: 146, h: 94 },
+    console_wires: { x: 512, y: 0,   w: 160, h: 96 },
+    console_nav:   { x: 676, y: 0,   w: 140, h: 110 },
+    console_sci:   { x: 820, y: 0,   w: 160, h: 100 },
+    console_comms: { x: 0,   y: 140, w: 160, h: 120 },
+    console_hull:  { x: 168, y: 140, w: 160, h: 100 }
   }
 };
 

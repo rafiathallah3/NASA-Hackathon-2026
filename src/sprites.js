@@ -1,6 +1,10 @@
 import { RAW_ITEMS, PROC_META } from './config.js';
 import { state } from './state.js';
 import { getAsset, getItemSprite, getItemBounds, getAnimFrame, getAnimFrameBounds, getSheetSlice, isImageReady } from './assets.js';
+import {
+  CREW_FRAME_W, CREW_FRAME_H, CREW_CROP_TOP, CREW_CROP_H, CREW_ANIM, AVATAR_HEADROOM
+} from './avatar-data.js';
+import { getCrewSheet } from './avatar.js';
 
 export function addFloatText(x, y, text, color = '#fff') {
   state.floatingTexts.push({ x, y, text, color, life: 1.25 });
@@ -243,24 +247,8 @@ export function drawItemBadge(ctx, x, y, item) {
    Frames are [row, col]; walk cycles go stride -> pass -> stride -> pass.
    The Carry sheet swaps the front/back column pairs vs the Idle sheet.
    ------------------------------------------------------------------ */
-const CREW_FRAME_W = 792;
-const CREW_FRAME_H = 1344;
-const CREW_CROP_TOP = 90;
-const CREW_CROP_H = 1180;
-const CREW_ANIM = {
-  charIdle: {
-    down: { idle: [1, 0], walk: [[0, 0], [0, 1], [1, 0], [1, 1]] },
-    up: { idle: [1, 2], walk: [[0, 2], [1, 2], [0, 3], [1, 3]] },
-    right: { idle: [1, 4], walk: [[0, 4], [1, 4], [0, 5], [1, 5]] },
-    left: { idle: [0, 7], walk: [[1, 7], [0, 7], [1, 6], [0, 6]] }
-  },
-  charCarry: {
-    down: { idle: [1, 2], walk: [[0, 2], [1, 2], [0, 3], [1, 3]] },
-    up: { idle: [1, 0], walk: [[0, 0], [1, 0], [0, 1], [1, 1]] },
-    right: { idle: [1, 4], walk: [[0, 4], [1, 4], [0, 5], [1, 5]] },
-    left: { idle: [0, 7], walk: [[1, 7], [0, 7], [1, 6], [0, 6]] }
-  }
-};
+// (Frame geometry + CREW_ANIM live in avatar-data.js so the lobby and the customised
+// sheets in avatar.js share them.)
 const CREW_SPRITE_H = 56;
 const CREW_SPRITE_W = CREW_SPRITE_H * (CREW_FRAME_W / CREW_CROP_H);
 const crewMotion = new WeakMap();
@@ -289,7 +277,8 @@ function drawCrewTag(ctx, p, x, y, isLead) {
   ctx.font = 'bold 11px "Jersey 10", monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const tw = Math.ceil(ctx.measureText(p.name).width);
+  const label = p.callsign || p.name; // p.name (P1..P4) is the game's identity key; callsign is the lobby name
+  const tw = Math.ceil(ctx.measureText(label).width);
   const w = snap2(tw + 10);
   const h = 14;
   const tx = snap2(x - w / 2);
@@ -302,7 +291,7 @@ function drawCrewTag(ctx, p, x, y, isLead) {
   ctx.fillStyle = 'rgba(255,255,255,0.28)';
   ctx.fillRect(tx, ty, w, 2);
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(p.name, tx + w / 2, ty + h / 2 + 1);
+  ctx.fillText(label, tx + w / 2, ty + h / 2 + 1);
   if (isLead) {
     // Bobbing yellow marker over the controlled crewmate.
     const bob = Math.floor(performance.now() / 260) % 2 ? 2 : 0;
@@ -343,7 +332,18 @@ export function drawChibiEngineer(ctx, p, isLead = false) {
 
   const dx = snap2(p.x - CREW_SPRITE_W / 2);
   const dy = snap2(footY - CREW_SPRITE_H + 2);
-  if (isImageReady(img)) {
+  // Lobby-customised crew (skin / hair / helmet / arm badge); null until its sheet is built.
+  const custom = p.look ? getCrewSheet(p.look, sheetKey) : null;
+  if (custom) {
+    // Customised frames reach AVATAR_HEADROOM source px above the stock crop (tall hair), so
+    // the destination grows upward by the same fraction and the feet stay put.
+    const headroom = (CREW_SPRITE_H * AVATAR_HEADROOM) / CREW_CROP_H;
+    ctx.drawImage(
+      custom.canvas,
+      col * custom.frameW, row * custom.frameH, custom.frameW, custom.frameH,
+      dx, dy - headroom, CREW_SPRITE_W, CREW_SPRITE_H + headroom
+    );
+  } else if (isImageReady(img)) {
     ctx.drawImage(
       img,
       col * CREW_FRAME_W, row * CREW_FRAME_H + CREW_CROP_TOP, CREW_FRAME_W, CREW_CROP_H,

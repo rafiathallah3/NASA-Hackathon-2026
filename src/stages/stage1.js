@@ -172,6 +172,8 @@ export function initStage1() {
     const safePt = findNearestWalkablePoint(pref.x, pref.y);
     return {
       name: cr.id,
+      callsign: state.crew?.[i]?.callsign, // lobby name shown on the tag; `name` stays the P1..P4 key
+      look: state.crew?.[i]?.look, // lobby customization; undefined = stock sprite
       role: cr.role,
       x: safePt.x,
       y: safePt.y,

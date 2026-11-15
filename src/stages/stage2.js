@@ -2,8 +2,8 @@ import { LOGICAL_W, LOGICAL_H, SHIP_W, SHIP_H, CREW_ROSTER } from '../config.js'
 import { state, getScenario, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
-import { getAsset } from '../assets.js';
-import { addFloatText, drawChibiEngineer, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite } from '../sprites.js';
+import { getAsset, getSheetSlice, isImageReady } from '../assets.js';
+import { addFloatText, drawChibiEngineer, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite, drawPixelPanel } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
 
@@ -128,6 +128,8 @@ export function startStage2() {
 
   state.ctrlPlayers = CREW_ROSTER.map((cr, i) => ({
     name: cr.id,
+    callsign: state.crew?.[i]?.callsign,
+    look: state.crew?.[i]?.look,
     role: cr.role,
     x: 860 + i * 52,
     y: 480,
@@ -1384,6 +1386,53 @@ function drawShipBayDecorations(ctx, nowMs) {
   ctx.restore();
 }
 
+const CONSOLE_PROP_SLICES = {
+  SPACE: { slice: 'console_wires', dw: 100, dh: 60 },
+  USER: { slice: 'console_nav', dw: 84, dh: 66 },
+  CALIB: { slice: 'console_sci', dw: 96, dh: 60 },
+  LAUNCH: { slice: 'console_hull', dw: 96, dh: 60 },
+  GROUND: { slice: 'console_comms', dw: 88, dh: 66 }
+};
+
+function drawStage2DynamicFx(ctx, nowMs) {
+  const glowPulse = 0.5 + 0.5 * Math.sin(nowMs * 0.005);
+
+  ctx.save();
+  // Animated Fission Core glow centered on the pixel-art Reactor Core (450, 198)
+  const rcX = 450, rcY = 198;
+  const rcGrad = ctx.createRadialGradient(rcX, rcY, 8, rcX, rcY, 64);
+  rcGrad.addColorStop(0, `rgba(245, 158, 11, ${0.34 + glowPulse * 0.24})`);
+  rcGrad.addColorStop(1, 'rgba(245, 158, 11, 0)');
+  ctx.fillStyle = rcGrad;
+  ctx.beginPath(); ctx.arc(rcX, rcY, 64, 0, Math.PI * 2); ctx.fill();
+
+  // Animated Engine plasma glow halos on twin NTR injector drums & nozzles
+  for (const ty of [630, 810]) {
+    const tGrad = ctx.createRadialGradient(176, ty, 6, 176, ty, 38);
+    tGrad.addColorStop(0, `rgba(56, 189, 248, ${0.34 + glowPulse * 0.24})`);
+    tGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    ctx.fillStyle = tGrad;
+    ctx.beginPath(); ctx.arc(176, ty, 38, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Bay directional floor decals near doorways along Central Spine
+  ctx.font = 'bold 11px "Jersey 10", monospace';
+  ctx.textAlign = 'center';
+  const doorSigns = [
+    { x: 350,  y: 454, txt: '▲ REACTOR', col: '#f59e0b' },
+    { x: 940,  y: 454, txt: '▲ BRIDGE',  col: '#38bdf8' },
+    { x: 1540, y: 454, txt: '▲ SCI LAB', col: '#a855f7' },
+    { x: 430,  y: 514, txt: '▼ ENGINE',  col: '#ef4444' },
+    { x: 1370, y: 514, txt: '▼ COMMS',   col: '#10b981' }
+  ];
+  for (const ds of doorSigns) {
+    drawPixelPanel(ctx, ds.x - 44, ds.y - 11, 88, 16, { fill: 'rgba(9, 13, 22, 0.90)', hi: '#334155', lo: '#06080f' });
+    ctx.fillStyle = ds.col;
+    ctx.fillText(ds.txt, ds.x, ds.y + 1);
+  }
+  ctx.restore();
+}
+
 export function drawStage2(ctx) {
   const nowMs = performance.now();
   // Layered deep-space parallax backdrop
@@ -1431,31 +1480,52 @@ export function drawStage2(ctx) {
     }
   }
 
-  // Outer Hull Shell
-  ctx.fillStyle = '#0f172a';
-  ctx.strokeStyle = '#64748b';
-  ctx.lineWidth = 8;
-  ctx.beginPath(); ctx.roundRect(62, 62, SHIP_W - 124, SHIP_H - 124, 28); ctx.fill(); ctx.stroke();
+  const stage2Bg = getAsset('stage2Bg');
+  const hasStage2Bg = isImageReady(stage2Bg);
 
-  // Named Ship Bays
-  for (const rm of ROOMS) {
-    ctx.fillStyle = rm.floor;
-    ctx.fillRect(rm.x, rm.y, rm.w, rm.h);
-    // Floor tile grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-    ctx.lineWidth = 1;
-    for (let gx = rm.x; gx < rm.x + rm.w; gx += 60) {
-      ctx.beginPath(); ctx.moveTo(gx, rm.y); ctx.lineTo(gx, rm.y + rm.h); ctx.stroke();
+  if (hasStage2Bg) {
+    ctx.drawImage(stage2Bg, 0, 0, SHIP_W, SHIP_H);
+    // Clean notched room title pills matching the unified pixel-art bays
+    ctx.font = 'bold 13px "Jersey 10", monospace';
+    ctx.textAlign = 'left';
+    for (const rm of ROOMS) {
+      const pillW = Math.min(rm.w - 24, Math.ceil(ctx.measureText(rm.name).width) + 20);
+      drawPixelPanel(ctx, rm.x + 12, rm.y + 10, pillW, 20, {
+        fill: 'rgba(9, 13, 22, 0.88)',
+        hi: rm.accent,
+        lo: '#06080f'
+      });
+      ctx.fillStyle = rm.accent;
+      ctx.fillText(rm.name, rm.x + 22, rm.y + 24);
     }
-    ctx.fillStyle = rm.accent;
-    ctx.globalAlpha = 0.24;
-    ctx.font = 'bold 20px Fredoka, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(rm.name, rm.x + rm.w / 2, rm.y + 34);
-    ctx.globalAlpha = 1;
-  }
+    drawStage2DynamicFx(ctx, nowMs);
+  } else {
+    // Outer Hull Shell fallback
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.roundRect(62, 62, SHIP_W - 124, SHIP_H - 124, 28); ctx.fill(); ctx.stroke();
 
-  drawShipBayDecorations(ctx, nowMs);
+    // Named Ship Bays fallback
+    for (const rm of ROOMS) {
+      ctx.fillStyle = rm.floor;
+      ctx.fillRect(rm.x, rm.y, rm.w, rm.h);
+      // Floor tile grid
+      ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+      ctx.lineWidth = 1;
+      for (let gx = rm.x; gx < rm.x + rm.w; gx += 60) {
+        ctx.beginPath(); ctx.moveTo(gx, rm.y); ctx.lineTo(gx, rm.y + rm.h); ctx.stroke();
+      }
+      ctx.fillStyle = rm.accent;
+      ctx.globalAlpha = 0.24;
+      ctx.font = 'bold 20px Fredoka, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(rm.name, rm.x + rm.w / 2, rm.y + 34);
+      ctx.globalAlpha = 1;
+    }
+
+    drawShipBayDecorations(ctx, nowMs);
+  }
 
   // Conduits along Spine Deck
   ctx.strokeStyle = 'rgba(56, 189, 248, 0.22)';
@@ -1471,14 +1541,30 @@ export function drawStage2(ctx) {
   for (const d of DOORS) {
     const span = d.span || 120;
     const halfSpan = span / 2;
+    const open = !d.locked && state.ctrlPlayers.some(p => Math.hypot(p.x - d.x, p.y - d.y) < 110);
+    const doorKey = d.vertical
+      ? (d.locked || !open ? 'door_v_closed' : 'door_v_open')
+      : (d.locked || !open ? 'door_h_closed' : 'door_h_open');
+    const doorSlice = getSheetSlice('stage2PropsSheet', doorKey);
+    const dx = d.vertical ? d.x - 12 : d.x - halfSpan;
+    const dy = d.vertical ? d.y - halfSpan : d.y - 12;
+    const dw = d.vertical ? 24 : span;
+    const dh = d.vertical ? span : 24;
+
     if (d.locked) {
       const col = getDoorCollider(d);
       const nearLocked = activeCrewForDoor && Math.hypot(activeCrewForDoor.x - d.x, activeCrewForDoor.y - d.y) < 92;
       ctx.save();
-      ctx.fillStyle = '#7f1d1d';
+      if (doorSlice && doorSlice.ready) {
+        ctx.drawImage(doorSlice.img, doorSlice.sx, doorSlice.sy, doorSlice.sw, doorSlice.sh, dx, dy, dw, dh);
+        ctx.fillStyle = 'rgba(185, 28, 28, 0.56)';
+        ctx.fillRect(dx, dy, dw, dh);
+      } else {
+        ctx.fillStyle = '#7f1d1d';
+        ctx.fillRect(col.x, col.y, col.w, col.h);
+      }
       ctx.strokeStyle = nearLocked ? '#fde047' : '#ef4444';
       ctx.lineWidth = nearLocked ? 3 : 2;
-      ctx.fillRect(col.x, col.y, col.w, col.h);
       ctx.strokeRect(col.x, col.y, col.w, col.h);
 
       ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
@@ -1486,7 +1572,7 @@ export function drawStage2(ctx) {
       ctx.lineWidth = 1.8;
       ctx.beginPath(); ctx.roundRect(d.x - 56, d.y - 16, 112, 32, 7); ctx.fill(); ctx.stroke();
       ctx.fillStyle = nearLocked ? '#fde047' : '#fca5a5';
-      ctx.font = 'bold 9.5px Fredoka, sans-serif';
+      ctx.font = 'bold 11px "Jersey 10", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(nearLocked ? '🔒 [SPACE] OVERRIDE' : '🔒 LOCKED', d.x, d.y + (d.overrideProg > 0 ? -1 : 3));
       if (d.overrideProg > 0) {
@@ -1497,8 +1583,9 @@ export function drawStage2(ctx) {
       }
       ctx.restore();
     } else {
-      const open = state.ctrlPlayers.some(p => Math.hypot(p.x - d.x, p.y - d.y) < 110);
-      if (!open) {
+      if (doorSlice && doorSlice.ready) {
+        ctx.drawImage(doorSlice.img, doorSlice.sx, doorSlice.sy, doorSlice.sw, doorSlice.sh, dx, dy, dw, dh);
+      } else if (!open) {
         ctx.fillStyle = '#0284c7';
         ctx.globalAlpha = 0.35;
         if (d.vertical) ctx.fillRect(d.x - 4, d.y - halfSpan + 2, 8, span - 4);
@@ -1514,13 +1601,15 @@ export function drawStage2(ctx) {
     }
   }
 
-  // Bulkhead Walls
-  ctx.fillStyle = '#334155';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2.5;
-  for (const w of WALLS) {
-    ctx.fillRect(w.x, w.y, w.w, w.h);
-    ctx.strokeRect(w.x, w.y, w.w, w.h);
+  // Bulkhead Walls fallback (already baked into Stage2_Map_Bg.png when ready)
+  if (!hasStage2Bg) {
+    ctx.fillStyle = '#334155';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2.5;
+    for (const w of WALLS) {
+      ctx.fillRect(w.x, w.y, w.w, w.h);
+      ctx.strokeRect(w.x, w.y, w.w, w.h);
+    }
   }
 
   // Translunar Trajectory Holo-Table in Bridge
@@ -1552,56 +1641,144 @@ export function drawStage2(ctx) {
   ctx.fillStyle = '#fde047';
   ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI * 2); ctx.fill();
 
-  // Physical Wrench Rack in Engine Room
+  // Physical Wrench Rack in Engine Room (In-world NASA pixel station)
   const activeCrew = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
   const breachActive = state.consoles.some(c => c.id === 'LAUNCH' && c.alert);
   const wrenchNeeded = breachActive && activeCrew && !activeCrew.hasWrench && state.wrenchRack.available;
   const nearRack = activeCrew && Math.hypot(activeCrew.x - state.wrenchRack.x, activeCrew.y - state.wrenchRack.y) < 64;
+  const rackSlice = getSheetSlice('stage2PropsSheet', 'tool_rack');
+  const hasRack = Boolean(rackSlice && rackSlice.ready);
+  const rackX = Math.round(state.wrenchRack.x / 2) * 2;
+  const rackY = Math.round(state.wrenchRack.y / 2) * 2;
 
-  ctx.fillStyle = wrenchNeeded ? '#422006' : '#334155';
-  ctx.strokeStyle = wrenchNeeded ? '#facc15' : state.wrenchRack.available ? '#fde047' : '#475569';
-  ctx.lineWidth = wrenchNeeded ? 4 : 3;
-  ctx.beginPath(); ctx.roundRect(state.wrenchRack.x - 56, state.wrenchRack.y - 26, 112, 52, 10); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 11.5px Fredoka, sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText(state.wrenchRack.available ? '🔧 TOOL RACK' : 'RACK EMPTY', state.wrenchRack.x, state.wrenchRack.y + 4);
-  if (nearRack && state.wrenchRack.available) {
-    ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka, sans-serif';
-    ctx.fillText('PRESS [SPACE] TO GRAB 🔧', state.wrenchRack.x, state.wrenchRack.y - 34);
+  if (hasRack) {
+    const rw = 96, rh = 62;
+    const rx = rackX - rw / 2, ry = rackY - 40;
+    // Floor contact shadow + optional highlight beacon ring when wrench is needed/in range
+    ctx.fillStyle = 'rgba(6, 8, 15, 0.48)';
+    ctx.fillRect(rx + 6, ry + rh - 4, rw - 12, 8);
+    if (wrenchNeeded || nearRack) {
+      ctx.strokeStyle = nearRack ? '#4ade80' : '#facc15';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rx - 4, ry - 4, rw + 8, rh + 8);
+    }
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    if (!state.wrenchRack.available) ctx.globalAlpha = 0.42;
+    ctx.drawImage(rackSlice.img, rackSlice.sx, rackSlice.sy, rackSlice.sw, rackSlice.sh, rx, ry, rw, rh);
+    ctx.restore();
+    drawPixelPanel(ctx, rackX - 48, ry + rh + 4, 96, 18, {
+      fill: wrenchNeeded ? '#422006' : 'rgba(9, 13, 22, 0.90)',
+      hi: wrenchNeeded ? '#facc15' : '#64748b'
+    });
+    ctx.fillStyle = state.wrenchRack.available ? '#fde047' : '#94a3b8';
+    ctx.font = 'bold 11px "Jersey 10", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(state.wrenchRack.available ? '🔧 TOOL RACK' : 'RACK EMPTY', rackX, ry + rh + 16);
+    if (nearRack && state.wrenchRack.available) {
+      ctx.fillStyle = '#fde047';
+      ctx.font = 'bold 11px "Jersey 10", monospace';
+      ctx.fillText('PRESS [SPACE] TO GRAB 🔧', rackX, ry - 8);
+    }
+  } else {
+    ctx.fillStyle = wrenchNeeded ? '#422006' : '#334155';
+    ctx.strokeStyle = wrenchNeeded ? '#facc15' : state.wrenchRack.available ? '#fde047' : '#475569';
+    ctx.lineWidth = wrenchNeeded ? 4 : 3;
+    ctx.beginPath(); ctx.roundRect(rackX - 56, rackY - 26, 112, 52, 10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11.5px "Jersey 10", monospace'; ctx.textAlign = 'center';
+    ctx.fillText(state.wrenchRack.available ? '🔧 TOOL RACK' : 'RACK EMPTY', rackX, rackY + 4);
+    if (nearRack && state.wrenchRack.available) {
+      ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px "Jersey 10", monospace';
+      ctx.fillText('PRESS [SPACE] TO GRAB 🔧', rackX, rackY - 34);
+    }
   }
 
-  // Interactive Segment Consoles
+  // Interactive Segment Consoles (In-world NASA pixel stations)
   for (const c of state.consoles) {
     const pulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.008);
     const inRange = activeCrew && Math.hypot(activeCrew.x - c.x, activeCrew.y - c.y) < 82;
-    if (c.alert) {
-      ctx.strokeStyle = `rgba(239, 68, 68, ${0.3 + pulse * 0.45})`;
-      ctx.lineWidth = 6;
-      ctx.beginPath(); ctx.roundRect(c.x - 90, c.y - 44, 180, 88, 18); ctx.stroke();
-    }
-    ctx.fillStyle = c.alert ? '#7f1d1d' : '#1e293b';
-    ctx.strokeStyle = inRange ? '#fde047' : c.alert ? '#ef4444' : c.color;
-    ctx.lineWidth = inRange ? 4.5 : 3.5;
-    ctx.beginPath(); ctx.roundRect(c.x - 80, c.y - 34, 160, 68, 13); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 12.5px Fredoka, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(c.label, c.x, c.y - 4);
-    ctx.fillStyle = '#cbd5e1'; ctx.font = '11px Fredoka, sans-serif';
-    ctx.fillText(c.sub, c.x, c.y + 14);
+    const propMeta = CONSOLE_PROP_SLICES[c.id];
+    const propSlice = propMeta ? getSheetSlice('stage2PropsSheet', propMeta.slice) : null;
+    const hasProp = Boolean(propSlice && propSlice.ready);
+    const cx = Math.round(c.x / 2) * 2;
+    const cy = Math.round(c.y / 2) * 2;
 
-    if (c.alert) {
-      const needWrenchHere = c.needsWrench && (!activeCrew || !activeCrew.hasWrench);
-      ctx.fillStyle = needWrenchHere ? '#fb923c' : inRange ? '#4ade80' : '#fde047';
-      ctx.font = 'bold 12px Fredoka, sans-serif';
-      const promptTxt = needWrenchHere
-        ? '🔧 GRAB WRENCH IN ENGINE FIRST!'
-        : inRange
-          ? '🟢 PRESS [SPACE] OR CLICK NOW!'
-          : '⚠️ ALERT: GO HERE';
-      ctx.fillText(promptTxt, c.x, c.y - 48);
-      if (c.botProg > 0.02 && !c.needsWrench && c.id !== 'USER' && c.id !== 'LAUNCH') {
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(c.x - 42, c.y + 24, 84, 6);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(c.x - 42, c.y + 24, 84 * Math.min(1, c.botProg), 6);
+    if (hasProp) {
+      const dw = propMeta.dw;
+      const dh = propMeta.dh;
+      const sx = cx - Math.round(dw / 4) * 2;
+      const sy = cy - 46;
+
+      // Ground contact shadow + subtle active floor pad under hardware
+      ctx.fillStyle = 'rgba(6, 8, 15, 0.50)';
+      ctx.fillRect(sx + 6, sy + dh - 4, dw - 12, 8);
+      if (c.alert || inRange) {
+        ctx.fillStyle = c.alert ? `rgba(239, 68, 68, ${0.14 + pulse * 0.16})` : 'rgba(250, 204, 21, 0.14)';
+        ctx.fillRect(sx - 6, sy - 4, dw + 12, dh + 8);
+        ctx.strokeStyle = inRange ? '#fde047' : '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx - 6, sy - 4, dw + 12, dh + 8);
+      }
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(propSlice.img, propSlice.sx, propSlice.sy, propSlice.sw, propSlice.sh, sx, sy, dw, dh);
+      ctx.restore();
+
+      // Compact notched nameplate cleanly below the console sprite
+      const badgeW = 140;
+      const badgeY = sy + dh + 4;
+      drawPixelPanel(ctx, cx - badgeW / 2, badgeY, badgeW, 30, {
+        fill: c.alert ? 'rgba(127, 29, 29, 0.94)' : 'rgba(15, 23, 42, 0.92)',
+        hi: inRange ? '#fde047' : c.alert ? '#ef4444' : c.color,
+        lo: '#06080f'
+      });
+      ctx.fillStyle = '#ffffff'; ctx.font = 'bold 12px "Jersey 10", monospace'; ctx.textAlign = 'center';
+      ctx.fillText(c.label, cx, badgeY + 11);
+      ctx.fillStyle = '#cbd5e1'; ctx.font = '10.5px "Jersey 10", monospace';
+      ctx.fillText(c.sub, cx, badgeY + 24);
+
+      if (c.alert) {
+        const needWrenchHere = c.needsWrench && (!activeCrew || !activeCrew.hasWrench);
+        ctx.fillStyle = needWrenchHere ? '#fb923c' : inRange ? '#4ade80' : '#fde047';
+        ctx.font = 'bold 12px "Jersey 10", monospace';
+        const promptTxt = needWrenchHere
+          ? '🔧 GRAB WRENCH IN ENGINE FIRST!'
+          : inRange
+            ? '🟢 PRESS [SPACE] OR CLICK NOW!'
+            : '⚠️ ALERT: GO HERE';
+        ctx.fillText(promptTxt, cx, sy - 10);
+        if (c.botProg > 0.02 && !c.needsWrench && c.id !== 'USER' && c.id !== 'LAUNCH') {
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(cx - 42, badgeY + 32, 84, 5);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(cx - 42, badgeY + 32, 84 * Math.min(1, c.botProg), 5);
+        }
+      }
+    } else {
+      if (c.alert) {
+        ctx.strokeStyle = `rgba(239, 68, 68, ${0.3 + pulse * 0.45})`;
+        ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.roundRect(cx - 90, cy - 42, 180, 84, 16); ctx.stroke();
+      }
+      ctx.fillStyle = c.alert ? '#7f1d1d' : '#1e293b';
+      ctx.strokeStyle = inRange ? '#fde047' : c.alert ? '#ef4444' : c.color;
+      ctx.lineWidth = inRange ? 4.5 : 3.5;
+      ctx.beginPath(); ctx.roundRect(cx - 80, cy - 34, 160, 68, 13); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 12.5px "Jersey 10", monospace'; ctx.textAlign = 'center';
+      ctx.fillText(c.label, cx, cy - 4);
+      ctx.fillStyle = '#cbd5e1'; ctx.font = '11px "Jersey 10", monospace';
+      ctx.fillText(c.sub, cx, cy + 14);
+      if (c.alert) {
+        const needWrenchHere = c.needsWrench && (!activeCrew || !activeCrew.hasWrench);
+        ctx.fillStyle = needWrenchHere ? '#fb923c' : inRange ? '#4ade80' : '#fde047';
+        ctx.font = 'bold 12px "Jersey 10", monospace';
+        const promptTxt = needWrenchHere
+          ? '🔧 GRAB WRENCH IN ENGINE FIRST!'
+          : inRange
+            ? '🟢 PRESS [SPACE] OR CLICK NOW!'
+            : '⚠️ ALERT: GO HERE';
+        ctx.fillText(promptTxt, cx, cy - 46);
       }
     }
   }

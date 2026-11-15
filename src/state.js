@@ -28,6 +28,13 @@ export const state = {
 
   coopMode: '4P_AI', // '4P_AI' | 'LOCAL_2P' | 'NET_4P' | 'SOLO'
   activeCrewIndex: 0,
+
+  // Pre-game lobby (src/lobby.js): the local player's { name, look }, the room being hosted,
+  // and the resolved 4-seat crew [{ index, role, kind, callsign, look }] the mission flies with.
+  // Stages read `state.crew` to dress their crew sprites; empty = stock sprites.
+  profile: null,
+  lobby: null,
+  crew: [],
   muted: false,
   paused: false,
   lastTime: 0,

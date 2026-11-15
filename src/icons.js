@@ -63,7 +63,12 @@ const RAW_ICONS = {
   chute: { c: { a: O, w: W }, g: ['.aawaa.', 'awwawwa', 'aaaaaaa', 'a..a..a', '.a.a.a.', '..aaa..', '..aaa..'] },
   comet: { c: { a: C, w: W }, g: ['.....ww', '....aww', '...aa..', '..aa...', '.a.....', 'a......'] },
   hourglass: { c: { a: S, b: Y }, g: ['aaaaaaa', '.abbba.', '..aba..', '...a...', '..a.a..', '.abbba.', 'aaaaaaa'] },
-  ufo: { c: { a: S, w: C, k: Y }, g: ['..www..', '.awwwa.', 'aaaaaaa', '.k.k.k.'] }
+  ufo: { c: { a: S, w: C, k: Y }, g: ['..www..', '.awwwa.', 'aaaaaaa', '.k.k.k.'] },
+  copy: { c: { a: SD, b: W, k: K }, g: ['aaaaa..', 'a...a..', 'a.bbbbb', 'a.bkkkb', 'aabkkkb', '..bkkkb', '..bbbbb'] },
+  dice: { c: { a: SD, w: W, k: K }, g: ['aaaaaaa', 'awwwwwa', 'awkwkwa', 'awwkwwa', 'awkwkwa', 'awwwwwa', 'aaaaaaa'] },
+  bot: { c: { a: S, y: Y, c: C, k: K }, g: ['...y...', '...a...', '.aaaaa.', 'aacacaa', 'aaaaaaa', 'aakkkaa', '.aaaaa.'] },
+  crown: { c: { a: Y, b: '#a8741a' }, g: ['a..a..a', 'aa.a.aa', 'aaaaaaa', 'abababa', 'bbbbbbb'] },
+  helmet: { c: { a: W, k: '#4a5278' }, g: ['..aaa..', '.aaaaa.', 'akkkkka', 'akkkkka', 'aakkkaa', '.aaaaa.', '..aaa..'] }
 };
 
 function rotateCW(rows) {

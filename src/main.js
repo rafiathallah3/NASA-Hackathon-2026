@@ -4,11 +4,13 @@ import { preloadAllAssets } from './assets.js';
 import { playTone, startBackgroundMusic, syncMusicMute, setMusicDuck } from './audio.js';
 import { broadcastNet, registerNetStageHandler } from './net.js';
 import {
-  selectActiveCrew, cycleCoopMode, showMenuModal, renderTicketsHUD,
+  selectActiveCrew, cycleCoopMode, showMenuModal, showTitleScreen, hideTitleScreen,
+  isTitleScreenActive, activateTitlePlay, renderTicketsHUD,
   updateBottomHUD, updateClockHUD, syncPauseUI, showMissionToast, hideMissionToast,
   startUiTour, advanceUiTour, skipUiTour, isUiTourActive,
   isBlueprintOpen, toggleBlueprint, closeBlueprint
 } from './hud.js';
+import { showLobbyScreen, hideLobbyScreen, isLobbyScreenActive } from './lobby-ui.js';
 import { startTransition, skipTransition, updateTransition, drawTransition } from './transitions.js';
 import { initStage1, buildStage1Map, handleStage1Interact, handleStage1Dash, handleStage1Throw, handleStage1CanvasClick, skipStage1Tutorial, updateStage1, drawStage1 } from './stages/stage1.js';
 import { startStage1B, handleStage1BSeparation, updateStage1B, drawStage1B } from './stages/stage1b.js';
@@ -75,7 +77,7 @@ function goToDebrief() {
   setPaused(false);
   closeBlueprint();
   hideMissionToast();
-  startStage5Debrief(startGame, openMenu);
+  startStage5Debrief(startGame, () => openMenu());
 }
 
 function toStage1B() {
@@ -314,6 +316,7 @@ function runStage1GuidedTour() {
 function startGame(fromNet = false) {
   hideMissionToast();
   closeBlueprint();
+  clearPreGameScreens();
   document.getElementById('modal').classList.add('hidden');
   startBackgroundMusic();
   resetRunState();
@@ -335,14 +338,54 @@ function startGame(fromNet = false) {
   requestAnimationFrame(loop);
 }
 
-function openMenu() {
+// Pre-game screen sequence. Each step shows one screen and calls `next()` to advance
+// (`goTo(id)` jumps to another step, e.g. Leave -> title); running off the end launches the
+// mission. Add future wireframe screens as new entries: no other code needs to change.
+function playUiConfirmChime() {
+  playTone(660, 'triangle', 0.07, 0.08);
+  setTimeout(() => playTone(990, 'triangle', 0.12, 0.08), 70);
+}
+
+const PRE_GAME_STEPS = [
+  {
+    id: 'title',
+    show: (next) => showTitleScreen(() => {
+      // Runs inside the Play click / Enter / Space gesture, so audio unlocks cleanly.
+      startBackgroundMusic();
+      playUiConfirmChime();
+      next();
+    })
+  },
+  // Crew lobby: room code, crew list, astronaut customizer. Start commits `state.crew`.
+  { id: 'lobby', show: (next, goTo) => showLobbyScreen({ onStart: next, onLeave: () => goTo('title') }) },
+  { id: 'setup', show: (next) => showMenuModal(next) }
+];
+
+// Each screen tags #modal-content with its own class; drop them all before the next one renders.
+function clearPreGameScreens() {
+  hideTitleScreen();
+  hideLobbyScreen();
+}
+
+function runPreGameFlow(fromId = PRE_GAME_STEPS[0].id) {
+  const idx = Math.max(0, PRE_GAME_STEPS.findIndex(step => step.id === fromId));
+  const following = PRE_GAME_STEPS[idx + 1];
+  clearPreGameScreens();
+  PRE_GAME_STEPS[idx].show(
+    () => (following ? runPreGameFlow(following.id) : startGame(false)),
+    (id) => runPreGameFlow(id)
+  );
+}
+
+// `title: true` only on first boot; Pause / abort / Stage 5 menus jump straight to Mission Setup.
+function openMenu({ title = false } = {}) {
   state.stage = 'MENU';
   setPaused(false);
   closeBlueprint();
   buildStage1Map();
   updateClockHUD();
   draw();
-  showMenuModal(() => startGame(false));
+  runPreGameFlow(title ? 'title' : 'setup');
 }
 
 registerNetStageHandler((msg) => {
@@ -457,6 +500,27 @@ canvas.addEventListener('click', (e) => {
 
 // Keyboard Controls
 window.addEventListener('keydown', (e) => {
+  // Title screen owns the keyboard: Enter / Space = Play, everything else is ignored so the
+  // same keypress can never reach gameplay handlers or the Mission Setup modal that follows.
+  if (state.stage === 'MENU' && isTitleScreenActive()) {
+    const guideOpen = !document.getElementById('guide-modal')?.classList.contains('hidden');
+    if (e.code === 'Enter' || e.code === 'Space') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat && !guideOpen && !isUiTourActive()) activateTitlePlay();
+    }
+    return;
+  }
+
+  // Lobby: typing / button focus keep their native behaviour. Nothing reaches gameplay, and a
+  // held Enter / Space (auto-repeat from the title screen) cannot re-click a focused button.
+  if (state.stage === 'MENU' && isLobbyScreenActive()) {
+    if (e.repeat && (e.code === 'Enter' || e.code === 'Space') && e.target?.tagName === 'BUTTON') {
+      e.preventDefault();
+    }
+    return;
+  }
+
   if (state.stage !== 'MENU') {
     startBackgroundMusic();
   }
@@ -647,14 +711,14 @@ function update(dt) {
   else if (state.stage === 'STAGE3A') updateStage3A(dt, toStage3B, () => {
     resetRunState();
     state.stage = 'MENU';
-    showMenuModal(() => startGame(false));
+    runPreGameFlow('setup');
   });
   else if (state.stage === 'STAGE3B') updateStage3B(dt, toStage3C);
   else if (state.stage === 'STAGE3C') updateStage3C(dt, toStage4);
   else if (state.stage === 'STAGE4') updateStage4(dt, goToDebrief, () => {
     resetRunState();
     state.stage = 'MENU';
-    showMenuModal(() => startGame(false));
+    runPreGameFlow('setup');
   });
 
   for (let i = state.lunarParticles.length - 1; i >= 0; i--) {
@@ -726,7 +790,7 @@ try {
   });
   hydrateIcons();
   resizeCanvas();
-  openMenu();
+  openMenu({ title: true });
   updateBottomHUD();
   booted = true;
   window.__ORBITAL_BOOTED = true;

@@ -477,7 +477,108 @@ export function updateBottomHUD() {
   updateBlueprintHUD();
 }
 
+/* ============================================================
+   PRE-GAME TITLE / SPLASH SCREEN (Wireframe #1)
+   Entry node of the pre-game sequence driven by main.js
+   (title -> mission setup -> startGame). Reuses #modal and tags
+   #modal-content with .title-splash-card so every other modal
+   (Mission Setup, Stage 5 Debrief, crash dialogs) keeps its look.
+   ============================================================ */
+// Splash art. Backdrop = the game's own layered space background (nebula, stars, planet
+// limb) with a rocket that periodically lifts off from behind the planet. Logos:
+//  - Assets/lunar-mission-logo.png is a transparent cut-out of Assets/lunar-mission.jpeg
+//    (our own logo; the JPEG had a flat #f7f7f7 backdrop). It already says "created by CKC".
+//  - Assets/nasa-space-app.png is the OFFICIAL NASA Space Apps mark, shown exactly as shipped:
+//    never recolour / filter / redraw it. It is black on transparent, so it sits on a small
+//    light chip instead of being inverted.
+function buildTitleStars(count = 34) {
+  let seed = 7; // fixed seed: same sky on every boot
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let out = '';
+  for (let i = 0; i < count; i++) {
+    const x = (1 + rnd() * 98).toFixed(1);
+    const y = (2 + rnd() * 60).toFixed(1);
+    const big = rnd() < 0.3 ? ' ts-star-big' : '';
+    const cyan = rnd() < 0.35 ? ' ts-star-cyan' : '';
+    const delay = (rnd() * 2.6).toFixed(2);
+    out += `<i class="ts-star${big}${cyan}" style="left:${x}%;top:${y}%;animation-delay:-${delay}s"></i>`;
+  }
+  return out;
+}
+
+const TITLE_CREW_CHIPS = [
+  ['ts-c1', 'P1', 'Launch'],
+  ['ts-c2', 'P2', 'Space'],
+  ['ts-c3', 'P3', 'Science'],
+  ['ts-c4', 'P4', 'Ground']
+].map(([cls, tag, role]) => `<li class="ts-chip ${cls}"><b>${tag}</b>${role}</li>`).join('');
+
+const TITLE_SCREEN_HTML = `
+  <div class="title-splash-sky" aria-hidden="true">
+    <div class="ts-layer ts-back"></div>
+    <div class="ts-layer ts-stars"></div>
+    ${buildTitleStars()}
+    <div class="ts-rocket"><img src="Assets/Vehicle/title-rocket.png" width="21" height="88" alt="" draggable="false"></div>
+    <div class="ts-layer ts-planet"></div>
+    <div class="ts-stripe ts-stripe-top"></div>
+    <div class="ts-stripe ts-stripe-bottom"></div>
+  </div>
+  <h1 class="ts-logo">
+    <img src="Assets/lunar-mission-logo.png" width="832" height="584" alt="Lunar Mission, created by CKC" draggable="false" decoding="async">
+  </h1>
+  <p class="ts-tagline">Build &middot; Launch &middot; Land &middot; Return</p>
+  <ul class="ts-crew" aria-label="Crew roles">${TITLE_CREW_CHIPS}</ul>
+  <button id="btn-title-play" class="title-splash-btn" type="button"><span>Play</span></button>
+  <p class="ts-hint">Press Enter or Space</p>
+  <div class="ts-nasa">
+    <img src="Assets/nasa-space-app.png" width="692" height="718" alt="NASA International Space Apps Challenge" draggable="false" decoding="async">
+  </div>
+`.replace(/\n\s*/g, '');
+
+let titleScreenOnPlay = null;
+
+export function isTitleScreenActive() {
+  if (!titleScreenOnPlay) return false;
+  const modal = document.getElementById('modal');
+  return Boolean(modal) && !modal.classList.contains('hidden');
+}
+
+// Drops the splash styling + pending Play callback. Safe to call from anywhere
+// (showMenuModal, startGame via a NET_4P START message, ...).
+export function hideTitleScreen() {
+  titleScreenOnPlay = null;
+  document.getElementById('modal-content')?.classList.remove('title-splash-card');
+  document.getElementById('modal')?.classList.remove('title-splash-open');
+}
+
+// Single entry for the Play button and the Enter / Space shortcut. One-shot, so a
+// native button click and a key press landing together can never advance twice.
+export function activateTitlePlay() {
+  const onPlay = titleScreenOnPlay;
+  if (!onPlay) return false;
+  hideTitleScreen();
+  onPlay();
+  return true;
+}
+
+export function showTitleScreen(onPlay) {
+  const modal = document.getElementById('modal');
+  const content = document.getElementById('modal-content');
+  if (!modal || !content) {
+    onPlay?.();
+    return;
+  }
+  titleScreenOnPlay = typeof onPlay === 'function' ? onPlay : () => {};
+  content.classList.add('title-splash-card');
+  modal.classList.add('title-splash-open');
+  content.innerHTML = TITLE_SCREEN_HTML;
+  document.getElementById('btn-title-play').addEventListener('click', activateTitlePlay);
+  modal.classList.remove('hidden');
+  document.getElementById('btn-title-play').focus({ preventScroll: true });
+}
+
 export function showMenuModal(onStartGame) {
+  hideTitleScreen();
   const modal = document.getElementById('modal');
   const content = document.getElementById('modal-content');
   const scen = getScenario();
