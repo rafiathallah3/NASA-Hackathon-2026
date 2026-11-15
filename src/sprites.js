@@ -1,6 +1,6 @@
 import { RAW_ITEMS, PROC_META } from './config.js';
 import { state } from './state.js';
-import { getItemSprite, getItemBounds, getAnimFrame, getAnimFrameBounds, getSheetSlice, isImageReady } from './assets.js';
+import { getAsset, getItemSprite, getItemBounds, getAnimFrame, getAnimFrameBounds, getSheetSlice, isImageReady } from './assets.js';
 
 export function addFloatText(x, y, text, color = '#fff') {
   state.floatingTexts.push({ x, y, text, color, life: 1.25 });
@@ -241,103 +241,198 @@ export function drawItemBadge(ctx, x, y, item) {
   ctx.restore();
 }
 
-export function drawChibiEngineer(ctx, p, isLead = false) {
-  const bob = Math.sin(p.walk) * 3;
-  // Ground shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.38)';
-  ctx.beginPath(); ctx.ellipse(p.x, p.y + 15, 17, 8, 0, 0, Math.PI * 2); ctx.fill();
-
-  if (isLead) {
-    ctx.strokeStyle = '#fde047';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.ellipse(p.x, p.y + 15, 22, 10.5, 0, 0, Math.PI * 2); ctx.stroke();
+/* ------------------------------------------------------------------
+   CREW ASTRONAUT SPRITES (Assets/Character/Character_*.png)
+   Each sheet is 8 cols x 2 rows of 792x1344 frames. Columns hold one
+   facing per pair; the two rows hold the stride / passing poses.
+   Frames are [row, col]; walk cycles go stride -> pass -> stride -> pass.
+   The Carry sheet swaps the front/back column pairs vs the Idle sheet.
+   ------------------------------------------------------------------ */
+const CREW_FRAME_W = 792;
+const CREW_FRAME_H = 1344;
+const CREW_CROP_TOP = 90;
+const CREW_CROP_H = 1180;
+const CREW_ANIM = {
+  charIdle: {
+    down: { idle: [1, 0], walk: [[0, 0], [0, 1], [1, 0], [1, 1]] },
+    up: { idle: [1, 2], walk: [[0, 2], [1, 2], [0, 3], [1, 3]] },
+    right: { idle: [1, 4], walk: [[0, 4], [1, 4], [0, 5], [1, 5]] },
+    left: { idle: [0, 7], walk: [[1, 7], [0, 7], [1, 6], [0, 6]] }
+  },
+  charCarry: {
+    down: { idle: [1, 2], walk: [[0, 2], [1, 2], [0, 3], [1, 3]] },
+    up: { idle: [1, 0], walk: [[0, 0], [1, 0], [0, 1], [1, 1]] },
+    right: { idle: [1, 4], walk: [[0, 4], [1, 4], [0, 5], [1, 5]] },
+    left: { idle: [0, 7], walk: [[1, 7], [0, 7], [1, 6], [0, 6]] }
   }
+};
+const CREW_SPRITE_H = 56;
+const CREW_SPRITE_W = CREW_SPRITE_H * (CREW_FRAME_W / CREW_CROP_H);
+const crewMotion = new WeakMap();
 
-  // PLSS Life-Support Backpack (behind body when facing front/side)
-  const backOffX = -Math.cos(p.angle) * 9;
-  ctx.fillStyle = '#cbd5e1';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2.2;
-  ctx.beginPath();
-  ctx.roundRect(p.x + backOffX - 10, p.y - 11 + bob, 20, 21, 5);
-  ctx.fill(); ctx.stroke();
+function crewFacing(angle = Math.PI / 2) {
+  const cx = Math.cos(angle);
+  const cy = Math.sin(angle);
+  if (Math.abs(cx) > Math.abs(cy) * 0.9) return cx >= 0 ? 'right' : 'left';
+  return cy >= 0 ? 'down' : 'up';
+}
 
-  // Suit Torso
-  ctx.fillStyle = p.color;
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2.8;
-  ctx.beginPath(); ctx.roundRect(p.x - 14, p.y - 13 + bob, 28, 26, 11); ctx.fill(); ctx.stroke();
+function crewIsMoving(p) {
+  const now = performance.now();
+  const m = crewMotion.get(p);
+  if (!m || m.walk !== p.walk) {
+    crewMotion.set(p, { walk: p.walk, changedAt: m ? now : 0 });
+    return Boolean(m);
+  }
+  return now - m.changedAt < 140;
+}
 
-  // NASA Chest Stripe / Tool Belt
-  ctx.fillStyle = 'rgba(255,255,255,0.28)';
-  ctx.fillRect(p.x - 10, p.y + 3 + bob, 20, 3.5);
+const snap2 = (v) => Math.round(v / 2) * 2;
 
-  // Helmet
-  ctx.fillStyle = '#f8fafc';
-  ctx.beginPath(); ctx.arc(p.x, p.y - 21 + bob, 14.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-
-  // Gold/Tinted Visor + Specular Highlight
-  const vx = Math.cos(p.angle) * 5, vy = Math.sin(p.angle) * 3;
-  ctx.fillStyle = p.visor;
-  ctx.beginPath(); ctx.roundRect(p.x - 9 + vx, p.y - 26 + bob + vy, 18, 9.5, 4.5); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.beginPath(); ctx.roundRect(p.x - 6 + vx, p.y - 24.5 + bob + vy, 7, 2.5, 1); ctx.fill();
-
-  // Role Callout Pill
-  ctx.fillStyle = isLead ? '#fde047' : '#e2e8f0';
-  ctx.font = 'bold 10px Fredoka, sans-serif';
+function drawCrewTag(ctx, p, x, y, isLead) {
+  ctx.save();
+  ctx.font = 'bold 11px "Jersey 10", monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(p.name, p.x, p.y - 40 + bob);
+  ctx.textBaseline = 'middle';
+  const tw = Math.ceil(ctx.measureText(p.name).width);
+  const w = snap2(tw + 10);
+  const h = 14;
+  const tx = snap2(x - w / 2);
+  const ty = snap2(y - h);
+  ctx.fillStyle = '#06080f';
+  ctx.fillRect(tx - 2, ty, w + 4, h);
+  ctx.fillRect(tx, ty - 2, w, h + 4);
+  ctx.fillStyle = p.color || '#94a3b8';
+  ctx.fillRect(tx, ty, w, h);
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillRect(tx, ty, w, 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(p.name, tx + w / 2, ty + h / 2 + 1);
+  if (isLead) {
+    // Bobbing yellow marker over the controlled crewmate.
+    const bob = Math.floor(performance.now() / 260) % 2 ? 2 : 0;
+    ctx.font = 'bold 16px "Jersey 10", monospace';
+    ctx.fillStyle = '#ffd23f';
+    ctx.fillText('▼', tx + w / 2, ty - 10 + bob);
+  }
+  ctx.restore();
+}
 
-  if (p.holding) {
-    drawItemBadge(ctx, p.x + Math.cos(p.angle) * 23, p.y - 6 + Math.sin(p.angle) * 13 + bob, p.holding);
+// Where a held item sits relative to the carry pose (kept below the face).
+function crewItemAnchor(p, facing) {
+  if (facing === 'right') return { x: p.x + 14, y: p.y - 6 };
+  if (facing === 'left') return { x: p.x - 14, y: p.y - 6 };
+  if (facing === 'up') return { x: p.x, y: p.y - 14 };
+  return { x: p.x, y: p.y + 2 };
+}
+
+// Crew astronaut (Stage 1 hangar & Stage 2 deck). Name kept for existing call sites.
+export function drawChibiEngineer(ctx, p, isLead = false) {
+  const facing = crewFacing(p.angle);
+  const moving = crewIsMoving(p);
+  const sheetKey = p.holding ? 'charCarry' : 'charIdle';
+  const anim = CREW_ANIM[sheetKey][facing];
+  const [row, col] = moving ? anim.walk[Math.floor((p.walk || 0) / 1.1) % 4] : anim.idle;
+  const img = getAsset(sheetKey);
+  const footY = p.y + 15;
+
+  // Ground shadow + role ring
+  ctx.fillStyle = 'rgba(0,0,0,0.38)';
+  ctx.beginPath(); ctx.ellipse(p.x, footY, 15, 6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = isLead ? '#ffd23f' : (p.color || '#94a3b8');
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(p.x, footY, 18, 7, 0, 0, Math.PI * 2); ctx.stroke();
+
+  const item = p.holding ? crewItemAnchor(p, facing) : null;
+  if (item && facing === 'up') drawItemBadge(ctx, item.x, item.y, p.holding);
+
+  const dx = snap2(p.x - CREW_SPRITE_W / 2);
+  const dy = snap2(footY - CREW_SPRITE_H + 2);
+  if (isImageReady(img)) {
+    ctx.drawImage(
+      img,
+      col * CREW_FRAME_W, row * CREW_FRAME_H + CREW_CROP_TOP, CREW_FRAME_W, CREW_CROP_H,
+      dx, dy, CREW_SPRITE_W, CREW_SPRITE_H
+    );
+  } else {
+    // Sheet still loading: simple suit silhouette in the role colour.
+    ctx.fillStyle = p.color || '#94a3b8';
+    ctx.fillRect(snap2(p.x - 10), snap2(p.y - 14), 20, 26);
+    ctx.fillStyle = '#f2a36b';
+    ctx.fillRect(snap2(p.x - 9), snap2(p.y - 32), 18, 18);
   }
+
+  if (item && facing !== 'up') drawItemBadge(ctx, item.x, item.y, p.holding);
   if (p.hasWrench) {
-    ctx.font = '18px Fredoka, sans-serif';
-    ctx.fillText('🔧', p.x + Math.cos(p.angle) * 22, p.y - 4 + bob);
+    ctx.save();
+    ctx.font = '18px "Jersey 10", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('🔧', p.x + (facing === 'left' ? -16 : 16), p.y - 2);
+    ctx.restore();
   }
+
+  drawCrewTag(ctx, p, p.x, dy - 2, isLead);
 }
 
 
+// Notched pixel panel (matches the DOM .px frames): 2px ink outline with open
+// corners, flat body, 2px top highlight and bottom shade. Coordinates snap to
+// the 2px art grid.
+export function drawPixelPanel(ctx, x, y, w, h, { fill = '#161f37', hi = '#3b4c78', lo = '#0d1428', ink = '#06080f' } = {}) {
+  const X = snap2(x);
+  const Y = snap2(y);
+  const W = snap2(w);
+  const H = snap2(h);
+  ctx.fillStyle = ink;
+  ctx.fillRect(X, Y - 2, W, H + 4);
+  ctx.fillRect(X - 2, Y, W + 4, H);
+  ctx.fillStyle = fill;
+  ctx.fillRect(X, Y, W, H);
+  ctx.fillStyle = hi;
+  ctx.fillRect(X, Y, W, 2);
+  ctx.fillStyle = lo;
+  ctx.fillRect(X, Y + H - 2, W, 2);
+}
+
 export function drawCanvasControlBar(ctx, logicalW, items, y = 584) {
   ctx.save();
-  ctx.font = '600 12px "Plus Jakarta Sans", system-ui, sans-serif';
-  let totalW = 18;
+  ctx.font = '600 13px "Jersey 10", monospace';
+  let totalW = 16;
   const measured = items.map(it => {
-    const kw = Math.max(26, ctx.measureText(it.key).width + 14);
-    const lw = ctx.measureText(it.label).width + 10;
-    totalW += kw + lw + 12;
+    ctx.font = '700 12px "Jersey 10", monospace';
+    const kw = snap2(Math.max(24, ctx.measureText(it.key).width + 12));
+    ctx.font = '600 13px "Jersey 10", monospace';
+    const lw = snap2(ctx.measureText(it.label).width + 8);
+    totalW += kw + lw + 14;
     return { ...it, kw, lw };
   });
   totalW -= 6;
-  const bx = (logicalW - totalW) / 2;
-  const by = y - 16;
+  const bx = snap2((logicalW - totalW) / 2);
+  const by = snap2(y - 16);
 
-  ctx.fillStyle = 'rgba(19, 27, 44, 0.9)';
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.32)';
-  ctx.lineWidth = 1.25;
-  ctx.beginPath();
-  ctx.roundRect(bx, by, totalW, 32, 16);
-  ctx.fill();
-  ctx.stroke();
+  drawPixelPanel(ctx, bx, by, totalW, 30, { fill: 'rgba(22, 31, 55, 0.94)' });
 
-  let cx = bx + 12;
+  let cx = bx + 10;
   for (const m of measured) {
-    ctx.fillStyle = '#fde047';
-    ctx.beginPath();
-    ctx.roundRect(cx, by + 5, m.kw, 22, 8);
-    ctx.fill();
-    ctx.fillStyle = '#0b111e';
+    // Keycap: hazard yellow with a darker lip and ink outline
+    ctx.fillStyle = '#06080f';
+    ctx.fillRect(cx - 2, by + 4, m.kw + 4, 22);
+    ctx.fillStyle = '#f6c445';
+    ctx.fillRect(cx, by + 6, m.kw, 18);
+    ctx.fillStyle = '#a8741a';
+    ctx.fillRect(cx, by + 22, m.kw, 2);
+    ctx.fillStyle = '#06080f';
     ctx.textAlign = 'center';
-    ctx.font = '700 11px "JetBrains Mono", monospace';
-    ctx.fillText(m.key, cx + m.kw / 2, by + 20);
+    ctx.textBaseline = 'middle';
+    ctx.font = '700 12px "Jersey 10", monospace';
+    ctx.fillText(m.key, cx + m.kw / 2, by + 15);
 
-    cx += m.kw + 7;
-    ctx.fillStyle = '#eef2f8';
+    cx += m.kw + 8;
+    ctx.fillStyle = '#eef1f8';
     ctx.textAlign = 'left';
-    ctx.font = '600 12px "Plus Jakarta Sans", system-ui, sans-serif';
-    ctx.fillText(m.label, cx, by + 20);
-    cx += m.lw + 10;
+    ctx.font = '600 13px "Jersey 10", monospace';
+    ctx.fillText(m.label, cx, by + 15);
+    cx += m.lw + 8;
   }
   ctx.restore();
 }
@@ -395,12 +490,15 @@ export function drawStarfield(
     const tw = nowSec > 0 ? 0.78 + 0.22 * Math.sin(nowSec * s.twinkleSpeed + s.twinklePhase) : 1;
     ctx.globalAlpha = Math.max(0, Math.min(1, s.baseAlpha * tw * alphaMul));
     ctx.fillStyle = s.color;
-    if (s.size > 1.8) {
-      ctx.beginPath();
-      ctx.arc(sx, sy, s.size * 0.55, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      ctx.fillRect(sx, sy, s.size, s.size);
+    // Stars sit on the 2px art grid: single pixels, bright ones as a "+" sparkle.
+    const gx = Math.floor(sx / 2) * 2;
+    const gy = Math.floor(sy / 2) * 2;
+    ctx.fillRect(gx, gy, 2, 2);
+    if (s.size > 2.2) {
+      ctx.fillRect(gx - 2, gy, 2, 2);
+      ctx.fillRect(gx + 2, gy, 2, 2);
+      ctx.fillRect(gx, gy - 2, 2, 2);
+      ctx.fillRect(gx, gy + 2, 2, 2);
     }
   }
   ctx.restore();

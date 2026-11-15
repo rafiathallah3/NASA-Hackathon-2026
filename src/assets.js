@@ -6,6 +6,10 @@ const ASSET_PATHS = {
   logisticsSheet: 'Assets/Stage 1/Logistics & Safety_Stage 1.png',
   stationsSheet: 'Assets/Stage 1/Processing Stations_Stage 1.png',
 
+  // Crew astronaut sheets: 8 cols x 2 rows of 792x1344 frames (see sprites.js CREW_ANIM)
+  charIdle: 'Assets/Character/Character_Idle.png',
+  charCarry: 'Assets/Character/Character_Carry.png',
+
   // Space & FX Layers (Stages 1B, 2, 4)
   spaceBack: 'Assets/background/layered/bg-back.png',
   spacePlanet: 'Assets/background/layered/bg-planet.png',

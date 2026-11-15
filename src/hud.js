@@ -2,6 +2,30 @@ import { PROC_META, RECIPES, SCENARIOS, LAUNCH_VEHICLES, SCIENCE_OBJECTIVES, CML
 import { state, getScenario, getVehicle } from './state.js';
 import { getHardwareSVG } from './sprites.js';
 import { claimCrewSlot } from './net.js';
+import { iconize } from './icons.js';
+import { getItemSprite, getItemBounds, isImageReady } from './assets.js';
+import { getPixelBitmap } from './pixel.js';
+
+// Ticket part thumbnails: the real item sprite, downscaled onto the pixel grid.
+const PART_ICON_PX = 24;
+const partIconCache = new Map();
+function partIconHtml(itemId, shape) {
+  const cached = partIconCache.get(itemId);
+  if (cached) return cached;
+  const img = getItemSprite(itemId);
+  const b = getItemBounds(itemId);
+  if (!isImageReady(img) || !b) return getHardwareSVG(shape, true);
+  const fit = PART_ICON_PX / Math.max(b.w, b.h);
+  const bmp = getPixelBitmap(img, b.x, b.y, b.w, b.h, b.w * fit, b.h * fit);
+  if (!bmp) return getHardwareSVG(shape, true);
+  const box = document.createElement('canvas');
+  box.width = PART_ICON_PX;
+  box.height = PART_ICON_PX;
+  box.getContext('2d').drawImage(bmp, Math.floor((PART_ICON_PX - bmp.width) / 2), Math.floor((PART_ICON_PX - bmp.height) / 2));
+  const html = `<img class="px-item" alt="" src="${box.toDataURL()}">`;
+  partIconCache.set(itemId, html);
+  return html;
+}
 
 const MODULE_SHORT_NAMES = {
   sensor_pod: 'Spectrometer',
@@ -71,7 +95,7 @@ export function updateLaunchButtonState() {
   const sig = `${text}|${modeClass}|${title}`;
   if (sig === lastLaunchBtnSig) return;
   lastLaunchBtnSig = sig;
-  btn.textContent = text;
+  btn.innerHTML = iconize(text);
   btn.title = title;
   btn.classList.remove('locked', 'warn', 'ready');
   btn.classList.add(modeClass);
@@ -81,7 +105,7 @@ let toastTimer = null;
 export function showMissionToast(tag, text, ms = 4400) {
   const el = document.getElementById('mission-toast');
   if (!el) return;
-  el.innerHTML = `<span class="toast-tag">${tag}</span><span>${text}</span>`;
+  el.innerHTML = iconize(`<span class="toast-tag">${tag}</span><span>${text}</span>`);
   el.classList.remove('hidden');
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
@@ -150,7 +174,7 @@ export function setStageBanner(badge, title, desc, controlsHtml, { showTickets =
       statusPill.textContent = obj ? `GOAL: ${obj.targetLocation.toUpperCase()}` : 'TELEMETRY LIVE';
     }
   }
-  document.getElementById('controls-hint').innerHTML = controlsHtml;
+  document.getElementById('controls-hint').innerHTML = iconize(controlsHtml);
   updateLaunchButtonState();
 }
 
@@ -178,7 +202,7 @@ export function renderTicketsHUD() {
   const obj = getSelectedObjective();
   const reqModules = obj?.requiredModules || [];
 
-  bar.innerHTML = state.orders.map(o => {
+  bar.innerHTML = iconize(state.orders.map(o => {
     const m1 = PROC_META[o.recipe.reqs[0]] || {};
     const m2 = PROC_META[o.recipe.reqs[1]] || {};
     const r1Raw = m1.rawName || m1.name || 'Part 1';
@@ -209,12 +233,12 @@ export function renderTicketsHUD() {
           <div class="ticket-trade">${summaryText}</div>
           <div class="ticket-reqs">
             <div class="req-chip ${r1Ready ? 'chip-ready' : ''}" id="tk-c1-${o.uid}">
-              ${getHardwareSVG(m1.shape, true)}
+              ${partIconHtml(o.recipe.reqs[0], m1.shape)}
               <span class="pname">${r1Ready ? '✓ ' : ''}${r1Raw}</span>
               <small style="color:${m1.verbColor}">${m1.verb}</small>
             </div>
             <div class="req-chip ${r2Ready ? 'chip-ready' : ''}" id="tk-c2-${o.uid}">
-              ${getHardwareSVG(m2.shape, true)}
+              ${partIconHtml(o.recipe.reqs[1], m2.shape)}
               <span class="pname">${r2Ready ? '✓ ' : ''}${r2Raw}</span>
               <small style="color:${m2.verbColor}">${m2.verb}</small>
             </div>
@@ -222,7 +246,7 @@ export function renderTicketsHUD() {
         </div>
       </div>
     `;
-  }).join('');
+  }).join(''));
 
   bar.querySelectorAll('.ticket').forEach(el => {
     el.addEventListener('click', () => {
@@ -284,7 +308,11 @@ export function syncPauseUI() {
   const pauseBtn = document.getElementById('btn-pause');
   if (pauseBtn) {
     pauseBtn.disabled = !canPause;
-    pauseBtn.textContent = isPaused ? '▶ Resume' : '⏸ Pause';
+    // Runs every frame via updateClockHUD: only touch the DOM when the label flips.
+    if (pauseBtn.dataset.pausedLabel !== String(isPaused)) {
+      pauseBtn.dataset.pausedLabel = String(isPaused);
+      pauseBtn.innerHTML = iconize(isPaused ? '▶ Resume' : '⏸ Pause');
+    }
     pauseBtn.classList.toggle('paused', isPaused);
   }
   const overlay = document.getElementById('pause-overlay');
@@ -438,7 +466,7 @@ export function updateBottomHUD() {
 
   if (nextHtml !== lastTelemetryHtml) {
     lastTelemetryHtml = nextHtml;
-    strip.innerHTML = nextHtml;
+    strip.innerHTML = iconize(nextHtml);
   }
 }
 
@@ -590,7 +618,6 @@ const UI_TOUR_STOPS = [
     title: 'Live Telemetry & Science Goal',
     desc: 'Watch your rocket Mass cap, Ops Budget, Power, Fuel, and CML Science Goal update live as you assemble modules in the hangar.',
     placement: 'above-left',
-    maxRadius: 230,
     getRect: () => {
       const strip = document.getElementById('telemetry-strip');
       if (!strip) return null;
@@ -675,31 +702,36 @@ export function positionUiTour() {
   svg.setAttribute('height', String(vh));
   svg.setAttribute('viewBox', `0 0 ${vw} ${vh}`);
 
+  // Rectangular pixel spotlight snapped to the 2px UI grid.
   const rect = stop.getRect();
-  let cx = vw / 2;
-  let cy = vh / 2;
-  let r = 84;
+  const spotPad = 10;
+  let left = vw / 2 - 84;
+  let top = vh / 2 - 54;
+  let right = vw / 2 + 84;
+  let bottom = vh / 2 + 54;
   if (rect && rect.width > 0 && rect.height > 0) {
-    cx = rect.left + rect.width / 2;
-    cy = rect.top + rect.height / 2;
-    const rawR = Math.hypot(rect.width / 2, rect.height / 2) + 14;
-    const maxR = stop.maxRadius || Math.min(200, vw * 0.24);
-    r = Math.max(54, Math.min(maxR, rawR));
-    if (rawR > maxR && stop.placement === 'above-left') {
-      cx = rect.left + Math.min(rect.width / 2, maxR - 14);
-    }
+    left = rect.left - spotPad;
+    top = rect.top - spotPad;
+    right = rect.right + spotPad;
+    bottom = rect.bottom + spotPad;
   }
+  const snap = (v) => Math.round(v / 2) * 2;
+  left = snap(Math.max(8, left));
+  top = snap(Math.max(8, top));
+  right = snap(Math.min(vw - 8, right));
+  bottom = snap(Math.min(vh - 8, bottom));
+  const cx = (left + right) / 2;
 
   const d = [
     `M 0 0 H ${vw} V ${vh} H 0 Z`,
-    `M ${cx + r} ${cy} A ${r} ${r} 0 1 0 ${cx - r} ${cy} A ${r} ${r} 0 1 0 ${cx + r} ${cy} Z`
+    `M ${left} ${top} H ${right} V ${bottom} H ${left} Z`
   ].join(' ');
   path.setAttribute('d', d);
 
-  ring.style.left = `${Math.round(cx - r)}px`;
-  ring.style.top = `${Math.round(cy - r)}px`;
-  ring.style.width = `${Math.round(r * 2)}px`;
-  ring.style.height = `${Math.round(r * 2)}px`;
+  ring.style.left = `${left}px`;
+  ring.style.top = `${top}px`;
+  ring.style.width = `${right - left}px`;
+  ring.style.height = `${bottom - top}px`;
 
   const badge = document.getElementById('ui-tour-step-badge');
   const cornerTag = document.getElementById('ui-tour-corner-tag');
@@ -724,16 +756,16 @@ export function positionUiTour() {
   let cardY = pad;
   if (stop.placement === 'below-left') {
     cardX = Math.max(pad, Math.min(vw - cardW - pad, cx - cardW * 0.35));
-    cardY = Math.min(vh - cardH - pad, cy + r + 14);
+    cardY = Math.min(vh - cardH - pad, bottom + 18);
   } else if (stop.placement === 'below-right') {
     cardX = Math.max(pad, vw - cardW - 20);
-    cardY = Math.min(vh - cardH - pad, cy + r + 14);
+    cardY = Math.min(vh - cardH - pad, bottom + 18);
   } else if (stop.placement === 'above-left') {
     cardX = pad;
-    cardY = Math.max(pad, cy - r - cardH - 14);
+    cardY = Math.max(pad, top - cardH - 18);
   } else if (stop.placement === 'above-right') {
     cardX = Math.max(pad, vw - cardW - 20);
-    cardY = Math.max(pad, cy - r - cardH - 14);
+    cardY = Math.max(pad, top - cardH - 18);
   }
 
   card.style.left = `${Math.round(cardX)}px`;

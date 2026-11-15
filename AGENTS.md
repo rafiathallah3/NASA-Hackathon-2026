@@ -5,6 +5,15 @@
 - **4-Player Multiplayer Architecture:** Support 4 NASA segment roles (**P1 Launch**, **P2 Space**, **P3 Science**, **P4 Ground**) via role switching (`1`-`4`), Local 2P (`WASD` + `IJKL`), AI squadmates, and `BroadcastChannel` (`orbital_kitchen_4p_sync`).
 - **Rendering:** Maintain crisp `devicePixelRatio` scaling on a logical `1120x620` canvas with a 3-zone non-overlapping flex viewport (Top Overcooked HUD, Center Canvas, Bottom Telemetry Strip). Keep sub-stage HUD badges (`STAGE 1B`, `STAGE 2`, `STAGE 3A`, `STAGE 3B`, `STAGE 3C`, `STAGE 4`).
 
+## Pixel-Art Visual Rules
+- **Pixel renderer (`src/pixel.js`):** Every stage draws through the `ctx` from `createPixelRenderer`, a `560x310` buffer addressed in logical `1120x620` units (1 art pixel = 2 logical px) and blitted nearest-neighbour. Keep drawing in logical coordinates; do not call `getContext('2d')` on `#game` elsewhere.
+- **What the renderer does for you:** text is drawn hi-res in the pixel font, emoji in canvas text become pixel icons, large images are pre-downscaled and alpha-hardened, gradients are posterised into hard bands, `lineWidth` snaps to whole art pixels, `roundRect` radii are clamped to 4. Prefer flat fills on the 2px grid (`Math.round(v / 2) * 2`) for new art; avoid `shadowBlur`, `filter`, and soft glows.
+- **Font:** `Jersey 10` (single weight) for DOM and canvas. Canvas font sizes are auto-scaled 1.3x and weights are dropped, so keep authoring sizes like the existing code.
+- **Icons (`src/icons.js`):** never put raw emoji in DOM templates; wrap HTML with `iconize(...)` or use `iconHtml('name')` / `data-icon="name"` in `index.html`. New symbols go in `RAW_ICONS` + `EMOJI_TO_ICON`.
+- **DOM UI (`styles.css`):** no `border-radius`, blur, or soft shadows. Frames are notched 2px box-shadow outlines (`var(--frame)`, `--frame-hazard`, ...) with `var(--bevel)`; animations use `steps()`.
+- **Crew sprites:** `drawChibiEngineer` in `src/sprites.js` draws `Assets/Character/Character_{Idle,Carry}.png`; frame mapping lives in `CREW_ANIM`. Roles are told apart by the ring under the feet and the name tag.
+- **Debug:** `window.__orbitalPixelStats` exposes per-frame flush count and draw timings.
+
 ## 4-Stage Macro Level Architecture & Sub-Stages
 1. **Stage 1 — Build & Launch (`src/stages/stage1.js`, `src/stages/stage1b.js`):**
    - **Stage 1A (Overcooked Assembly Hangar — Free Build):** Clickable order tickets with exact Crate-to-Bench component steps, a single top Active Target Recipe Bar with live step checkmarks, on-floor target station highlight rings, BFS grid-pathfinding AI squadmates, and a `+150⭐` full-stack integration bonus when all 4 core modules are installed.

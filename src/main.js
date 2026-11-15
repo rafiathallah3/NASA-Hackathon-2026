@@ -19,23 +19,31 @@ import {
 } from './stages/stage3.js';
 import { startStage4EarthReturn, handleStage4DeployChutes, handleStage4CoolantPurge, updateStage4, drawStage4 } from './stages/stage4.js';
 import { startStage5Debrief } from './stages/stage5.js';
+import { createPixelRenderer } from './pixel.js';
+import { hydrateIcons, iconHtml } from './icons.js';
 
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+// All stage drawing goes through the pixel renderer: `ctx` is its 560x310 buffer
+// addressed in logical 1120x620 units (see src/pixel.js).
+const pixelRenderer = createPixelRenderer(canvas);
+const ctx = pixelRenderer.ctx;
+window.__orbitalPixelStats = pixelRenderer.stats;
+let booted = false;
 
 function resizeCanvas() {
   const wrap = document.getElementById('game-wrap');
-  const maxW = wrap.clientWidth - 16;
-  const maxH = wrap.clientHeight - 10;
+  // Leave room for the pixel bezel drawn around the canvas.
+  const maxW = wrap.clientWidth - 28;
+  const maxH = wrap.clientHeight - 22;
   const scale = Math.max(0.3, Math.min(maxW / LOGICAL_W, maxH / LOGICAL_H));
   const w = Math.floor(LOGICAL_W * scale);
   const h = Math.floor(LOGICAL_H * scale);
   const dpr = window.devicePixelRatio || 1;
   canvas.style.width = `${w}px`;
   canvas.style.height = `${h}px`;
-  canvas.width = Math.floor(LOGICAL_W * dpr);
-  canvas.height = Math.floor(LOGICAL_H * dpr);
-  ctx.setTransform(dpr * (LOGICAL_W / LOGICAL_W), 0, 0, dpr * (LOGICAL_H / LOGICAL_H), 0, 0);
+  // Backing store matches the on-screen size so the 2x pixel blit lands on device pixels.
+  pixelRenderer.resize(w * dpr, h * dpr);
+  if (booted && (state.stage === 'MENU' || state.stage === 'STAGE5' || state.paused)) draw();
 }
 
 new ResizeObserver(resizeCanvas).observe(document.getElementById('game-wrap'));
@@ -212,7 +220,7 @@ function openMinBuildModal(builtCount) {
   const reqTitles = (obj.requiredModules || []).map(id => {
     const rec = RECIPES.find(r => r.id === id);
     const done = (state.shippedModules?.[id] || 0) > 0;
-    return `<li>${done ? '✅' : '⬜'} ${rec ? rec.title : id}</li>`;
+    return `<li>${iconHtml(done ? 'checkbox' : 'square')} ${rec ? rec.title : id}</li>`;
   });
 
   content.innerHTML = `
@@ -391,7 +399,7 @@ if (replayGuideBtn) {
 
 document.getElementById('btn-mute').addEventListener('click', (e) => {
   state.muted = !state.muted;
-  e.currentTarget.textContent = state.muted ? '🔇' : '🔊';
+  e.currentTarget.innerHTML = iconHtml(state.muted ? 'mute' : 'sound');
   syncMusicMute();
 });
 
@@ -635,8 +643,12 @@ function update(dt) {
 }
 
 function draw() {
-  ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
+  pixelRenderer.beginFrame();
+  drawScene();
+  pixelRenderer.endFrame();
+}
 
+function drawScene() {
   if (state.stage === 'TRANSITION') {
     drawTransition(ctx);
     return;
@@ -679,11 +691,20 @@ function loop(now) {
 }
 
 try {
-  preloadAllAssets();
+  // Ticket thumbnails are cut from item sprites, so redraw tickets once those load.
+  preloadAllAssets().then(() => {
+    if (state.stage === 'STAGE1') renderTicketsHUD();
+  });
+  hydrateIcons();
   resizeCanvas();
   openMenu();
   updateBottomHUD();
+  booted = true;
   window.__ORBITAL_BOOTED = true;
+  // Canvas text only picks up the pixel font once it has loaded; redraw static screens then.
+  document.fonts?.load?.('16px "Jersey 10"').then(() => {
+    if (state.stage === 'MENU' || state.stage === 'STAGE5') draw();
+  }).catch(() => {});
 } catch (err) {
   console.error('Orbital Kitchen startup failed:', err);
   if (typeof window.__showOrbitalBootError === 'function') {

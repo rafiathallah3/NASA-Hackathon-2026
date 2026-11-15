@@ -1,5 +1,6 @@
 import { SCIENCE_OBJECTIVES, CML_LEVELS } from '../config.js';
 import { state, getScenario, getVehicle } from '../state.js';
+import { iconize } from '../icons.js';
 
 const STORAGE_KEY = 'orbital_kitchen_mission_history_v1';
 
@@ -12,12 +13,6 @@ const DEFAULT_CML_NAMES = {
 
 const GRADE_WEIGHT = { S: 4, A: 3, B: 2, C: 1 };
 
-const GRADE_STYLE = {
-  S: 'background:rgba(253,224,71,0.18);color:#fde047;border:1px solid rgba(253,224,71,0.55);',
-  A: 'background:rgba(74,222,128,0.18);color:#4ade80;border:1px solid rgba(74,222,128,0.5);',
-  B: 'background:rgba(56,189,248,0.18);color:#38bdf8;border:1px solid rgba(56,189,248,0.5);',
-  C: 'background:rgba(248,113,113,0.18);color:#f87171;border:1px solid rgba(248,113,113,0.5);'
-};
 
 function round1(val) {
   return Math.round(Number(val || 0) * 10) / 10;
@@ -412,27 +407,23 @@ export function startStage5Debrief(onRestart, onBackToMenu) {
   };
   const history = saveMissionRecord(record);
 
-  const gateBannerStyle = evalResult.cml4Validated
-    ? 'background:rgba(74,222,128,0.14);border:1px solid rgba(74,222,128,0.45);color:#bbf7d0;'
-    : 'background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.45);color:#fef08a;';
-
   const checkTag = (ok, label) => (
-    `<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;background:${ok ? 'rgba(74,222,128,0.18)' : 'rgba(248,113,113,0.18)'};color:${ok ? '#4ade80' : '#f87171'};border:1px solid ${ok ? 'rgba(74,222,128,0.4)' : 'rgba(248,113,113,0.4)'};">${ok ? 'PASS' : 'MISS'}: ${label}</span>`
+    `<span class="check-tag ${ok ? 'pass' : 'miss'}">${ok ? '✓ PASS' : '✕ MISS'}: ${label}</span>`
   );
 
   const pillarCards = evalResult.pillars.map(p => `
-    <div class="pillar-card" style="background:rgba(27,37,59,0.92);border:1px solid rgba(148,163,184,0.22);border-radius:14px;padding:10px 12px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;">
-        <span style="font-size:12px;font-weight:700;color:#eef2f8;">${p.title}</span>
-        <span class="grade-pill grade-${p.grade.toLowerCase()}" style="display:inline-flex;align-items:center;justify-content:center;min-width:28px;padding:2px 9px;border-radius:9999px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;${GRADE_STYLE[p.grade]}">${p.grade}</span>
+    <div class="pillar-card">
+      <div class="pillar-title">
+        <span>${p.title}</span>
+        <span class="grade-pill grade-${p.grade.toLowerCase()}">${p.grade}</span>
       </div>
-      <div style="font-size:11.5px;color:#94a3b8;line-height:1.35;">${p.detail}</div>
+      <small>${p.detail}</small>
     </div>
   `).join('');
 
   const timelineRows = state.blackBoxEvents.slice(-8).map(ev => `
     <div class="timeline-item">
-      <span><b style="color:${ev.kind === 'good' ? '#4ade80' : ev.kind === 'warn' ? '#fbbf24' : '#38bdf8'}">${ev.stage}</b> &middot; ${ev.text}</span>
+      <span><b class="log-${ev.kind === 'good' ? 'good' : ev.kind === 'warn' ? 'warn' : 'info'}">${ev.stage}</b> &middot; ${ev.text}</span>
     </div>
   `).join('');
 
@@ -445,26 +436,26 @@ export function startStage5Debrief(onRestart, onBackToMenu) {
 
   const modal = document.getElementById('modal');
   const content = document.getElementById('modal-content');
-  content.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px;">
-      <h1 style="margin:0;">${stars} NASA Phase A Mission Closeout</h1>
-      <span class="grade-pill grade-${evalResult.overallGrade.toLowerCase()}" style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:9999px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;${GRADE_STYLE[evalResult.overallGrade]}">NASA GRADE ${evalResult.overallGrade}</span>
+  content.innerHTML = iconize(`
+    <div class="debrief-head">
+      <h1><span class="debrief-stars">${stars}</span> NASA Phase A Mission Closeout</h1>
+      <span class="grade-pill grade-lg grade-${evalResult.overallGrade.toLowerCase()}">NASA GRADE ${evalResult.overallGrade}</span>
     </div>
-    <p class="sub" style="margin-bottom:12px;">${evalResult.objective.title} &middot; ${scen.name} &middot; ${veh.name} &middot; Recovery: <b>${m.reentryGradeStr}</b></p>
+    <p class="sub" style="margin-bottom:14px;">${evalResult.objective.title} &middot; ${scen.name} &middot; ${veh.name} &middot; Recovery: <b>${m.reentryGradeStr}</b></p>
 
-    <div style="${gateBannerStyle}border-radius:14px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <div class="gate-banner ${evalResult.cml4Validated ? 'ok' : 'warn'}">
       <div>
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;opacity:0.85;">Concept Maturity Level Gate (${evalResult.maturityLevelName})</div>
-        <div style="font-size:15px;font-weight:800;margin-top:2px;">${evalResult.gateVerdict}</div>
+        <div class="gate-label">Concept Maturity Level Gate (${evalResult.maturityLevelName})</div>
+        <div class="gate-verdict">${evalResult.gateVerdict}</div>
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <div class="gate-tags">
         ${checkTag(evalResult.requirementsMet, 'Science Req')}
         ${checkTag(evalResult.vaultIntact, `Vault ${m.sampleVaultTempC}C`)}
         ${checkTag(evalResult.reentrySurvived, 'Reentry')}
       </div>
     </div>
 
-    <div class="pillar-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px;">
+    <div class="pillar-grid">
       ${pillarCards}
     </div>
 
@@ -492,7 +483,7 @@ export function startStage5Debrief(onRestart, onBackToMenu) {
       <button id="btn-change-design" class="btn-secondary" type="button">Change Setup</button>
       <button id="btn-fly-again" class="btn-play" type="button">Fly New Mission</button>
     </div>
-  `;
+  `);
 
   document.getElementById('btn-fly-again').addEventListener('click', onRestart);
   document.getElementById('btn-change-design').addEventListener('click', onBackToMenu);
