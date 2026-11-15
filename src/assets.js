@@ -24,7 +24,24 @@ const ASSET_PATHS = {
 
   // Stage 2 Spacecraft Deck & Props
   stage2Bg: 'Assets/Stage2/Stage2_Map_Bg.png',
-  stage2PropsSheet: 'Assets/Stage2/Stage2_Props_Sheet.png'
+  stage2PropsSheet: 'Assets/Stage2/Stage2_Props_Sheet.png',
+
+  // Rocket & spacecraft frames (Assets/rocket). Crops, anchors and relative scales are measured in
+  // src/spacecraft.js; never draw these through anything but its drawCraft()/drawLaunchPad().
+  craftStackIdle: 'Assets/rocket/Apollo Rocket_0001.png',    // full stack, engines off (bells visible)
+  craftStackBurn: 'Assets/rocket/Apollo Rocket_0002.png',    // full stack + 3-engine flame
+  craftUpperIdle: 'Assets/rocket/Apollo Rocket_0003.png',    // upper stages only, engine off
+  craftBoosterBurn: 'Assets/rocket/Apollo Rocket_0005.png',  // first stage dropping away, retros lit
+  craftUpperBurn: 'Assets/rocket/Apollo Rocket_0006.png',    // upper stages + flame
+  craftBoosterSpent: 'Assets/rocket/Apollo Rocket_0007.png', // spent first stage
+  craftCsmSla: 'Assets/rocket/Apollo Rocket_0008.png',       // command/service module inside closed adapter
+  craftCsmSlaOpen: 'Assets/rocket/Apollo Rocket_0009.png',   // adapter panels opening
+  craftCommand: 'Assets/rocket/Apollo Rocket_0010.png',      // command module alone
+  craftLanderA: 'Assets/rocket/Apollo Rocket_0011.png',      // lunar lander on its legs
+  craftDocked: 'Assets/rocket/Apollo Rocket_0012.png',       // command module docked on the lander
+  craftCommandBurn: 'Assets/rocket/Apollo Rocket_0013.png',  // command module + engine flame
+  craftChutes: 'Assets/rocket/Apollo Rocket_0016.png',       // triple main parachutes + capsule
+  launchPad: 'Assets/rocket/Launch Pad.png'                  // mobile launcher: tower, swing arms, crawler
 };
 
 const ITEM_PATHS = {

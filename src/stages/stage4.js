@@ -6,6 +6,17 @@ import { getAsset } from '../assets.js';
 import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield, drawExplosionSprite } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
+import { drawCraft, craftBox } from '../spacecraft.js';
+
+// Capsule + parachutes come from one frame (Assets/rocket 0016), cut at the cable ring: 'chuteCapsule'
+// is the crew module, 'chutes' the three canopies + risers hanging from the ring. Both are anchored on
+// that ring, so drawing them at the same point reassembles the frame.
+const RE_SCALE = 0.34;      // capsule during plasma re-entry (big, readable)
+const CHUTE_SCALE = 0.19;   // capsule + canopies once under parachutes
+const RE_HALF_H = craftBox('chuteCapsule', { scale: RE_SCALE }).h / 2;
+const CHUTE_HALF_H = craftBox('chuteCapsule', { scale: CHUTE_SCALE }).h / 2;
+const CHUTE_HALF_W = craftBox('chuteCapsule', { scale: CHUTE_SCALE }).w / 2;
+const snapEven = (v) => Math.round(v / 2) * 2;
 
 const REENTRY_STARS = createStarfield(65, LOGICAL_W, 280, 40415);
 
@@ -584,38 +595,37 @@ export function drawStage4(ctx) {
     ctx.fillStyle = '#bae6fd'; ctx.font = '10px Fredoka, sans-serif';
     ctx.fillText('[A/D] Roll Cool', hx + hw / 2, hy + hh + 18);
 
-    // Orion Capsule + Dynamic Bow-Shock Plasma Shell
+    // Crew capsule (heatshield down) + dynamic bow-shock plasma shell
     const cx = r.capsuleX, cy = 265;
     ctx.save();
-    ctx.translate(cx, cy);
+    ctx.translate(snapEven(cx), snapEven(cy));
     ctx.rotate(0.45 - r.pitchAngle * 0.6 + r.rollBank * 0.4);
 
-    // Bow shock wave arc
+    // Bow shock wave arc standing off the heatshield
     ctx.strokeStyle = r.heat > 75 ? 'rgba(239, 68, 68, 0.95)' : 'rgba(251, 146, 60, 0.9)';
     ctx.lineWidth = 7;
     ctx.beginPath();
-    ctx.arc(0, 8, 48, 0.1 * Math.PI, 0.9 * Math.PI);
+    ctx.arc(0, RE_HALF_H - 22, 58, 0.1 * Math.PI, 0.9 * Math.PI);
     ctx.stroke();
 
-    const plasmaGrad = ctx.createRadialGradient(0, 18, 12, 0, 18, 86);
+    const plasmaGrad = ctx.createRadialGradient(0, RE_HALF_H - 4, 14, 0, RE_HALF_H - 4, 100);
     plasmaGrad.addColorStop(0, r.heat > 75 ? 'rgba(239, 68, 68, 0.95)' : 'rgba(249, 115, 22, 0.88)');
     plasmaGrad.addColorStop(0.55, 'rgba(251, 191, 36, 0.4)');
     plasmaGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
     ctx.fillStyle = plasmaGrad;
-    ctx.beginPath(); ctx.arc(0, 18, 86, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, RE_HALF_H - 4, 100, 0, Math.PI * 2); ctx.fill();
 
-    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(-18, -28); ctx.lineTo(18, -28); ctx.lineTo(35, 14); ctx.lineTo(-35, 14);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
+    drawCraft(ctx, 'chuteCapsule', 0, -RE_HALF_H, { scale: RE_SCALE });
 
-    // Heatshield glowing rim
+    // Heatshield glowing rim, hotter as the shield cooks
+    ctx.globalAlpha = 0.45 + r.heat / 190;
     ctx.fillStyle = r.heat > 75 ? '#ef4444' : '#ea580c';
-    ctx.beginPath(); ctx.ellipse(0, 16, 36, 10, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(0, RE_HALF_H - 4, 34, 8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
 
     if (state.sampleCollected) {
       ctx.fillStyle = '#4ade80';
-      ctx.beginPath(); ctx.arc(0, -6, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 8, 5, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
 
@@ -810,27 +820,25 @@ export function drawStage4(ctx) {
     ctx.fillText('8-18km OPT', ax + aw / 2, ay + ah + 15);
 
     const cx = r.capsuleX, cy = r.capsuleY;
+    const ringY = cy - CHUTE_HALF_H; // cable ring on top of the capsule
     // Drogue / Triple Main Parachutes (visible during descent)
     if (r.phase === 'CHUTES') {
       if (r.chutesDeployed) {
-        const sc = r.chuteScale;
-        const sway = Math.sin(r.wavePhase * 0.7) * 6;
-        const offsets = [-42 * sc, 0, 42 * sc];
-        for (const ox of offsets) {
-          ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1.6;
-          ctx.beginPath(); ctx.moveTo(cx, cy - 18); ctx.lineTo(cx + ox + sway, cy - 78 * sc); ctx.stroke();
-          ctx.fillStyle = ox === 0 ? '#f97316' : '#f8fafc';
-          ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.2;
-          ctx.beginPath();
-          ctx.arc(cx + ox + sway, cy - 78 * sc, 24 * sc, Math.PI, 0);
-          ctx.closePath(); ctx.fill(); ctx.stroke();
+        // Canopies inflate from the ring in chunky pixel steps and sway about it.
+        const sc = Math.round(r.chuteScale * 10) / 10;
+        if (sc > 0) {
+          ctx.save();
+          ctx.translate(snapEven(cx), snapEven(ringY));
+          ctx.rotate(Math.sin(r.wavePhase * 0.7) * 0.05 * sc);
+          drawCraft(ctx, 'chutes', 0, 0, { scale: CHUTE_SCALE * sc });
+          ctx.restore();
         }
       } else {
         // Drogue chute deployed until Main Chutes open
-        ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(cx, cy - 18); ctx.lineTo(cx, cy - 48); ctx.stroke();
+        ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cx, ringY); ctx.lineTo(cx, ringY - 34); ctx.stroke();
         ctx.fillStyle = '#fbbf24'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(cx, cy - 48, 13, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, ringY - 34, 13, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
 
         ctx.fillStyle = '#f97316';
         ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 205, 58, 410, 42, 14); ctx.fill();
@@ -850,8 +858,8 @@ export function drawStage4(ctx) {
       // Inflating orange flotation collar
       const cs = r.collarScale;
       ctx.fillStyle = '#f97316'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.ellipse(cx - 26, cy + 4, 11 * cs, 8 * cs, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(cx + 26, cy + 4, 11 * cs, 8 * cs, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx - CHUTE_HALF_W - 3, cy + 12, 11 * cs, 8 * cs, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + CHUTE_HALF_W + 3, cy + 12, 11 * cs, 8 * cs, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
 
     // Phase 2 Intuitive Guidance Pill + Wind Direction Indicator
@@ -864,16 +872,8 @@ export function drawStage4(ctx) {
       ctx.fillText(`PHASE 2: ${windDir} | [A/D] Steer Capsule to Ship Beam • [J/L] Steer P4 Carrier`, LOGICAL_W / 2, 35);
     }
 
-    // Orion Capsule
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.8;
-    ctx.beginPath();
-    ctx.moveTo(-14, -20); ctx.lineTo(14, -20); ctx.lineTo(27, 12); ctx.lineTo(-27, 12);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(-27, 12, 54, 5);
-    ctx.restore();
+    // Crew capsule (cable ring on top; the canopies above hang from the same ring)
+    drawCraft(ctx, 'chuteCapsule', cx, ringY, { scale: CHUTE_SCALE });
 
     // Rescue Helicopter hovering & lowering hoist during SPLASHED
     const hoistProg = r.phase === 'SPLASHED' ? Math.min(1, r.splashTimer / 1.4) : 0;

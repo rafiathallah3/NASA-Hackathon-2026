@@ -3,8 +3,12 @@ import { state } from './state.js';
 import { playTone } from './audio.js';
 import { setStageBanner } from './hud.js';
 import { createStarfield, drawStarfield } from './sprites.js';
+import { drawCraft, craftBox, drawLaunchPad, CRAFT_GEO, PAD_GEO } from './spacecraft.js';
 
 const TRANSITION_STARS = createStarfield(110, LOGICAL_W, LOGICAL_H, 42199);
+
+const snapEven = (v) => Math.round(v / 2) * 2;
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 function smootherstep(t) {
   const x = Math.max(0, Math.min(1, t));
@@ -170,323 +174,10 @@ export function updateTransition(dt) {
   }
 }
 
-function drawDetailedTransitionOrion(ctx, scale = 1) {
-  ctx.save();
-  ctx.scale(scale, scale);
-
-  // Solar array wings extending top and bottom with titanium truss struts
-  for (const dir of [-1, 1]) {
-    ctx.strokeStyle = '#94a3b8';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(-10, dir * 11);
-    ctx.lineTo(-10, dir * 40);
-    ctx.stroke();
-
-    ctx.save();
-    ctx.translate(-10, dir * 28);
-    ctx.fillStyle = '#1e3a8a';
-    ctx.strokeStyle = '#60a5fa';
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.roundRect(-9, dir < 0 ? -16 : -8, 18, 24, 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Photovoltaic cell grid lines
-    ctx.strokeStyle = 'rgba(147, 197, 253, 0.45)';
-    ctx.lineWidth = 1;
-    for (let gx = -4; gx <= 4; gx += 4) {
-      ctx.beginPath();
-      ctx.moveTo(gx, dir < 0 ? -15 : -7);
-      ctx.lineTo(gx, dir < 0 ? 7 : 15);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  // European Service Module AJ10 engine bell (left / rear)
-  ctx.fillStyle = '#334155';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(-22, -7);
-  ctx.lineTo(-33, -11);
-  ctx.lineTo(-33, 11);
-  ctx.lineTo(-22, 7);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  // Service Module cylindrical titanium bus with gold thermal band
-  ctx.fillStyle = '#cbd5e1';
-  ctx.beginPath();
-  ctx.roundRect(-22, -12, 26, 24, 3);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = '#eab308';
-  ctx.fillRect(-16, -11.5, 6, 23);
-  ctx.strokeStyle = '#475569';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(-22, 0);
-  ctx.lineTo(4, 0);
-  ctx.stroke();
-
-  // Orion Crew Module conical heat-shielded cabin
-  ctx.fillStyle = '#f8fafc';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2.2;
-  ctx.beginPath();
-  ctx.moveTo(4, -13);
-  ctx.lineTo(25, -7);
-  ctx.lineTo(25, 7);
-  ctx.lineTo(4, 13);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  // Blue NASA stripe + forward cockpit window
-  ctx.fillStyle = '#1d4ed8';
-  ctx.fillRect(6, -11, 3, 22);
-  ctx.fillStyle = '#0ea5e9';
-  ctx.beginPath();
-  ctx.roundRect(14, -5, 6, 4, 1.5);
-  ctx.roundRect(14, 1, 6, 4, 1.5);
-  ctx.fill();
-
-  // Docking adapter ring (nose tip)
-  ctx.fillStyle = '#475569';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 1.6;
-  ctx.fillRect(25, -5, 5, 10);
-  ctx.strokeRect(25, -5, 5, 10);
-  ctx.restore();
-}
-
-function drawDetailedTransitionLander(ctx, options = {}) {
-  const scale = options.scale ?? 1;
-  const drawPlume = !!options.drawPlume;
-  const nowSec = options.nowSec ?? 0;
-  const rampOpen = options.rampOpen ?? 0;
-
-  // Origin (0, 0) rests cleanly at the bottom plane of the landing footpads
-  ctx.save();
-  ctx.scale(scale, scale);
-
-  if (drawPlume) {
-    ctx.save();
-    ctx.translate(0, -12);
-    ctx.rotate(-Math.PI / 2);
-    drawLayeredPlume(ctx, 10, 6, nowSec, '#38bdf8', '#e0f2fe');
-    ctx.restore();
-  }
-
-  // Articulated 4-strut landing gear legs with cross-bracing
-  const legDefs = [
-    { topX: -28, topY: -44, footX: -58, braceX: -36 },
-    { topX: 28, topY: -44, footX: 58, braceX: 36 },
-    { topX: -12, topY: -40, footX: -22, braceX: -14 },
-    { topX: 12, topY: -40, footX: 22, braceX: 14 }
-  ];
-  for (const leg of legDefs) {
-    ctx.strokeStyle = '#94a3b8';
-    ctx.lineWidth = 4;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(leg.topX, leg.topY);
-    ctx.lineTo(leg.footX, -3);
-    ctx.stroke();
-
-    // Diagonal damper strut
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(leg.topX * 0.65, -26);
-    ctx.lineTo(leg.footX * 0.85, -8);
-    ctx.stroke();
-  }
-
-  // Descent Engine Bell between inner legs
-  ctx.fillStyle = '#334155';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(-8, -32);
-  ctx.lineTo(-14, -12);
-  ctx.lineTo(14, -12);
-  ctx.lineTo(8, -32);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  // Wide amber/gold lunar dish footpads flush with ground (y = 0)
-  for (const fx of [-58, -22, 22, 58]) {
-    const padRx = Math.abs(fx) > 30 ? 12 : 9;
-    ctx.fillStyle = '#d97706';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(fx, -2, padRx, 3.8, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  // Octagonal Gold Kapton Foil Descent Stage
-  ctx.fillStyle = '#eab308';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2.6;
-  ctx.beginPath();
-  ctx.moveTo(-42, -74);
-  ctx.lineTo(42, -74);
-  ctx.lineTo(50, -56);
-  ctx.lineTo(44, -32);
-  ctx.lineTo(-44, -32);
-  ctx.lineTo(-50, -56);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  // Shaded side facets & foil crinkle panels
-  ctx.fillStyle = 'rgba(180, 83, 9, 0.38)';
-  ctx.beginPath();
-  ctx.moveTo(-42, -74);
-  ctx.lineTo(-24, -74);
-  ctx.lineTo(-28, -32);
-  ctx.lineTo(-44, -32);
-  ctx.lineTo(-50, -56);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(254, 240, 138, 0.35)';
-  ctx.fillRect(-20, -70, 40, 34);
-
-  // Dark equipment bay panel + crew boarding ladder on front-right deck
-  ctx.fillStyle = '#334155';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 1.6;
-  ctx.fillRect(-16, -65, 22, 22);
-  ctx.strokeRect(-16, -65, 22, 22);
-
-  // Boarding ladder on front-right descent bay
-  ctx.strokeStyle = '#e2e8f0';
-  ctx.lineWidth = 1.8;
-  ctx.beginPath();
-  ctx.moveTo(22, -72);
-  ctx.lineTo(29, -32);
-  ctx.moveTo(31, -72);
-  ctx.lineTo(38, -32);
-  for (let r = 0; r < 5; r++) {
-    const ry = -66 + r * 7.5;
-    const rx = 23 + r * 1.4;
-    ctx.moveTo(rx, ry);
-    ctx.lineTo(rx + 9, ry);
-  }
-  ctx.stroke();
-
-  // Carbon-composite Interstage Adapter Ring
-  ctx.fillStyle = '#1e293b';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.roundRect(-31, -81, 62, 8, 2);
-  ctx.fill();
-  ctx.stroke();
-
-  // White Pressurized Ascent Crew Cabin
-  ctx.fillStyle = '#f8fafc';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2.6;
-  ctx.beginPath();
-  ctx.moveTo(-26, -134);
-  ctx.lineTo(26, -134);
-  ctx.lineTo(33, -110);
-  ctx.lineTo(31, -81);
-  ctx.lineTo(-31, -81);
-  ctx.lineTo(-33, -110);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  // NASA blue accent band & side panel shading
-  ctx.fillStyle = '#1d4ed8';
-  ctx.fillRect(-30, -96, 60, 6);
-  ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
-  ctx.fillRect(-28, -132, 11, 50);
-
-  // Dual angled cockpit viewports with cyan reflection
-  ctx.fillStyle = '#0f172a';
-  ctx.beginPath();
-  ctx.moveTo(-19, -124);
-  ctx.lineTo(-4, -124);
-  ctx.lineTo(-6, -110);
-  ctx.lineTo(-22, -110);
-  ctx.closePath();
-  ctx.moveTo(4, -124);
-  ctx.lineTo(19, -124);
-  ctx.lineTo(22, -110);
-  ctx.lineTo(6, -110);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = '#38bdf8';
-  ctx.fillRect(-16, -121, 9, 4);
-  ctx.fillRect(7, -121, 9, 4);
-
-  // Side RCS thruster quads
-  for (const dir of [-1, 1]) {
-    ctx.fillStyle = '#475569';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.roundRect(dir * 32 - 3, -116, 6, 10, 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  // Top Docking Tunnel Collar & High-Gain Dish Antenna
-  ctx.fillStyle = '#64748b';
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2;
-  ctx.fillRect(-13, -142, 26, 8);
-  ctx.strokeRect(-13, -142, 26, 8);
-
-  // Dish mast right of docking collar
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(16, -134);
-  ctx.lineTo(22, -150);
-  ctx.stroke();
-  ctx.fillStyle = '#e2e8f0';
-  ctx.beginPath();
-  ctx.arc(24, -152, 6, Math.PI * 0.75, Math.PI * 1.75);
-  ctx.fill();
-  ctx.stroke();
-
-  // Articulated rover deployment ramp extending from right descent deck down to ground (y = 0)
-  if (rampOpen > 0) {
-    const startX = 43;
-    const startY = -36;
-    const endX = startX + rampOpen * 72;
-    const endY = startY + rampOpen * 36;
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 6.5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    ctx.lineTo(endX, endY);
-    ctx.stroke();
-    ctx.strokeStyle = '#bae6fd';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(startX + 2, startY - 2);
-    ctx.lineTo(endX + 2, endY - 2);
-    ctx.stroke();
-  }
-
-  ctx.restore();
+// Centre of a craft crop relative to its anchor, so a sprite can be rotated about its own middle.
+function craftCentre(id, opts) {
+  const b = craftBox(id, opts);
+  return { x: (b.l + b.r) / 2, y: (b.t + b.b) / 2, box: b };
 }
 
 function drawDetailedTransitionRover(ctx, bodyColor, rollAngle) {
@@ -622,13 +313,12 @@ export function drawTransition(ctx) {
     ctx.fillStyle = '#f59e0b';
     ctx.fillRect(0, padY, LOGICAL_W, 5);
 
-    const rx = 240 + ease * 320;
-    // Pad tower silhouette
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(590, padY - 220, 36, 220);
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(594, padY - 190, 28, 5);
+    const rx = snapEven(240 + ease * 320);
+    const RS = 0.38;  // rocket art scale
+    const PS = 0.19;  // launcher art scale (launcher = rocket / 2, same ratio as Stage 1B)
+    const deckY = padY - snapEven((PAD_GEO.groundY - PAD_GEO.deckY) * PS); // crawler tracks sit on the pad line
+    const tipY = deckY - snapEven(CRAFT_GEO.stackIdleBaseY * RS);
+    const lit = t >= 0.8;
 
     // Main engine pre-ignition glow at end of pad rollout
     if (t >= 0.72) {
@@ -641,17 +331,13 @@ export function drawTransition(ctx) {
       ctx.restore();
     }
 
-    // Crawler transporter & rocket stack
-    ctx.fillStyle = '#475569';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.roundRect(rx - 52, padY - 24, 104, 24, 6); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#f8fafc';
-    ctx.beginPath(); ctx.roundRect(rx - 22, padY - 142, 44, 118, 8); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#1d4ed8';
-    ctx.fillRect(rx - 20, padY - 110, 40, 8);
-    ctx.fillStyle = '#ef4444';
-    ctx.beginPath(); ctx.moveTo(rx - 22, padY - 142); ctx.lineTo(rx, padY - 186); ctx.lineTo(rx + 22, padY - 142); ctx.closePath(); ctx.fill(); ctx.stroke();
+    // Crawler-transporter carries the mobile launcher + stack: the deck hides the engine bells
+    drawCraft(ctx, lit ? 'stackBody' : 'stackIdle', rx, tipY, { scale: RS });
+    drawLaunchPad(ctx, rx, deckY, { scale: PS });
+    if (lit) {
+      const step = Math.floor(nowSec * 14) % 3;
+      drawCraft(ctx, 'stackFlame', rx, tipY, { scale: RS, sy: 0.35 + clamp01((t - 0.8) / 0.12) * 0.5 + step * 0.06 });
+    }
 
     // Sliding hangar blast doors
     const doorSlide = ease * 380;
@@ -705,61 +391,48 @@ export function drawTransition(ctx) {
     const pos = cubicBezierPt(p0, p1, p2, p3, ease);
     const ang = cubicBezierTan(p0, p1, p2, p3, ease);
 
-    // Sculpted fairing shells peeling smoothly after orbital staging
-    const sep = Math.max(0, (ease - 0.14) / 0.86);
-    if (sep > 0) {
-      const sepEase = smootherstep(sep);
-      const nx = -Math.sin(ang);
-      const ny = Math.cos(ang);
-      const backX = -Math.cos(ang);
-      const backY = -Math.sin(ang);
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, 1 - sep * 0.55);
-      for (const side of [-1, 1]) {
-        ctx.save();
-        ctx.translate(
-          pos.x + nx * side * (16 + sepEase * 68) + backX * (10 + sepEase * 44),
-          pos.y + ny * side * (16 + sepEase * 68) + backY * (10 + sepEase * 44)
-        );
-        ctx.rotate(ang + side * sepEase * 0.85);
-        ctx.fillStyle = '#cbd5e1';
-        ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-16, side > 0 ? 0 : -11);
-        ctx.quadraticCurveTo(10, side > 0 ? 12 : -12, 22, 0);
-        ctx.lineTo(-16, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.restore();
+    // Burn with the adapter closed -> panels open -> panels peel away, leaving the command module docked
+    // to the lander for the translunar coast.
+    const SC = 0.3;
+    const phase = ease < 0.28 ? 'csmSla' : ease < 0.4 ? 'csmSlaOpen' : 'docked';
+    const body = craftCentre(phase, { scale: SC });
+    const sep = clamp01((ease - 0.4) / 0.5);
+    const sepEase = smootherstep(sep);
+
+    ctx.save();
+    ctx.translate(snapEven(pos.x), snapEven(pos.y));
+    ctx.rotate(ang); // +x = direction of flight
+
+    // Engine plume trailing from the tail
+    ctx.save();
+    ctx.translate(-body.box.h / 2, 0);
+    drawLayeredPlume(ctx, 52, 8, nowSec);
+    ctx.restore();
+
+    // Separation puff when the stack swaps from adapter to docked configuration
+    if (ease >= 0.4 && ease < 0.52) {
+      const k = (ease - 0.4) / 0.12;
+      ctx.fillStyle = `rgba(241, 245, 249, ${0.55 * (1 - k)})`;
+      ctx.beginPath(); ctx.arc(0, 0, 16 + k * 40, 0, Math.PI * 2); ctx.fill();
     }
 
-    // Orion Spacecraft + Service Module oriented cleanly along trajectory tangent
+    // Sprite space: nose (up) -> flight direction, craft centred on `pos`
     ctx.save();
-    ctx.translate(pos.x, pos.y);
-    ctx.rotate(ang);
-    drawLayeredPlume(ctx, 56, 8, nowSec);
-    // Solar array wings
-    ctx.fillStyle = '#1d4ed8';
-    ctx.strokeStyle = '#93c5fd';
-    ctx.lineWidth = 1.2;
-    ctx.fillRect(-16, -30, 10, 16);
-    ctx.strokeRect(-16, -30, 10, 16);
-    ctx.fillRect(-16, 14, 10, 16);
-    ctx.strokeRect(-16, 14, 10, 16);
-    // Service module
-    ctx.fillStyle = '#e2e8f0';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.roundRect(-24, -12, 30, 24, 5); ctx.fill(); ctx.stroke();
-    // Orion crew capsule
-    ctx.fillStyle = '#f8fafc';
-    ctx.beginPath(); ctx.moveTo(6, -13); ctx.lineTo(34, 0); ctx.lineTo(6, 13); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath(); ctx.arc(16, 0, 3.2, 0, Math.PI * 2); ctx.fill();
+    ctx.rotate(Math.PI / 2);
+    ctx.translate(-body.x, -body.y);
+    drawCraft(ctx, phase, 0, 0, { scale: SC });
+    if (sep > 0) {
+      for (const [id, side] of [['slaPetalL', -1], ['slaPetalR', 1]]) {
+        const pc = craftCentre(id, { scale: SC });
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - sep * 0.85);
+        ctx.translate(pc.x + side * sepEase * 46, pc.y + sepEase * 30);
+        ctx.rotate(side * sepEase * 1.0);
+        drawCraft(ctx, id, -pc.x, -pc.y, { scale: SC });
+        ctx.restore();
+      }
+    }
+    ctx.restore();
     ctx.restore();
   } else if (tr.kind === 'LUNAR_UNDOCK') {
     // Shaded Moon surface rising below
@@ -772,21 +445,31 @@ export function drawTransition(ctx) {
     ctx.lineWidth = 3;
     ctx.stroke();
 
-    // Command module gliding upper-left
+    // Command module pulls away upper-left on its engine, nose first
     const cmPos = cubicBezierPt({ x: 520, y: 235 }, { x: 450, y: 218 }, { x: 375, y: 205 }, { x: 300, y: 198 }, ease);
+    const CM_S = 0.6;
+    const cm = craftCentre('command', { scale: CM_S });
     ctx.save();
-    ctx.translate(cmPos.x, cmPos.y);
-    ctx.rotate(-0.08 * ease);
-    drawDetailedTransitionOrion(ctx, 1.08);
+    ctx.translate(snapEven(cmPos.x), snapEven(cmPos.y));
+    ctx.rotate(-Math.PI / 2 - 0.08 * ease);
+    if (ease < 0.6) {
+      drawCraft(ctx, 'commandFlame', -cm.x, -cm.y, { scale: CM_S, sy: 0.9 + (Math.floor(nowSec * 14) % 3) * 0.15 });
+      drawCraft(ctx, 'commandBody', -cm.x, -cm.y, { scale: CM_S });
+    } else {
+      drawCraft(ctx, 'command', -cm.x, -cm.y, { scale: CM_S });
+    }
     ctx.restore();
 
-    // Realistic Gold/White HLS Descent Lander arcing down toward Shackleton rim
+    // Lunar lander arcing down toward the Shackleton rim on its descent engine
     const l0 = { x: 540, y: 270 }, l1 = { x: 590, y: 298 }, l2 = { x: 645, y: 350 }, l3 = { x: 675, y: 416 };
     const lPos = cubicBezierPt(l0, l1, l2, l3, ease);
+    const LM_T = 0.4;
+    const plume = { scale: 0.45, sx: 0.8, sy: 1.0 + (Math.floor(nowSec * 14) % 3) * 0.15 };
     ctx.save();
-    ctx.translate(lPos.x, lPos.y);
+    ctx.translate(snapEven(lPos.x), snapEven(lPos.y));
     ctx.rotate(0.14 * (1 - ease));
-    drawDetailedTransitionLander(ctx, { scale: 0.62, drawPlume: true, nowSec });
+    drawCraft(ctx, 'commandFlame', 0, snapEven(CRAFT_GEO.landerBellY * LM_T) - craftBox('commandFlame', plume).t, plume);
+    drawCraft(ctx, 'lander', 0, 0, { scale: LM_T });
     ctx.restore();
   } else if (tr.kind === 'ROVER_DEPLOY') {
     const groundY = 445;
@@ -804,17 +487,25 @@ export function drawTransition(ctx) {
     ctx.lineTo(LOGICAL_W, groundY);
     ctx.stroke();
 
-    // Realistic HLS Lander planted squarely on lunar surface (footpads flush on groundY)
+    // Lunar lander planted squarely on the surface (footpads flush on groundY)
     const landerX = 215;
     const rampOpen = smootherstep(Math.min(1, t / 0.3));
+    const LM_T = 0.62;
+    const halfW = Math.round(CRAFT_GEO.landerHalfW * LM_T);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
     ctx.beginPath();
-    ctx.ellipse(landerX, groundY + 2, 78, 10, 0, 0, Math.PI * 2);
+    ctx.ellipse(landerX, groundY + 2, halfW - 2, 10, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.save();
-    ctx.translate(landerX, groundY);
-    drawDetailedTransitionLander(ctx, { scale: 1.0, rampOpen });
-    ctx.restore();
+    drawCraft(ctx, 'lander', landerX, groundY, { scale: LM_T });
+
+    // Egress ramp lowering from the descent stage
+    const rampX0 = landerX + Math.round(halfW * 0.66);
+    const rampX1 = rampX0 + 70 * rampOpen;
+    const rampY1 = groundY - 26 * (1 - rampOpen);
+    ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(rampX0, groundY - 26); ctx.lineTo(rampX1, rampY1); ctx.stroke();
+    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(rampX0, groundY - 26); ctx.lineTo(rampX1, rampY1); ctx.stroke();
 
     // Dual crewed 6-wheel LTV Rovers driving off the lowered ramp onto lunar dust
     const rollT = smootherstep(Math.max(0, (t - 0.18) / 0.82));
@@ -910,91 +601,46 @@ export function drawTransition(ctx) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Detailed Jettisoned Service Module tumbling cleanly behind along tangent
+    // Jettisoned service module tumbling cleanly behind along the tangent
+    const SM_S = 0.4;
+    const sm = craftCentre('serviceModule', { scale: SM_S });
     ctx.save();
-    ctx.translate(pos.x - 95 - ease * 115, pos.y - 34 - ease * 42);
+    ctx.translate(snapEven(pos.x - 95 - ease * 115), snapEven(pos.y - 34 - ease * 42));
     ctx.rotate(-ease * 2.1);
-    ctx.fillStyle = '#1e3a8a';
-    ctx.strokeStyle = '#60a5fa';
-    ctx.lineWidth = 1.2;
-    ctx.fillRect(-10, -34, 14, 18);
-    ctx.strokeRect(-10, -34, 14, 18);
-    ctx.fillRect(-10, 16, 14, 18);
-    ctx.strokeRect(-10, 16, 14, 18);
-    ctx.fillStyle = '#cbd5e1';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(-20, -14, 34, 28, 4);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = '#eab308';
-    ctx.fillRect(-8, -13, 6, 26);
+    drawCraft(ctx, 'serviceModule', -sm.x, -sm.y, { scale: SM_S });
     ctx.restore();
 
-    // Detailed Orion Crew Module oriented heatshield-first along entry glide
+    // Crew capsule, heatshield (local +y) facing the direction of travel, wrapped in its plasma
+    const CAP_S = 0.3;
+    const cap = craftCentre('chuteCapsule', { scale: CAP_S });
+    const capH = cap.box.h / 2;
     ctx.save();
-    ctx.translate(pos.x, pos.y);
-    ctx.rotate(ang + Math.PI / 2 - 0.15);
+    ctx.translate(snapEven(pos.x), snapEven(pos.y));
+    ctx.rotate(ang - Math.PI / 2);
 
-    // Multi-layered ionization bow shock halo around heatshield
-    const plasmaGlow = ctx.createRadialGradient(0, 18, 6, 0, 18, 68);
+    // Multi-layered ionization bow shock halo around the heatshield
+    const plasmaGlow = ctx.createRadialGradient(0, capH, 6, 0, capH, 72);
     plasmaGlow.addColorStop(0, 'rgba(254, 240, 138, 0.85)');
     plasmaGlow.addColorStop(0.45, 'rgba(251, 146, 60, 0.65)');
     plasmaGlow.addColorStop(1, 'rgba(249, 115, 22, 0)');
     ctx.fillStyle = plasmaGlow;
     ctx.beginPath();
-    ctx.arc(0, 18, 68, 0, Math.PI * 2);
+    ctx.arc(0, capH, 72, 0, Math.PI * 2);
     ctx.fill();
 
     // Bow shock wave arc leading the blunt shield
     ctx.strokeStyle = 'rgba(254, 240, 138, 0.88)';
     ctx.lineWidth = 3.5;
     ctx.beginPath();
-    ctx.arc(0, -4, 42, Math.PI * 0.15, Math.PI * 0.85);
+    ctx.arc(0, capH - 24, 46, Math.PI * 0.15, Math.PI * 0.85);
     ctx.stroke();
 
-    // Orion Titanium/White Back-Shell Capsule
-    ctx.fillStyle = '#f8fafc';
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2.8;
-    ctx.beginPath();
-    ctx.moveTo(-14, -28);
-    ctx.lineTo(14, -28);
-    ctx.lineTo(34, 12);
-    ctx.lineTo(-34, 12);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+    drawCraft(ctx, 'chuteCapsule', -cap.x, -cap.y, { scale: CAP_S });
 
-    // Blue NASA accent band, cockpit windows & forward parachute cover cap
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(-13, -33, 26, 6);
-    ctx.fillStyle = '#1d4ed8';
+    // Glowing superheated ablative heatshield base
+    ctx.fillStyle = 'rgba(234, 88, 12, 0.7)';
     ctx.beginPath();
-    ctx.moveTo(-28, 3);
-    ctx.lineTo(28, 3);
-    ctx.lineTo(31, 8);
-    ctx.lineTo(-31, 8);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#38bdf8';
-    ctx.beginPath();
-    ctx.roundRect(-14, -14, 10, 6, 2);
-    ctx.roundRect(4, -14, 10, 6, 2);
-    ctx.fill();
-
-    // Glowing superheated PICA-X ablative heatshield base
-    ctx.fillStyle = '#ea580c';
-    ctx.strokeStyle = '#7c2d12';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(0, 14, 35, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = '#fde047';
-    ctx.beginPath();
-    ctx.ellipse(0, 15, 22, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, capH - 3, cap.box.w * 0.46, 7, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   } else {

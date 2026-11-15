@@ -5,6 +5,17 @@ import { broadcastNet } from '../net.js';
 import { addFloatText, drawCanvasControlBar, createStarfield, drawStarfield } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
+import { drawCraft, craftBox, CRAFT_GEO } from '../spacecraft.js';
+
+// Lander sprite (Assets/rocket frame 0011): anchored on the footpad line, so (x, y) is where the
+// pads touch the ground. LM_SCALE = logical px per reference frame pixel.
+const LM_SCALE = 0.5;
+const LM_HALF_W = Math.round(CRAFT_GEO.landerHalfW * LM_SCALE);              // footpad-to-footpad half span
+const LM_BELL_Y = Math.round(CRAFT_GEO.landerBellY * LM_SCALE);              // descent bell below the pad line
+const LM_ASCENT_MID = Math.round((CRAFT_GEO.landerTopY + CRAFT_GEO.landerSeamY) / 2 * LM_SCALE); // ascent stage centre above ground
+const LM_ASCENT_BOTTOM = Math.round(CRAFT_GEO.landerSeamY * LM_SCALE);       // ascent stage underside above ground
+const LM_TOP = craftBox('lander', { scale: LM_SCALE }).t;                    // negative: top of sprite above ground
+const snapEven = (v) => Math.round(v / 2) * 2;
 
 const SKY_HORIZON_WORLD_Y = 260;
 const LUNAR_STARS = createStarfield(95, LOGICAL_W, 300, 30315);
@@ -1481,7 +1492,7 @@ export function updateStage3C(dt, onNextStage) {
     if (ml.thrusting) {
       state.lunarParticles.push({
         x: state.lander.padX + (Math.random() - 0.5) * 20,
-        y: ml.capsuleY - 20,
+        y: ml.capsuleY - LM_ASCENT_BOTTOM,
         vx: (Math.random() - 0.5) * 65,
         vy: 75 + Math.random() * 60,
         life: 0.45,
@@ -2841,12 +2852,21 @@ function drawLunarRadarMap(ctx) {
 }
 
 // BIGGER, DETAILED HEROIC ARTEMIS-CLASS LUNAR ROCKET LANDER (~2x scale!)
+// Engine plume under the descent bell / ascent stage, from the command-module flame crop.
+// (0, y) is where the flame hangs from; `big` = full burn, otherwise a shorter trim burn.
+function drawLanderPlume(ctx, y, big) {
+  const step = Math.floor(performance.now() / 70) % 3;
+  const sy = big ? 1.5 + step * 0.22 : 0.85 + step * 0.12;
+  // Hang the flame crop's top edge exactly at y (craftBox gives its offset from the anchor).
+  const opts = { scale: 0.7, sx: big ? 1.15 : 0.8, sy };
+  drawCraft(ctx, 'commandFlame', 0, y - craftBox('commandFlame', opts).t, opts);
+}
+
 function draw25DLander(ctx, x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampOpen = false, ascentLaunched = false, legCompress = 0) {
-  const footBottom = 11 + legAnim * 18;
   const shadowScale = Math.max(0.45, 1 - z / 320);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.beginPath();
-  ctx.ellipse(x, y, 54 * shadowScale, 24 * shadowScale, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y, (LM_HALF_W - 2) * shadowScale, 24 * shadowScale, 0, 0, Math.PI * 2);
   ctx.fill();
 
   if (z > 2) {
@@ -2859,92 +2879,32 @@ function draw25DLander(ctx, x, y, z, tiltX, legAnim, thrusting, hoverTrim, rampO
 
   ctx.save();
   // Anchor footpad bottoms squarely onto (x, y - z) so landing indicator never passes up past the rocket
-  ctx.translate(x, y - z - footBottom + legCompress * 5);
+  ctx.translate(snapEven(x), snapEven(y - z + legCompress * 3));
   ctx.rotate(tiltX);
 
-  // Main Engine Plume
-  if (thrusting || hoverTrim) {
-    const len = thrusting ? (56 + Math.random() * 24) : (26 + Math.random() * 12);
-    ctx.fillStyle = thrusting ? '#f97316' : '#38bdf8';
-    ctx.beginPath(); ctx.moveTo(-16, 12); ctx.lineTo(0, 12 + len); ctx.lineTo(16, 12); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#fef08a';
-    ctx.beginPath(); ctx.moveTo(-8, 12); ctx.lineTo(0, 12 + len * 0.55); ctx.lineTo(8, 12); ctx.closePath(); ctx.fill();
-  }
-
-  // 4 Articulated Landing Struts & Footpads
-  const spreadX = 30 + legAnim * 28;
-  const footY = 8 + legAnim * 18;
-  ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 4.5;
-  ctx.beginPath();
-  ctx.moveTo(-26, -6); ctx.lineTo(-spreadX, footY);
-  ctx.moveTo(26, -6);  ctx.lineTo(spreadX, footY);
-  ctx.moveTo(-18, -3); ctx.lineTo(-spreadX * 0.68, footY + 7);
-  ctx.moveTo(18, -3);  ctx.lineTo(spreadX * 0.68, footY + 7);
-  ctx.stroke();
-
-  // Secondary Strut Braces
-  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(-22, 6); ctx.lineTo(-spreadX * 0.72, footY * 0.55);
-  ctx.moveTo(22, 6); ctx.lineTo(spreadX * 0.72, footY * 0.55);
-  ctx.stroke();
-
-  ctx.fillStyle = '#f59e0b'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.roundRect(-spreadX - 8, footY - 3, 16, 6, 3); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.roundRect(spreadX - 8, footY - 3, 16, 6, 3); ctx.fill(); ctx.stroke();
-
-  // Engine Bell
-  ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(-12, 2); ctx.lineTo(-16, 14); ctx.lineTo(16, 14); ctx.lineTo(12, 2); ctx.closePath(); ctx.fill(); ctx.stroke();
-
-  // Gold Kapton Foil Descent Stage Octagon (remains on Moon after Ascent Stage launches!)
-  ctx.fillStyle = '#eab308'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.roundRect(-38, -32, 76, 34, 8); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#ca8a04';
-  ctx.fillRect(-34, -18, 68, 5);
-  // Crew boarding ladder on descent stage
-  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2.2;
-  ctx.beginPath();
-  ctx.moveTo(22, -28); ctx.lineTo(22, 2);
-  ctx.moveTo(30, -28); ctx.lineTo(30, 2);
-  for (let ry = -24; ry <= -2; ry += 7) {
-    ctx.moveTo(22, ry); ctx.lineTo(30, ry);
-  }
-  ctx.stroke();
-
+  // Main engine plume: full burn is the orange flame crop, RCS hover trim stays a small blue puff
   if (!ascentLaunched) {
-    // Interstage Adapter Ring
-    ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
-    ctx.fillRect(-32, -40, 64, 8); ctx.strokeRect(-32, -40, 64, 8);
-
-    // Large White Crew Ascent Rocket Cabin
-    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.roundRect(-29, -82, 58, 42, 12); ctx.fill(); ctx.stroke();
-
-    // Blue NASA Livery Band & Nose Cone
-    ctx.fillStyle = '#1d4ed8';
-    ctx.fillRect(-27, -56, 54, 7);
-    ctx.fillStyle = '#0284c7';
-    ctx.beginPath(); ctx.roundRect(-18, -75, 36, 14, 5); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.fillRect(-13, -72, 14, 4);
-
-    // RCS Thruster Quads
-    ctx.fillStyle = '#64748b';
-    ctx.fillRect(-36, -68, 7, 12); ctx.strokeRect(-36, -68, 7, 12);
-    ctx.fillRect(29, -68, 7, 12); ctx.strokeRect(29, -68, 7, 12);
-
-    // Top Docking Collar & Dish Antenna
-    ctx.fillStyle = '#cbd5e1';
-    ctx.beginPath(); ctx.roundRect(-14, -92, 28, 10, 4); ctx.fill(); ctx.stroke();
-    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2.4;
-    ctx.beginPath(); ctx.moveTo(0, -92); ctx.lineTo(0, -106); ctx.stroke();
-    ctx.beginPath(); ctx.arc(0, -108, 9, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+    if (thrusting) {
+      drawLanderPlume(ctx, LM_BELL_Y, true);
+    } else if (hoverTrim) {
+      const len = 22 + Math.random() * 10;
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath(); ctx.moveTo(-8, LM_BELL_Y); ctx.lineTo(0, LM_BELL_Y + len); ctx.lineTo(8, LM_BELL_Y); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#e0f2fe';
+      ctx.beginPath(); ctx.moveTo(-4, LM_BELL_Y); ctx.lineTo(0, LM_BELL_Y + len * 0.55); ctx.lineTo(4, LM_BELL_Y); ctx.closePath(); ctx.fill();
+    }
   }
+
+  // After the ascent stage launches only the descent stage stays behind as the launch table.
+  drawCraft(ctx, ascentLaunched ? 'landerDescent' : 'lander', 0, 0, { scale: LM_SCALE });
 
   if (rampOpen) {
-    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(34, 0); ctx.lineTo(74, footBottom); ctx.stroke();
+    // Egress ramp lowered from the descent stage for the rovers
+    const rx0 = Math.round(LM_HALF_W * 0.66);
+    ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(rx0, -16); ctx.lineTo(rx0 + 44, 0); ctx.stroke();
+    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(rx0, -16); ctx.lineTo(rx0 + 44, 0); ctx.stroke();
   }
 
   ctx.restore();
@@ -2988,7 +2948,7 @@ export function drawStage3A(ctx) {
           : 'rgba(168, 85, 247, 0.55)';
     ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.ellipse(l.x, groundY, 58, 26, 0, 0, Math.PI * 2);
+    ctx.ellipse(l.x, groundY, LM_HALF_W, 28, 0, 0, Math.PI * 2);
     ctx.stroke();
 
     const beamGrad = ctx.createLinearGradient(0, padVisualY - 260, 0, padVisualY);
@@ -3034,8 +2994,7 @@ export function drawStage3A(ctx) {
 
   const vSpdNum = Math.abs(l.vz * 0.24);
   const vSpd = vSpdNum.toFixed(1);
-  const footBottom = 11 + l.legAnim * 18;
-  const ly = groundY - altAboveGround - footBottom;
+  const ly = groundY - altAboveGround + LM_TOP + 76; // card top = top of the lander sprite + 2
   if (!l.landed && !l.crashed) {
     const hazardSlope = Boolean(terrainUnder.ramp || terrainUnder.ledge);
     const hazardCliff = Math.abs(terrainUnder.elev) >= 0.35;
@@ -3043,19 +3002,19 @@ export function drawStage3A(ctx) {
     ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
     ctx.strokeStyle = hazardSlope ? '#fbbf24' : vSpdNum <= 4.2 ? '#4ade80' : vSpdNum <= 7.5 ? '#fbbf24' : '#ef4444';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.roundRect(l.x + 56, ly - 74, 144, cardH, 8); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(l.x + LM_HALF_W + 8, ly - 74, 144, cardH, 8); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 11px JetBrains Mono, monospace'; ctx.textAlign = 'left';
-    ctx.fillText(`V:${vSpd} m/s`, l.x + 64, ly - 56);
+    ctx.fillText(`V:${vSpd} m/s`, l.x + LM_HALF_W + 16, ly - 56);
     ctx.fillStyle = (l.hoverTrim || l.p2AssistActive) ? '#38bdf8' : '#94a3b8';
-    ctx.fillText(l.p2AssistActive ? 'P2 TRIMMING' : `ALT:${Math.round(altAboveGround * 0.45)}m`, l.x + 64, ly - 39);
+    ctx.fillText(l.p2AssistActive ? 'P2 TRIMMING' : `ALT:${Math.round(altAboveGround * 0.45)}m`, l.x + LM_HALF_W + 16, ly - 39);
     if (hazardSlope) {
       ctx.fillStyle = '#fbbf24';
       ctx.font = 'bold 10px JetBrains Mono, monospace';
-      ctx.fillText('⚠ CLIFF SLOPE!', l.x + 64, ly - 22);
+      ctx.fillText('⚠ CLIFF SLOPE!', l.x + LM_HALF_W + 16, ly - 22);
     } else if (hazardCliff) {
       ctx.fillStyle = terrainUnder.elev > 0 ? '#fde047' : '#818cf8';
       ctx.font = 'bold 10px JetBrains Mono, monospace';
-      ctx.fillText(terrainUnder.elev > 0 ? '▲ HIGH CLIFF' : '▼ LOW BASIN', l.x + 64, ly - 22);
+      ctx.fillText(terrainUnder.elev > 0 ? '▲ HIGH CLIFF' : '▼ LOW BASIN', l.x + LM_HALF_W + 16, ly - 22);
     }
   }
 
@@ -3656,24 +3615,16 @@ export function drawStage3C(ctx) {
     // Big Gold Descent Stage remains on Point A as the Lunar Launch Table!
     draw25DLander(ctx, state.lander.padX, state.lander.padY - padOff, 0, 0, 1, false, false, false, true);
 
-    // Big White Crew Ascent Stage blasting off vertically!
+    // The crew ascent stage lifts off the descent stage vertically. It starts exactly where it sits on
+    // the lander sprite (ascent centre LM_ASCENT_MID above the pad) and pivots about its own centre.
     ctx.save();
-    ctx.translate(state.lander.padX, ml.capsuleY - padOff - 91);
+    ctx.translate(snapEven(state.lander.padX), snapEven(ml.capsuleY - padOff - LM_ASCENT_MID));
     ctx.rotate(ml.tilt);
 
     if (ml.thrusting) {
-      const len = 48 + Math.random() * 24;
-      ctx.fillStyle = '#f97316';
-      ctx.beginPath(); ctx.moveTo(-14, 18); ctx.lineTo(0, 18 + len); ctx.lineTo(14, 18); ctx.closePath(); ctx.fill();
+      drawLanderPlume(ctx, LM_ASCENT_MID - LM_ASCENT_BOTTOM, true);
     }
-
-    ctx.fillStyle = '#f8fafc'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.roundRect(-29, -24, 58, 42, 12); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#1d4ed8'; ctx.fillRect(-27, 2, 54, 7);
-    ctx.fillStyle = '#0284c7';
-    ctx.beginPath(); ctx.roundRect(-18, -17, 36, 14, 5); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#4ade80';
-    ctx.beginPath(); ctx.arc(0, 13, 5, 0, Math.PI * 2); ctx.fill();
+    drawCraft(ctx, 'landerAscent', 0, LM_ASCENT_MID, { scale: LM_SCALE });
     ctx.restore();
     drawLunarParticles(ctx);
     ctx.restore();
