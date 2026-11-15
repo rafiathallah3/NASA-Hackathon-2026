@@ -1,10 +1,33 @@
-import { LOGICAL_W, LOGICAL_H, LUNAR_W, LUNAR_H, CREW_ROSTER } from '../config.js';
+import { LOGICAL_W, LOGICAL_H, LUNAR_W, LUNAR_H, CREW_ROSTER, SCIENCE_OBJECTIVES } from '../config.js';
 import { state, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
 import { addFloatText, drawCanvasControlBar } from '../sprites.js';
 import { setStageBanner, updateBottomHUD, showMissionToast } from '../hud.js';
 import { triggerDilemma } from '../dilemmas.js';
+
+function getObjectiveSampleFlavor(objectiveId, sampleCount = 1, sciMul = 1) {
+  const highYield = sampleCount >= 2 || sciMul > 1;
+  if (objectiveId === 'mantle_geochem') {
+    return {
+      shortLabel: 'Ti/Fe Basalt Core',
+      yieldText: highYield ? '8.6% Ti/Fe Basalt' : '7.4% Ti/Fe Basalt',
+      detail: 'Titanium-Iron Basalt stratigraphy verified'
+    };
+  }
+  if (objectiveId === 'heliophysics_space_weather') {
+    return {
+      shortLabel: 'Solar Wind Regolith',
+      yieldText: highYield ? 'SEP Flux 2.4x10^4' : 'SEP Flux 1.8x10^4',
+      detail: 'Solar Wind Regolith / SEP Flux trapped isotopes logged'
+    };
+  }
+  return {
+    shortLabel: 'Cryo-Ice Core',
+    yieldText: highYield ? '540 ppm H2O Eq.' : '480 ppm H2O Eq.',
+    detail: 'Subsurface volatiles ppm H2O Equivalent verified'
+  };
+}
 
 function build25DLunarTerrain() {
   state.lunarCraters = [
@@ -50,8 +73,33 @@ export function startStage3A() {
   state.roverTracks = [];
   state.landingGrade = 'Nominal';
   state.sampleCollected = false;
+  state.samplesCollectedCount = 0;
+  state.sampleYieldText = '';
 
-  const startFuel = Math.max(60, Math.min(125, state.telemetry.fuel));
+  const objective = SCIENCE_OBJECTIVES?.[state.selectedObjective] || SCIENCE_OBJECTIVES?.polar_volatiles;
+  const targetSiteName = objective?.targetLocation || 'Shackleton Crater Rim';
+  const targetScienceLabel = objective?.baselineBonus?.label || objective?.title || 'ppm H2O Eq.';
+
+  const baseFuel = Math.max(60, Math.min(125, state.telemetry.fuel));
+  const mcc = state.mccResult;
+  const rawPenaltyPct = mcc
+    ? (mcc.nominalCapture
+        ? 0
+        : (typeof mcc.fuelPenaltyPct === 'number'
+            ? mcc.fuelPenaltyPct
+            : (mcc.bPlaneMissKm > 75 || !mcc.completed ? 18 : 8)))
+    : 0;
+  const fuelPenaltyPct = Math.max(0, rawPenaltyPct);
+  const startFuel = fuelPenaltyPct > 0
+    ? Math.max(40, Math.round(baseFuel * (1 - fuelPenaltyPct / 100)))
+    : baseFuel;
+
+  state.missionChoices.landingSite = targetSiteName;
+  state.missionChoices.targetSiteName = targetSiteName;
+  state.missionChoices.targetScienceLabel = targetScienceLabel;
+  state.missionChoices.scienceMul = state.missionChoices.scienceMul || 1;
+  state.missionChoices.approachProfile = state.missionChoices.approachProfile || 'Precision Rim Hover';
+
   state.lander = {
     x: 880,
     y: 590,
@@ -73,7 +121,9 @@ export function startStage3A() {
     padY: 730,
     padRadius: 105,
     windMul: 1.0,
-    landed: false
+    landed: false,
+    targetSiteName,
+    targetScienceLabel
   };
 
   build25DLunarTerrain();
@@ -84,33 +134,43 @@ export function startStage3A() {
   };
 
   setStageBanner(
-    'STAGE 3A — 4P 2.5D DESCENT',
-    'Smooth Powered Touchdown on POINT A',
-    'Guide Artemis Lander onto Point A: P1 [WASD] Steer + [SPACE] Main Thrust • P2 [SHIFT] Hover Trim!',
-    `<kbd>WASD</kbd> Steer XY &nbsp;•&nbsp; <kbd>SPACE</kbd> Main Thrust &nbsp;•&nbsp; <kbd>SHIFT</kbd> Hover Trim`,
+    'STAGE 3A: LUNAR DESCENT',
+    `Land Safely on POINT A (${targetSiteName})`,
+    `Hold SPACE for retro-thrust, steer with WASD onto Point A (${targetScienceLabel}), and hold SHIFT for hover trim.`,
+    `<kbd>WASD</kbd> Steer &nbsp;•&nbsp; <kbd>SPACE</kbd> Retro Thrust &nbsp;•&nbsp; <kbd>SHIFT</kbd> Hover Trim`,
     { showTickets: false, showSkip: false, showNext: true }
   );
   playTone(300, 'triangle', 0.25, 0.12);
+
+  if (fuelPenaltyPct > 0) {
+    const missTxt = mcc?.bPlaneMissKm != null ? `${Math.round(mcc.bPlaneMissKm)} km B-plane miss` : 'off-nominal MCC-1';
+    showMissionToast('MCC-1 Fuel Penalty', `-${fuelPenaltyPct}% descent propellant (${missTxt}).`);
+    logBlackBox('STAGE 3A', `MCC-1 ${missTxt} imposed -${fuelPenaltyPct}% descent fuel penalty (start fuel ${startFuel}%).`, 'warn');
+  }
   updateBottomHUD();
 
+  const fuelNote = fuelPenaltyPct > 0
+    ? ` Off-nominal MCC-1 reduced descent propellant by ${fuelPenaltyPct}% (${startFuel}% remaining).`
+    : '';
+
   triggerDilemma({
-    id: 'LANDING_SITE',
-    badge: 'Stage 3A • Landing Site Selection',
-    title: 'Choose Lunar Touchdown Zone',
+    id: 'APPROACH_PROFILE',
+    badge: 'Stage 3A • Approach Profile',
+    title: `Descent Approach: ${targetSiteName}`,
     stageTag: 'STAGE 3A',
-    prompt: 'Select Point A approach parameters for the Human Landing System before powered descent:',
+    prompt: `Target site locked from Pre-Phase A (${targetSiteName} | ${targetScienceLabel}). Select your powered descent approach profile:${fuelNote}`,
     options: [
       {
-        label: 'Mare Tranquillitatis (Safe Plain)',
+        label: 'Precision Rim Hover',
         accent: '#4ade80',
-        trade: 'Wider Point A pad (112px) and calmer outgassing drift; standard 1x Science yield.',
-        lesson: 'Flat basalt plains lower Apollo/Artemis landing risk.'
+        trade: 'Wider Point A pad (112px) and calmer lateral drift (0.85x); standard 1x EVA science yield.',
+        lesson: 'Controlled hover approach reduces touchdown dispersion and protects rover batteries.'
       },
       {
-        label: 'Shackleton Crater Rim (High Science)',
+        label: 'Direct Rim Drop',
         accent: '#38bdf8',
-        trade: 'Tighter Point A target (72px) and 1.5x lateral drift, but 2x Lunar Sample Science!',
-        lesson: 'Polar crater rims hold water-ice volatiles but demand precision piloting.'
+        trade: 'Tighter Point A target (74px) and 1.45x lateral drift, but 2x Lunar Sample Science yield!',
+        lesson: 'Aggressive direct descent targets higher-yield crater samples at tighter piloting margins.'
       }
     ]
   }, (idx) => {
@@ -118,14 +178,16 @@ export function startStage3A() {
       state.lander.padRadius = 112;
       state.lander.windMul = 0.85;
       state.missionChoices.scienceMul = 1;
-      state.missionChoices.landingSite = 'Mare Plain';
-      showMissionToast('Mare Plain Locked', 'Wide landing corridor active.');
+      state.missionChoices.approachProfile = 'Precision Rim Hover';
+      state.missionChoices.landingSite = targetSiteName;
+      showMissionToast('Precision Rim Hover', `Wide pad locked at ${targetSiteName}.`);
     } else {
-      state.lander.padRadius = 72;
-      state.lander.windMul = 1.5;
+      state.lander.padRadius = 74;
+      state.lander.windMul = 1.45;
       state.missionChoices.scienceMul = 2;
-      state.missionChoices.landingSite = 'Shackleton Rim';
-      showMissionToast('Shackleton Rim Locked', 'Precision pad active — 2x Science yield on EVA!');
+      state.missionChoices.approachProfile = 'Direct Rim Drop';
+      state.missionChoices.landingSite = targetSiteName;
+      showMissionToast('Direct Rim Drop', `Tight pad locked at ${targetSiteName} with 2x EVA Science.`);
     }
   });
 }
@@ -253,20 +315,24 @@ export function updateStage3A(dt, onNextStage) {
     }
 
     if (onPad && vSpd <= 4.2) {
+      l.hardLandingPenalty = false;
       state.landingGrade = 'TEXTBOOK 4P BUTTER LANDING (+200⭐)';
       state.score += 200;
       addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 105, 'TEXTBOOK 4P TOUCHDOWN! +200⭐', '#4ade80');
       logBlackBox('STAGE 3A', `Textbook landing at Point A (${vSpd.toFixed(1)} m/s, ${Math.round(l.fuel)}% fuel left).`, 'good');
     } else if (onPad && vSpd <= 6.8) {
+      l.hardLandingPenalty = false;
       state.landingGrade = 'SAFE TOUCHDOWN (+140⭐)';
       state.score += 140;
       addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 105, 'SAFE LANDING! +140⭐', '#38bdf8');
       logBlackBox('STAGE 3A', `Safe touchdown at Point A (${vSpd.toFixed(1)} m/s).`, 'good');
     } else {
-      state.landingGrade = onPad ? 'HARD PAD TOUCHDOWN (+85⭐)' : 'FIELD LANDING ON LUNAR PLAIN (+85⭐)';
+      l.hardLandingPenalty = true;
+      l.shockRepaired = false;
+      state.landingGrade = onPad ? 'HARD PAD TOUCHDOWN (+85⭐ • -28Wh SHOCK)' : 'FIELD LANDING (+85⭐ • -28Wh SHOCK)';
       state.score += 85;
-      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 105, 'TOUCHDOWN! DEPLOYING 4P ROVERS!', '#fbbf24');
-      logBlackBox('STAGE 3A', `Touchdown at (${Math.round(l.x)}, ${Math.round(l.y)}) (${vSpd.toFixed(1)} m/s).`, 'info');
+      addFloatText(l.x - state.lunarCam.x, l.y - state.lunarCam.y - 105, 'HARD TOUCHDOWN! ROVER BATTERY SHOCK (-28Wh)!', '#fbbf24');
+      logBlackBox('STAGE 3A', `Hard touchdown (${vSpd.toFixed(1)} m/s) caused -28 Wh rover battery shock (repairable at Lander).`, 'warn');
     }
     playSuccessChord();
     showMissionToast('Lunar Touchdown', state.landingGrade);
@@ -282,11 +348,15 @@ export function startStage3B() {
   state.stageTimer = 95;
   state.lunarParticles = [];
   state.roverTracks = [];
+  state.sampleCollected = false;
+  state.samplesCollectedCount = 0;
+  state.sampleYieldText = '';
 
   const px = state.lander.padX || 430;
   const py = state.lander.padY || 730;
   const bonusWh = state.missionChoices?.roverBonusWh || 0;
   const maxBatt = Math.max(85, Math.min(180, 90 + Math.round(state.telemetry.power * 0.25) + bonusWh));
+  const startBatt = state.lander.hardLandingPenalty ? Math.max(38, maxBatt - 28) : maxBatt;
   state.rover = {
     id: 'LTV-1 (P1+P3)',
     bodyColor: '#f59e0b',
@@ -294,9 +364,10 @@ export function startStage3B() {
     vx: 0, vy: 0, vz: 0,
     facingX: 1, facingY: 0,
     wheelSpin: 0,
-    battery: maxBatt,
+    battery: startBatt,
     maxBattery: maxBatt,
     hasSample: false,
+    sampleStowed: false,
     drilling: false,
     drillProgress: 0,
     armAnim: 0,
@@ -311,9 +382,10 @@ export function startStage3B() {
     vx: 0, vy: 0, vz: 0,
     facingX: 1, facingY: 0,
     wheelSpin: 0,
-    battery: maxBatt,
+    battery: startBatt,
     maxBattery: maxBatt,
     hasSample: false,
+    sampleStowed: false,
     drilling: false,
     drillProgress: 0,
     armAnim: 0,
@@ -322,9 +394,9 @@ export function startStage3B() {
   };
 
   setStageBanner(
-    'STAGE 3B — ROAMABLE 2.5D LUNAR SECTOR',
-    'Explore 2400m Moon Plain with Dual Co-Op Rovers!',
-    'Roam freely using Radar Map! Park both rovers together for 2x CO-OP DRILL BOOST, complete EVA tasks & return!',
+    'STAGE 3B: LUNAR SURFACE EVA',
+    'Explore the Moon & Drill Point B Crater',
+    'Follow the checklist and directional arrows. Park both rovers together for 2x drill speed, finish EVA tasks, and return to the lander.',
     `<kbd>WASD</kbd> LTV-1 &nbsp;•&nbsp; <kbd>IJKL</kbd> LTV-2 (2P) &nbsp;•&nbsp; <kbd>SHIFT</kbd> Hop &nbsp;•&nbsp; <kbd>SPACE</kbd> Task / Tether`,
     { showTickets: false, showSkip: false, showNext: true }
   );
@@ -346,6 +418,25 @@ export function handleStage3BInteract(rv, onNextStage) {
     }
   }
 
+  if (
+    state.lander.hardLandingPenalty &&
+    !state.lander.shockRepaired &&
+    !state.rover.hasSample &&
+    !state.rover2.hasSample &&
+    Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) < 125
+  ) {
+    state.lander.shockRepaired = true;
+    state.rover.battery = state.rover.maxBattery;
+    state.rover2.battery = state.rover2.maxBattery;
+    state.score += 40;
+    addFloatText(state.lander.padX - state.lunarCam.x, state.lander.padY - state.lunarCam.y - 95, '🔧 SHOCK DAMAGE REPAIRED! FULL ROVER BATTERY +40⭐', '#4ade80');
+    showMissionToast('Rover Battery Repaired', 'Landing shock damage cleared. Full battery restored.');
+    logBlackBox('STAGE 3B', 'Crew repaired landing shock damage on rover battery bus (+28 Wh restored).', 'good');
+    playSuccessChord();
+    updateBottomHUD();
+    return;
+  }
+
   // Co-Op Battery Tether Share if near teammate rover and not at a node
   const other = rv === state.rover ? state.rover2 : state.rover;
   if (other && state.coopMode !== 'SOLO' && Math.hypot(rv.x - other.x, rv.y - other.y) < 110 && !rv.hasSample && Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) > 105) {
@@ -358,21 +449,68 @@ export function handleStage3BInteract(rv, onNextStage) {
     return;
   }
 
-  if ((state.rover.hasSample || state.rover2.hasSample) && Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) < 105) {
-    if (state.sampleCollected) return;
-    state.sampleCollected = true;
+  const r1AtPad = state.rover.hasSample && Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 115;
+  const r2AtPad = state.rover2.hasSample && Math.hypot(state.rover2.x - state.lander.padX, state.rover2.y - state.lander.padY) < 115;
+  const hasUnstowedAtPad = (r1AtPad && !state.rover.sampleStowed) || (r2AtPad && !state.rover2.sampleStowed);
+
+  if (hasUnstowedAtPad && Math.hypot(rv.x - state.lander.padX, rv.y - state.lander.padY) < 105) {
     const sciMul = state.missionChoices?.scienceMul || 1;
-    const dualBonus = (state.rover.hasSample && state.rover2.hasSample) ? 100 : 0;
-    const totalPts = 220 + dualBonus;
-    state.score += totalPts;
-    state.telemetry.science += 60 * sciMul;
-    addFloatText(state.lander.padX - state.lunarCam.x, state.lander.padY - state.lunarCam.y - 125, `SAMPLES BOARDED! PREPARING MOON LAUNCH! +${totalPts}⭐`, '#4ade80');
-    showMissionToast('Core Samples Stowed', `Added +${60 * sciMul} Science (${sciMul}x site bonus).`);
-    logBlackBox('STAGE 3B', dualBonus > 0 ? 'Dual-rover core samples stowed aboard Ascent Capsule (+100 dual bonus).' : 'Primary crater core sample stowed aboard Ascent Capsule.', 'good');
-    playSuccessChord();
-    setTimeout(() => {
-      if (state.stage === 'STAGE3B' && onNextStage) onNextStage();
-    }, 1000);
+    const objective = SCIENCE_OBJECTIVES?.[state.selectedObjective] || SCIENCE_OBJECTIVES?.polar_volatiles;
+
+    if (r1AtPad) state.rover.sampleStowed = true;
+    if (r2AtPad) state.rover2.sampleStowed = true;
+
+    const stowedCount = (state.rover.sampleStowed ? 1 : 0) + (state.rover2.sampleStowed ? 1 : 0);
+    const flavor = getObjectiveSampleFlavor(state.selectedObjective, stowedCount, sciMul);
+    state.sampleYieldText = flavor.yieldText;
+
+    if (!state.sampleCollected) {
+      state.sampleCollected = true;
+      state.samplesCollectedCount = Math.max(1, stowedCount);
+      const dualBonus = stowedCount >= 2 ? 100 : 0;
+      const dualSciBonus = stowedCount >= 2 ? (objective?.dualSampleBonus || 0) : 0;
+      const sciGain = Math.round(60 * sciMul) + dualSciBonus;
+      const totalPts = 220 + dualBonus;
+      state.score += totalPts;
+      state.telemetry.science += sciGain;
+
+      addFloatText(
+        state.lander.padX - state.lunarCam.x,
+        state.lander.padY - state.lunarCam.y - 125,
+        `${flavor.shortLabel.toUpperCase()} BOARDED! +${totalPts}⭐`,
+        '#4ade80'
+      );
+      showMissionToast(
+        `${flavor.shortLabel} Stowed`,
+        `${flavor.yieldText} (+${sciGain} Science${dualBonus > 0 ? ', Dual-Rover Bonus' : ''}).`
+      );
+      logBlackBox(
+        'STAGE 3B',
+        `${dualBonus > 0 ? 'Dual-rover' : 'Primary'} ${flavor.shortLabel} stowed aboard Ascent Capsule (${flavor.yieldText}${dualBonus > 0 ? ', +100 dual bonus' : ''}).`,
+        'good'
+      );
+      playSuccessChord();
+      updateBottomHUD();
+      setTimeout(() => {
+        if (state.stage === 'STAGE3B' && onNextStage) onNextStage();
+      }, 1000);
+    } else if (stowedCount >= 2 && (state.samplesCollectedCount || 0) < 2) {
+      state.samplesCollectedCount = 2;
+      const dualSciBonus = objective?.dualSampleBonus || 0;
+      state.score += 100;
+      state.telemetry.science += dualSciBonus;
+
+      addFloatText(
+        state.lander.padX - state.lunarCam.x,
+        state.lander.padY - state.lunarCam.y - 145,
+        'DUAL-ROVER BONUS CORE STOWED! +100⭐',
+        '#fde047'
+      );
+      showMissionToast('Dual-Rover Bonus', `2/2 cores stowed (${flavor.yieldText}).`);
+      logBlackBox('STAGE 3B', `Second rover stowed backup ${flavor.shortLabel} (${flavor.yieldText}, +100 dual bonus).`, 'good');
+      playSuccessChord();
+      updateBottomHUD();
+    }
   }
 }
 
@@ -424,10 +562,14 @@ function updateSingleRover(rv, input, targetCrater, dt) {
       rv.hasSample = true;
       rv.drilling = false;
       const sciMul = state.missionChoices?.scienceMul || 1;
+      const extractedCount = (state.rover.hasSample ? 1 : 0) + (state.rover2.hasSample ? 1 : 0);
+      const flavor = getObjectiveSampleFlavor(state.selectedObjective, extractedCount, sciMul);
+      state.sampleYieldText = flavor.yieldText;
       state.score += 150 + (tethered ? 40 : 0);
-      state.telemetry.science += 45 * sciMul;
-      addFloatText(rv.x - state.lunarCam.x, rv.y - state.lunarCam.y - 62, `${rv.id} EXTRACTED CORE SAMPLE! +150⭐`, '#4ade80');
-      showMissionToast('Core Extracted', `${rv.id} (+${45 * sciMul} Science) — return to Lander!`);
+      state.telemetry.science += Math.round(45 * sciMul);
+      addFloatText(rv.x - state.lunarCam.x, rv.y - state.lunarCam.y - 62, `${rv.id} EXTRACTED ${flavor.shortLabel.toUpperCase()}! +150⭐`, '#4ade80');
+      showMissionToast(`${flavor.shortLabel} Extracted`, `${rv.id}: ${flavor.yieldText} (+${Math.round(45 * sciMul)} Science). Return to Lander!`);
+      logBlackBox('STAGE 3B', `${rv.id} drilled ${flavor.shortLabel} at Point B Crater (${flavor.yieldText}).`, 'good');
       playSuccessChord();
     }
   } else {
@@ -571,8 +713,13 @@ function updateCompanionRoverAI(rv, targetCrater, dt) {
       rv.hasSample = true;
       rv.drilling = false;
       rv.armAnim = 0;
+      const sciMul = state.missionChoices?.scienceMul || 1;
+      const extractedCount = (state.rover.hasSample ? 1 : 0) + (state.rover2.hasSample ? 1 : 0);
+      const flavor = getObjectiveSampleFlavor(state.selectedObjective, extractedCount, sciMul);
+      state.sampleYieldText = flavor.yieldText;
       state.score += 140;
-      addFloatText(rv.x - state.lunarCam.x, rv.y - state.lunarCam.y - 55, 'LTV-2 COLLECTED BACKUP CORE! +140⭐', '#38bdf8');
+      addFloatText(rv.x - state.lunarCam.x, rv.y - state.lunarCam.y - 55, `LTV-2 COLLECTED ${flavor.shortLabel.toUpperCase()}! +140⭐`, '#38bdf8');
+      logBlackBox('STAGE 3B', `LTV-2 collected backup ${flavor.shortLabel} (${flavor.yieldText}).`, 'good');
     }
   }
 
@@ -639,9 +786,10 @@ export function updateStage3B(dt, onNextStage) {
   state.lunarCam.x += (camTargetX - state.lunarCam.x) * Math.min(1, dt * 6);
   state.lunarCam.y += (camTargetY - state.lunarCam.y) * Math.min(1, dt * 6);
 
-  if ((state.rover.hasSample && Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 92) ||
-      (state.rover2.hasSample && Math.hypot(state.rover2.x - state.lander.padX, state.rover2.y - state.lander.padY) < 92)) {
-    handleStage3BInteract(state.rover.hasSample ? state.rover : state.rover2, onNextStage);
+  const r1AtPadWithNew = state.rover.hasSample && !state.rover.sampleStowed && Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 92;
+  const r2AtPadWithNew = state.rover2.hasSample && !state.rover2.sampleStowed && Math.hypot(state.rover2.x - state.lander.padX, state.rover2.y - state.lander.padY) < 92;
+  if (r1AtPadWithNew || r2AtPadWithNew) {
+    handleStage3BInteract(r1AtPadWithNew ? state.rover : state.rover2, onNextStage);
   }
 
   updateBottomHUD();
@@ -662,16 +810,17 @@ export function startStage3CMoonLaunch() {
     velocityY: 0,
     thrusting: false,
     tilt: 0,
-    velTilt: 0,
+    velTilt: (Math.random() < 0.5 ? -1 : 1) * 0.16,
     progress: 0,
-    teiBurnDone: false
+    teiBurnDone: false,
+    teiQuality: 'PENDING'
   };
 
   setStageBanner(
-    'STAGE 3C — MOON LAUNCH',
-    'Lunar Ascent & Translunar Injection (Moon → Earth)',
-    'Hold W/SPACE to blast the Ascent Stage off the Descent Base, trim with A/D, and fire TEI Burn!',
-    `<kbd>W</kbd>/<kbd>SPACE</kbd> Lunar Ascent Thrust &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Trajectory Trim &nbsp;•&nbsp; <kbd>SPACE</kbd> TEI Burn`,
+    'STAGE 3C: MOON LAUNCH',
+    'Lunar Ascent & Return Burn',
+    'Hold W/SPACE to lift off from the lander base, steer with A/D, and press SPACE in the green TEI burn window.',
+    `<kbd>W</kbd>/<kbd>SPACE</kbd> Ascent Thrust &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Steer &nbsp;•&nbsp; <kbd>SPACE</kbd> TEI Burn`,
     { showTickets: false, showSkip: false, showNext: true }
   );
   playTone(240, 'sawtooth', 0.35, 0.13);
@@ -679,17 +828,34 @@ export function startStage3CMoonLaunch() {
 }
 
 export function handleStage3CTEIBurn() {
-  if (state.moonLaunch.phase === 'TEI_BURN' && !state.moonLaunch.teiBurnDone) {
-    state.moonLaunch.teiBurnDone = true;
-    state.score += 100;
-    addFloatText(LOGICAL_W / 2, 210, 'TRANSLUNAR INJECTION LOCKED! +100⭐', '#4ade80');
-    logBlackBox('STAGE 3C', 'Ascent Stage cleared lunar gravity & executed nominal TEI burn.', 'good');
-    playTone(660, 'triangle', 0.22, 0.14);
+  const ml = state.moonLaunch;
+  if (ml.phase === 'TEI_BURN' && !ml.teiBurnDone) {
+    ml.teiBurnDone = true;
+    const inGreenWindow = ml.progress >= 0.36 && ml.progress <= 0.68;
+    if (inGreenWindow) {
+      ml.teiQuality = 'PRECISION';
+      state.missionChoices.teiQuality = 'PRECISION';
+      state.score += 140;
+      addFloatText(LOGICAL_W / 2, 200, '🎯 PRECISION TEI BURN LOCKED! +140⭐ (WIDER EARTH CORRIDOR!)', '#fde047');
+      logBlackBox('STAGE 3C', 'Precision Translunar Injection burn widened Stage 4 Earth reentry corridor.', 'good');
+      playTone(760, 'triangle', 0.25, 0.15);
+    } else {
+      ml.teiQuality = 'NOMINAL';
+      state.missionChoices.teiQuality = 'NOMINAL';
+      state.score += 90;
+      addFloatText(LOGICAL_W / 2, 200, 'TRANSLUNAR INJECTION LOCKED! +90⭐', '#4ade80');
+      logBlackBox('STAGE 3C', 'Ascent Stage cleared lunar gravity & executed TEI burn.', 'info');
+      playTone(640, 'triangle', 0.22, 0.14);
+    }
   }
 }
 
 export function updateStage3C(dt, onNextStage) {
   if (state.stageTimer <= 0) {
+    if (!state.moonLaunch.teiBurnDone) {
+      state.missionChoices.teiQuality = 'LATE';
+      logBlackBox('STAGE 3C', 'Missed manual TEI burn window (narrowed Earth entry corridor).', 'warn');
+    }
     onNextStage();
     return;
   }
@@ -704,11 +870,16 @@ export function updateStage3C(dt, onNextStage) {
       ml.velocityY = Math.max(18, ml.velocityY - 22 * dt);
     }
 
-    if (state.keys['KeyA'] || state.keys['ArrowLeft']) ml.velTilt -= 1.4 * dt;
-    if (state.keys['KeyD'] || state.keys['ArrowRight']) ml.velTilt += 1.4 * dt;
+    ml.velTilt += Math.sin(performance.now() * 0.0031) * 0.48 * dt;
+    if (state.keys['KeyA'] || state.keys['ArrowLeft']) ml.velTilt -= 1.55 * dt;
+    if (state.keys['KeyD'] || state.keys['ArrowRight']) ml.velTilt += 1.55 * dt;
     if (state.coopMode === '4P_AI' || state.coopMode === 'NET_4P') ml.velTilt -= ml.tilt * 0.6 * dt;
     ml.tilt = Math.max(-0.45, Math.min(0.45, ml.tilt + ml.velTilt * dt));
     ml.velTilt *= 0.94;
+
+    if (ml.thrusting && Math.abs(ml.tilt) <= 0.2) {
+      state.score += Math.round(dt * 18);
+    }
 
     ml.capsuleY -= ml.velocityY * dt;
 
@@ -727,13 +898,17 @@ export function updateStage3C(dt, onNextStage) {
     if (ml.capsuleY <= (state.lander.padY || 730) - 420) {
       ml.phase = 'TEI_BURN';
       ml.progress = 0;
-      addFloatText(LOGICAL_W / 2, 160, 'LUNAR ORBIT CLEARED! FIRE [SPACE] FOR EARTH TRANSFER!', '#38bdf8');
+      addFloatText(LOGICAL_W / 2, 160, 'LUNAR ORBIT CLEARED! TIME [SPACE] IN GREEN TEI WINDOW!', '#38bdf8');
       playTone(540, 'triangle', 0.16, 0.12);
     }
   } else if (ml.phase === 'TEI_BURN') {
     const speed = ml.teiBurnDone ? 0.34 : 0.2;
     ml.progress += speed * dt;
     if (ml.progress >= 1) {
+      if (!ml.teiBurnDone) {
+        state.missionChoices.teiQuality = 'LATE';
+        logBlackBox('STAGE 3C', 'Late automated TEI burn narrowed Stage 4 Earth entry corridor.', 'warn');
+      }
       onNextStage();
       return;
     }
@@ -852,6 +1027,11 @@ function drawLunarCratersAndPad(ctx) {
   ctx.font = 'bold 12px Fredoka, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('POINT A: LANDING BASE', px, py + 58);
+  if (state.lander?.targetSiteName) {
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 10.5px Fredoka, sans-serif';
+    ctx.fillText(state.lander.targetSiteName.toUpperCase(), px, py + 72);
+  }
 }
 
 function drawLunarRadarMap(ctx) {
@@ -1293,13 +1473,109 @@ export function drawStage3B(ctx) {
     }
   }
 
-  if (anySample) {
+  if (
+    state.lander.hardLandingPenalty &&
+    !state.lander.shockRepaired &&
+    !anySample &&
+    Math.hypot(state.rover.x - state.lander.padX, state.rover.y - state.lander.padY) < 130
+  ) {
+    ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('🔧 [SPACE] REPAIR LANDING SHOCK (+28Wh BATTERY)', state.lander.padX, state.lander.padY - 122);
+  } else if (anySample) {
     ctx.fillStyle = '#4ade80'; ctx.font = 'bold 13px Fredoka, sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('⬇️ BOARD ROCKET FOR MOON LAUNCH! ⬇️', state.lander.padX, state.lander.padY - 122);
   }
 
   drawLunarParticles(ctx);
   ctx.restore();
+
+  // Top-Left Lunar EVA Mission Checklist Card (screen space)
+  const scannedCount = state.scienceNodes.filter(s => s.scanned).length;
+  const doneEvaCount = state.evaTasks.filter(t => t.done).length;
+  const needsRepair = state.lander.hardLandingPenalty && !state.lander.shockRepaired;
+  const checklistRows = [
+    { done: scannedCount === state.scienceNodes.length, text: `1. 🔬 Science Ridges: ${scannedCount}/${state.scienceNodes.length} Scanned` },
+    { done: doneEvaCount === state.evaTasks.length,     text: `2. 🛠️ EVA Instruments: ${doneEvaCount}/${state.evaTasks.length} Online` },
+    { done: anySample,                                  text: `3. 🧪 Point B Crater Core: ${anySample ? 'EXTRACTED ✅' : 'Hold [SPACE] at Crater'}` },
+    { done: state.sampleCollected,                      text: `4. 🚀 Point A Rocket: ${anySample ? 'Drive Back & [SPACE]!' : 'Awaiting Core Sample'}` }
+  ];
+  if (needsRepair) {
+    checklistRows.unshift({ done: false, warn: true, text: '🔧 Lander Pad: [SPACE] Repair Shock (-28Wh)' });
+  }
+  const cardH = 38 + checklistRows.length * 20 + 10;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+  ctx.strokeStyle = anySample ? '#4ade80' : '#38bdf8';
+  ctx.lineWidth = 2.2;
+  ctx.beginPath(); ctx.roundRect(14, 14, 304, cardH, 12); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = anySample ? '#4ade80' : '#38bdf8';
+  ctx.font = 'bold 12px Fredoka, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('LUNAR EVA MISSION CHECKLIST', 26, 34);
+  checklistRows.forEach((row, idx) => {
+    ctx.fillStyle = row.warn ? '#fbbf24' : row.done ? '#4ade80' : '#e2e8f0';
+    ctx.font = row.done ? '600 11px Fredoka, sans-serif' : 'bold 11px Fredoka, sans-serif';
+    ctx.fillText(row.text, 26, 54 + idx * 20);
+  });
+
+  // Off-Screen Directional Waypoint Arrows for Lunar EVA Objectives
+  const evaWaypoints = [];
+  if (anySample) {
+    evaWaypoints.push({ x: state.lander.padX, y: state.lander.padY, label: '🚀 BOARD ROCKET', col: '#4ade80' });
+  } else {
+    if (targetCrater) {
+      evaWaypoints.push({ x: targetCrater.x, y: targetCrater.y, label: '🧪 POINT B CRATER', col: '#fde047' });
+    }
+    const nextEva = state.evaTasks.find(t => !t.done);
+    if (nextEva) {
+      evaWaypoints.push({ x: nextEva.x, y: nextEva.y, label: `🛠️ ${nextEva.name.toUpperCase()}`, col: '#f97316' });
+    }
+    const nextSci = state.scienceNodes.find(s => !s.scanned);
+    if (nextSci) {
+      evaWaypoints.push({ x: nextSci.x, y: nextSci.y, label: `🔬 ${nextSci.name.toUpperCase()}`, col: '#a78bfa' });
+    }
+  }
+
+  for (const wp of evaWaypoints) {
+    const sx = wp.x - state.lunarCam.x;
+    const sy = wp.y - state.lunarCam.y;
+    if (sx >= 65 && sx <= LOGICAL_W - 65 && sy >= 65 && sy <= LOGICAL_H - 75) continue;
+
+    const cx = LOGICAL_W / 2, cy = LOGICAL_H / 2;
+    const ang = Math.atan2(sy - cy, sx - cx);
+    const padX = LOGICAL_W / 2 - 98;
+    const padY = LOGICAL_H / 2 - 82;
+    const cosA = Math.cos(ang), sinA = Math.sin(ang);
+    const tX = Math.abs(cosA) > 0.001 ? padX / Math.abs(cosA) : 9999;
+    const tY = Math.abs(sinA) > 0.001 ? padY / Math.abs(sinA) : 9999;
+    const tEdge = Math.min(tX, tY);
+    const ax = cx + cosA * tEdge;
+    const ay = cy + sinA * tEdge;
+    const distM = Math.round(Math.hypot(wp.x - state.rover.x, wp.y - state.rover.y));
+
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.strokeStyle = wp.col;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.roundRect(-68, -17, 136, 34, 10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = wp.col;
+    ctx.font = 'bold 10px Fredoka, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(wp.label, 0, -2);
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = 'bold 9.5px JetBrains Mono, monospace';
+    ctx.fillText(`${distM}m`, 0, 11);
+
+    ctx.rotate(ang);
+    ctx.fillStyle = wp.col;
+    ctx.beginPath();
+    ctx.moveTo(80, 0);
+    ctx.lineTo(69, -7);
+    ctx.lineTo(69, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
 
   drawLunarRadarMap(ctx);
 
@@ -1345,8 +1621,28 @@ export function drawStage3C(ctx) {
     drawLunarParticles(ctx);
     ctx.restore();
 
-    ctx.fillStyle = '#fde047'; ctx.font = 'bold 15px Fredoka, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('HOLD [W] OR [SPACE] FOR LUNAR ASCENT THRUST! 🚀', LOGICAL_W / 2, 72);
+    // Lunar Ascent Pitch Corridor Bar (Top Center)
+    const barW = 340, bx = (LOGICAL_W - barW) / 2, by = 44;
+    ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#475569'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(bx, by, barW, 22, 10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.35)';
+    ctx.fillRect(bx + barW * 0.32, by + 2, barW * 0.36, 18);
+    const markerX = bx + barW / 2 + ml.tilt * 280;
+    ctx.fillStyle = Math.abs(ml.tilt) <= 0.2 ? '#4ade80' : '#f87171';
+    ctx.beginPath(); ctx.arc(markerX, by + 11, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('LUNAR ASCENT TRIM: [A] LEFT • [D] RIGHT | HOLD [W/SPACE] THRUST', LOGICAL_W / 2, by - 8);
+
+    // Orbital Insertion Climb Progress Gauge (Left Side)
+    const climbPct = Math.max(0, Math.min(1, ((state.lander.padY || 730) - ml.capsuleY) / 420));
+    const gx = 92, gy = 140, gw = 28, gh = 260;
+    ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(gx, gy, gw, gh, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(gx + 3, gy + gh - 3 - (gh - 6) * climbPct, gw - 6, (gh - 6) * climbPct);
+    ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 11px Fredoka, sans-serif';
+    ctx.fillText('ORBIT', gx + gw / 2, gy - 8);
+    ctx.fillText(`${Math.round(climbPct * 100)}%`, gx + gw / 2, gy + gh + 18);
   } else {
     ctx.fillStyle = '#050811';
     ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
@@ -1382,6 +1678,17 @@ export function drawStage3C(ctx) {
     ctx.beginPath(); ctx.moveTo(230, 340); ctx.quadraticCurveTo(550, 210, 825, 305); ctx.stroke();
     ctx.setLineDash([]);
 
+    // Highlight Optimal Green TEI Burn Window on trajectory arc (t = 0.36 .. 0.68)
+    ctx.strokeStyle = 'rgba(74, 222, 128, 0.85)';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    for (let st = 0.36; st <= 0.68; st += 0.02) {
+      const wx = (1 - st) * (1 - st) * 230 + 2 * (1 - st) * st * 550 + st * st * 825;
+      const wy = (1 - st) * (1 - st) * 340 + 2 * (1 - st) * st * 210 + st * st * 305;
+      if (st === 0.36) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+    }
+    ctx.stroke();
+
     const t = ml.progress;
     const cx = (1 - t) * (1 - t) * 230 + 2 * (1 - t) * t * 550 + t * t * 825;
     const cy = (1 - t) * (1 - t) * 340 + 2 * (1 - t) * t * 210 + t * t * 305;
@@ -1397,10 +1704,19 @@ export function drawStage3C(ctx) {
     ctx.restore();
 
     if (!ml.teiBurnDone) {
-      ctx.fillStyle = '#f97316';
-      ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 200, 65, 400, 42, 14); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka, sans-serif';
-      ctx.fillText('PRESS [SPACE] FOR EARTH INJECTION BURN!', LOGICAL_W / 2, 92);
+      const inTeiWin = ml.progress >= 0.36 && ml.progress <= 0.68;
+      ctx.fillStyle = inTeiWin ? '#16a34a' : '#f97316';
+      ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 220, 52, 440, 56, 14); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 15px Fredoka, sans-serif';
+      ctx.fillText(
+        inTeiWin ? '🟢 IN GREEN TEI WINDOW: PRESS [SPACE]!' : 'WAIT FOR GREEN TEI WINDOW, THEN PRESS [SPACE]!',
+        LOGICAL_W / 2,
+        75
+      );
+      const tbx = LOGICAL_W / 2 - 170, tby = 86, tbw = 340, tbh = 12;
+      ctx.fillStyle = '#0f172a'; ctx.fillRect(tbx, tby, tbw, tbh);
+      ctx.fillStyle = 'rgba(74, 222, 128, 0.65)'; ctx.fillRect(tbx + tbw * 0.36, tby + 1, tbw * 0.32, tbh - 2);
+      ctx.fillStyle = '#fde047'; ctx.fillRect(tbx + tbw * ml.progress - 3, tby - 2, 6, tbh + 4);
     }
     drawLunarParticles(ctx);
   }

@@ -1,4 +1,4 @@
-import { SCENARIOS, LAUNCH_VEHICLES } from './config.js';
+import { SCENARIOS, LAUNCH_VEHICLES, SCIENCE_OBJECTIVES, CML_LEVELS, RECIPES } from './config.js';
 
 export const state = {
   stage: 'MENU', // MENU, TRANSITION, STAGE1, STAGE1B, STAGE2, STAGE3A, STAGE3B, STAGE3C, STAGE4, STAGE5
@@ -7,6 +7,11 @@ export const state = {
   score: 0,
   shippedCount: 0,
   shippedModules: { sensor_pod: 0, power_pack: 0, comms_relay: 0, booster_core: 0 },
+
+  selectedObjective: 'polar_volatiles',
+  currentCML: 2,
+  scienceAuditPassed: false,
+  scienceAuditLog: [],
 
   selectedScenario: 'standard',
   selectedVehicle: 'sls',
@@ -28,7 +33,7 @@ export const state = {
 
   // Scene Transition & Decisions
   transition: null,
-  tutorial: { active: true, step: 0, skipped: false },
+  tutorial: { active: true, step: 0, paused: true, skipped: false },
   dilemma: null,
   screenShake: 0,
   missionChoices: {},
@@ -61,6 +66,7 @@ export const state = {
   stage2Cam: { x: 0, y: 0 },
   stage2Walls: [],
   stage2Doors: [],
+  mccResult: { completed: false, bPlaneMissKm: 120, nominalCapture: false, fuelPenaltyPct: 18, propellantBurnedKg: 0 },
 
   // Stage 3A / 3B / 3C (Roamable 2.5D Lunar Plain)
   lander: {},
@@ -75,6 +81,8 @@ export const state = {
   lunarCam: { x: 0, y: 0 },
   landingGrade: 'Nominal',
   sampleCollected: false,
+  samplesCollectedCount: 0,
+  sampleYieldText: '',
   moonLaunch: {},
 
   // Stage 4
@@ -93,6 +101,48 @@ export function getVehicle() {
   return LAUNCH_VEHICLES[state.selectedVehicle] || LAUNCH_VEHICLES.sls;
 }
 
+export function getObjective() {
+  return SCIENCE_OBJECTIVES[state.selectedObjective] || SCIENCE_OBJECTIVES.polar_volatiles;
+}
+
+export function getCmlLevel(level = state.currentCML) {
+  return CML_LEVELS[level] || CML_LEVELS[2];
+}
+
+export function auditScienceBaselineRequirements() {
+  const objective = getObjective();
+  if (!objective) {
+    state.scienceAuditPassed = true;
+    state.currentCML = 4;
+    state.scienceAuditLog = [];
+    return { passed: true, missing: [], cml: 4, auditText: 'CML 4 Point Design: Baseline requirements verified.' };
+  }
+
+  const missing = objective.requiredModules.filter(
+    (req) => !(state.shippedModules?.[req] > 0)
+  );
+  const passed = missing.length === 0;
+  const titleFor = (id) => RECIPES.find((r) => r.id === id)?.title || id;
+
+  state.scienceAuditPassed = passed;
+  state.currentCML = passed ? 4 : 3;
+  state.scienceAuditLog = passed
+    ? [`CML 4 Point Design verified for ${objective.title}: all required payloads built.`]
+    : missing.map((mod) => `Missing mandatory payload: ${titleFor(mod)} (${mod}) required for ${objective.title}`);
+
+  const missingLabels = missing.map(titleFor).join(', ');
+  const auditText = passed
+    ? `CML 4 Point Design: All baseline science requirements met for ${objective.title}!`
+    : `CML 3 Trade Warning: Missing ${missingLabels}. ${objective.failurePenalty || 'Mission science yield will be degraded.'}`;
+
+  return {
+    passed,
+    missing,
+    cml: state.currentCML,
+    auditText
+  };
+}
+
 export function logBlackBox(stageTag, text, kind = 'info') {
   state.blackBoxEvents.push({ stage: stageTag, text, kind });
 }
@@ -100,17 +150,26 @@ export function logBlackBox(stageTag, text, kind = 'info') {
 export function resetRunState() {
   const scen = getScenario();
   const veh = getVehicle();
+  const obj = getObjective();
 
   state.score = 0;
   state.shippedCount = 0;
   state.shippedModules = { sensor_pod: 0, power_pack: 0, comms_relay: 0, booster_core: 0 };
+  state.currentCML = 2;
+  state.scienceAuditPassed = false;
+  state.scienceAuditLog = [];
   state.overheatedParts = 0;
   state.blackBoxEvents = [];
   state.transition = null;
   state.dilemma = null;
   state.screenShake = 0;
   state.missionChoices = {};
-  state.tutorial = { active: !state.tutorial?.skipped, step: 0, skipped: Boolean(state.tutorial?.skipped) };
+  state.tutorial = {
+    active: !state.tutorial?.skipped,
+    step: 0,
+    paused: !state.tutorial?.skipped,
+    skipped: Boolean(state.tutorial?.skipped)
+  };
 
   state.telemetry = {
     mass: 380,
@@ -137,9 +196,18 @@ export function resetRunState() {
   state.stage1Combo = 0;
   state.stage1ComboTimer = 0;
   state.stage2Cam = { x: 0, y: 0 };
+  state.mccResult = {
+    completed: false,
+    bPlaneMissKm: 120,
+    nominalCapture: false,
+    fuelPenaltyPct: 18,
+    propellantBurnedKg: 0
+  };
   state.lunarCam = { x: 0, y: 0 };
   state.landingGrade = 'Nominal';
   state.sampleCollected = false;
+  state.samplesCollectedCount = 0;
+  state.sampleYieldText = '';
 
-  logBlackBox('PRE-LAUNCH', `${scen.name} • ${veh.name} (${veh.maxMass} kg cap, $${state.telemetry.budget}M ops budget)`, 'info');
+  logBlackBox('PRE-LAUNCH', `${obj.title} (${obj.targetLocation}) • ${scen.name} • ${veh.name} (${veh.maxMass} kg cap, $${state.telemetry.budget}M ops budget)`, 'info');
 }

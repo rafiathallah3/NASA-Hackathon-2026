@@ -19,6 +19,11 @@ export function startStage1B() {
     separated: false,
     sepWindowOpen: false,
     boosterDropY: 0,
+    srbSpreadX: 0,
+    srbRot: 0,
+    windDir: Math.random() < 0.5 ? -1 : 1,
+    windTimer: 2.8,
+    windActive: false,
     padScroll: 0,
     integrity: 100,
     aborted: false,
@@ -29,10 +34,10 @@ export function startStage1B() {
   state.floatingTexts = [];
 
   setStageBanner(
-    'STAGE 1B — LIFTOFF',
-    '4P Rocket Liftoff & Stage Separation',
-    'P1 holds W/S Vertical Thrust & A/D Stabilizer; P2-P4 assist RCS trim & decouple at T+9s!',
-    `<kbd>W</kbd>/<kbd>S</kbd> Vertical Thrust &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Stabilizer &nbsp;•&nbsp; <kbd>SPACE</kbd> Stage Separation`,
+    'STAGE 1B: LIFTOFF',
+    'Rocket Liftoff & Stage Separation',
+    'Hold W/S for thrust, steer A/D into the green zone, and hit SPACE when the staging window opens.',
+    `<kbd>W</kbd>/<kbd>S</kbd> Thrust &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Stabilizer &nbsp;•&nbsp; <kbd>SPACE</kbd> Stage Separation`,
     { showTickets: false, showSkip: false, showNext: true }
   );
   playTone(220, 'sawtooth', 0.4, 0.14);
@@ -44,12 +49,32 @@ export function handleStage1BSeparation() {
   state.ascent.inputTouched = true;
   if (state.ascent.sepWindowOpen && !state.ascent.separated) {
     state.ascent.separated = true;
-    state.screenShake = 0.2;
-    state.score += 90;
-    state.telemetry.fuel = Math.min(125, state.telemetry.fuel + 15);
-    addFloatText(LOGICAL_W / 2, 260, 'STAGE SEPARATION NOMINAL! +90⭐', '#4ade80');
-    logBlackBox('STAGE 1B', 'Clean booster stage separation added +15% propellant reserve.', 'good');
-    playTone(660, 'triangle', 0.2, 0.14);
+    state.screenShake = 0.24;
+    const isPerfect = Math.abs(state.stageTimer - 3.5) <= 1.1;
+    const pts = isPerfect ? 130 : 90;
+    const fuelGain = isPerfect ? 18 : 12;
+    state.score += pts;
+    state.telemetry.fuel = Math.min(125, state.telemetry.fuel + fuelGain);
+    addFloatText(
+      LOGICAL_W / 2,
+      250,
+      isPerfect ? `⚡ PERFECT MAX-Q STAGING! +${pts}⭐ (+${fuelGain}% FUEL)` : `STAGE SEPARATION NOMINAL! +${pts}⭐`,
+      isPerfect ? '#fde047' : '#4ade80'
+    );
+    logBlackBox('STAGE 1B', `${isPerfect ? 'Precision Max-Q' : 'Nominal'} booster stage separation added +${fuelGain}% propellant reserve.`, 'good');
+    for (let i = 0; i < 18; i++) {
+      const ang = (i / 18) * Math.PI * 2;
+      state.lunarParticles.push({
+        x: LOGICAL_W / 2 + Math.cos(ang) * 24,
+        y: state.ascent.rocketY + 6,
+        vx: Math.cos(ang) * (95 + Math.random() * 65),
+        vy: Math.sin(ang) * 45 + 30,
+        life: 0.55,
+        size: 3.5 + Math.random() * 3,
+        color: i % 2 === 0 ? '#fde047' : '#38bdf8'
+      });
+    }
+    playTone(isPerfect ? 780 : 660, 'triangle', 0.22, 0.14);
   }
 }
 
@@ -68,7 +93,7 @@ function triggerStage1BAbort(reason, onAbortToHangar) {
     modal.classList.remove('hidden');
     mc.innerHTML = `
       <div style="text-align:center;">
-        <h2 style="color:#f87171;margin:0 0 8px;">Launch Abort — Game Over</h2>
+        <h2 style="color:#f87171;margin:0 0 8px;">Launch Abort: Game Over</h2>
         <p class="sub" style="margin-bottom:16px;">${reason}</p>
         <div class="config-panel" style="text-align:left;margin-bottom:20px;">
           <div><b style="color:#fde047;">[W / S]</b> Keep the orange Thrust bar inside the <b style="color:#4ade80;">GREEN</b> vertical band.</div>
@@ -126,7 +151,14 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
   a.padScroll += (35 + a.thrust * 120) * dt;
 
   const instability = Math.max(0.28, 0.85 - state.shippedModules.booster_core * 0.14 - veh.stabilityBonus + overloadPenalty);
-  a.velTilt += (Math.sin(performance.now() * 0.0032) * instability + 0.16 * Math.cos(performance.now() * 0.0017)) * dt;
+  a.windTimer -= dt;
+  if (a.windTimer <= 0) {
+    a.windActive = !a.windActive;
+    a.windDir = Math.random() < 0.5 ? -1 : 1;
+    a.windTimer = a.windActive ? 2.4 : 2.1;
+  }
+  const windTorque = a.windActive ? a.windDir * 0.42 * instability : 0;
+  a.velTilt += (Math.sin(performance.now() * 0.0032) * instability + 0.16 * Math.cos(performance.now() * 0.0017) + windTorque) * dt;
   if (state.keys['KeyA'] || state.keys['ArrowLeft']) a.velTilt -= 1.85 * dt;
   if (state.keys['KeyD'] || state.keys['ArrowRight']) a.velTilt += 1.85 * dt;
   if (state.coopMode === '4P_AI' || state.coopMode === 'NET_4P') a.velTilt -= a.tilt * 0.18 * dt;
@@ -151,10 +183,10 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
 
   if (a.integrity <= 0) {
     const reason = a.thrust < 0.25
-      ? 'Engine thrust dropped below minimum liftoff velocity — launch vehicle stalled!'
+      ? 'Engine thrust dropped below minimum liftoff speed. The launch vehicle stalled.'
       : Math.abs(a.tilt) > 0.34
-        ? 'Vehicle pitched violently off the ascent corridor (Max-Q Structural Breakup)!'
-        : 'Excessive Max-Q aerodynamic structural overload!';
+        ? 'Vehicle pitched off the ascent corridor (Max-Q Structural Breakup).'
+        : 'Excessive Max-Q aerodynamic overload.';
     triggerStage1BAbort(reason, onAbortToHangar);
     return;
   }
@@ -179,7 +211,11 @@ export function updateStage1B(dt, onNextStage, onAbortToHangar) {
   else if (thrustMatch || pitchMatch) state.score += Math.round(dt * 10);
 
   a.sepWindowOpen = (state.stageTimer <= 5.5 && state.stageTimer >= 1.5);
-  if (a.separated) a.boosterDropY += dt * 120;
+  if (a.separated) {
+    a.boosterDropY += dt * 120;
+    a.srbSpreadX += dt * 55;
+    a.srbRot += dt * 0.65;
+  }
 
   // Exhaust smoke puffs
   if (Math.random() < 0.7) {
@@ -281,18 +317,50 @@ export function drawStage1B(ctx) {
   ctx.fillStyle = '#fde047'; ctx.font = 'bold 13px Fredoka, sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('STABILIZER TRIM: [A] LEFT  •  [D] RIGHT', LOGICAL_W / 2, by - 10);
 
+  // Jet Stream Wind Shear Gusts (Top-Right Indicator + Atmospheric Streak Lines)
+  if (a.windActive) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(186, 230, 253, 0.28)';
+    ctx.lineWidth = 2;
+    const tShift = (performance.now() * 0.42 * a.windDir + LOGICAL_W * 4) % LOGICAL_W;
+    for (let i = 0; i < 9; i++) {
+      const wy = 110 + i * 44;
+      const wx = (tShift + i * 137) % LOGICAL_W;
+      ctx.beginPath();
+      ctx.moveTo(wx, wy);
+      ctx.lineTo(wx + a.windDir * 68, wy);
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(LOGICAL_W - 252, 18, 234, 52, 12); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 11.5px Fredoka, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(a.windDir > 0 ? '🌬️ WIND SHEAR ➡️ (PUSHING RIGHT)' : '⬅️ WIND SHEAR 🌬️ (PUSHING LEFT)', LOGICAL_W - 135, 38);
+    ctx.fillStyle = '#fde047'; ctx.font = 'bold 11px Fredoka, sans-serif';
+    ctx.fillText(a.windDir > 0 ? 'Hold [A] to Counter!' : 'Hold [D] to Counter!', LOGICAL_W - 135, 56);
+    ctx.restore();
+  }
+
   if (a.warningMsg) {
     ctx.fillStyle = '#dc2626';
-    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 205, 146, 410, 36, 12); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 205, 152, 410, 36, 12); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 15px Fredoka, sans-serif';
-    ctx.fillText(a.warningMsg, LOGICAL_W / 2, 169);
+    ctx.fillText(a.warningMsg, LOGICAL_W / 2, 175);
   }
 
   if (a.sepWindowOpen && !a.separated) {
-    ctx.fillStyle = '#f97316';
-    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 175, 96, 350, 42, 14); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Fredoka, sans-serif';
-    ctx.fillText('PRESS [SPACE] FOR STAGE SEPARATION!', LOGICAL_W / 2, 123);
+    const winProg = Math.max(0, Math.min(1, (5.5 - state.stageTimer) / 4.0));
+    const inSweetSpot = Math.abs(state.stageTimer - 3.5) <= 1.1;
+    ctx.fillStyle = inSweetSpot ? '#16a34a' : '#f97316';
+    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 190, 90, 380, 54, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka, sans-serif';
+    ctx.fillText(inSweetSpot ? '⚡ PERFECT MAX-Q WINDOW: PRESS [SPACE]!' : 'PRESS [SPACE] FOR STAGE SEPARATION!', LOGICAL_W / 2, 113);
+    // Timing bar with sweet spot center zone
+    const sbx = LOGICAL_W / 2 - 150, sby = 123, sbw = 300, sbh = 11;
+    ctx.fillStyle = '#0f172a'; ctx.fillRect(sbx, sby, sbw, sbh);
+    ctx.fillStyle = 'rgba(74, 222, 128, 0.55)'; ctx.fillRect(sbx + sbw * 0.23, sby + 1, sbw * 0.54, sbh - 2);
+    ctx.fillStyle = '#fde047'; ctx.fillRect(sbx + sbw * winProg - 3, sby - 2, 6, sbh + 4);
   }
 
   // Detailed Multi-Stage Rocket
@@ -314,13 +382,26 @@ export function drawStage1B(ctx) {
   ctx.fillStyle = '#ef4444';
   ctx.beginPath(); ctx.moveTo(-21, -50); ctx.lineTo(0, -86); ctx.lineTo(21, -50); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-  // Side SRBs & Core Booster
+  // Side SRBs & Core Booster (peel outward on stage separation)
   const bOff = a.separated ? a.boosterDropY : 0;
+  const srbX = a.separated ? (a.srbSpreadX || 0) : 0;
+  const srbR = a.separated ? (a.srbRot || 0) : 0;
   ctx.fillStyle = a.separated ? '#94a3b8' : '#e2e8f0';
   ctx.beginPath(); ctx.roundRect(-23, 6 + bOff, 46, 40, 6); ctx.fill(); ctx.stroke();
+
+  ctx.save();
+  ctx.translate(-28 - srbX, 28 + bOff * 0.85);
+  ctx.rotate(-srbR);
   ctx.fillStyle = '#f97316';
-  ctx.beginPath(); ctx.roundRect(-34, 12 + bOff, 11, 34, 4); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.roundRect(23, 12 + bOff, 11, 34, 4); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(-6, -16, 11, 34, 4); ctx.fill(); ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(28 + srbX, 28 + bOff * 0.85);
+  ctx.rotate(srbR);
+  ctx.fillStyle = '#f97316';
+  ctx.beginPath(); ctx.roundRect(-5, -16, 11, 34, 4); ctx.fill(); ctx.stroke();
+  ctx.restore();
 
   ctx.restore();
 

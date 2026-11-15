@@ -3,7 +3,7 @@ import { state, getScenario, logBlackBox } from '../state.js';
 import { playTone, playSuccessChord } from '../audio.js';
 import { broadcastNet } from '../net.js';
 import { addFloatText, drawItemBadge, drawChibiEngineer, drawHardwareCanvas } from '../sprites.js';
-import { renderTicketsHUD, updateTicketBarsOnly, updateBottomHUD, setStageBanner, showMissionToast } from '../hud.js';
+import { renderTicketsHUD, updateTicketBarsOnly, updateBottomHUD, setStageBanner, showMissionToast, getActiveTargetRecipe, isProcPartReadyInHangar } from '../hud.js';
 
 export function buildStage1Map() {
   state.stations = [];
@@ -24,10 +24,7 @@ export function buildStage1Map() {
         traysCount: code === 'T' ? 4 : 0,
         hasExtinguisher: code === 'F'
       };
-      if (r === 1 && c === 7) {
-        st.item = { kind: 'tray', parts: [], touchedBy: [] };
-      }
-      if (r === 2 && c === 10) {
+      if ((r === 1 && c === 7) || (r === 4 && c === 7)) {
         st.item = { kind: 'tray', parts: [], touchedBy: [] };
       }
       state.stations.push(st);
@@ -51,46 +48,65 @@ export function spawnOrder(recipeId = null) {
 }
 
 export function skipStage1Tutorial() {
-  state.tutorial = { active: false, step: 5, skipped: true };
-  showMissionToast('Tutorial Skipped', 'Choose which NASA modules to build under your Rocket Mass & Budget caps.');
+  state.tutorial = { active: false, step: 5, paused: false, skipped: true };
+  showMissionToast('Guide Closed', 'Follow the gold target outline and floor trail to build modules.');
 }
 
 export function handleStage1CanvasClick(lx, ly) {
   if (state.stage !== 'STAGE1' || !state.tutorial?.active) return;
-  // Skip Tutorial pill top-right: x=964..1104, y=10..40
-  if (lx >= 964 && lx <= 1104 && ly >= 10 && ly <= 40) {
+  const rects = state.tutorialBtnRects || {};
+  if (rects.skip && lx >= rects.skip.x && lx <= rects.skip.x + rects.skip.w && ly >= rects.skip.y && ly <= rects.skip.y + rects.skip.h) {
     skipStage1Tutorial();
+    return;
+  }
+  if (state.tutorial.paused) {
+    state.tutorial.paused = false;
+    playTone(540, 'sine', 0.06, 0.06);
   }
 }
 
 export function initStage1() {
-  setStageBanner('', '', '', `<kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SHIFT</kbd> Dash &nbsp;•&nbsp; <kbd>SPACE</kbd> Interact &nbsp;•&nbsp; <kbd>F</kbd> Throw Part &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Crew`, {
+  setStageBanner('', '', '', `<kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> Pick / Place &nbsp;•&nbsp; <kbd>SHIFT</kbd> Dash &nbsp;•&nbsp; <kbd>F</kbd> Throw &nbsp;•&nbsp; <kbd>1-4</kbd> Crew`, {
     showTickets: true,
     showSkip: true,
     showNext: false
   });
 
   buildStage1Map();
-  state.players = CREW_ROSTER.map((cr, i) => ({
-    name: cr.id,
-    role: cr.role,
-    x: GRID_X + (i % 2 === 0 ? 4.5 : 9.5) * TILE,
-    y: GRID_Y + (2.4 + Math.floor(i / 2) * 3.1) * TILE,
-    angle: i % 2 === 0 ? 0 : Math.PI,
-    color: cr.color,
-    visor: cr.visor,
-    holding: null,
-    walk: 0,
-    cd: 0,
-    dashCd: 0,
-    dashTimer: 0,
-    dashVx: 0,
-    dashVy: 0
-  }));
+  const preferredSpots = [
+    { c: 3.5, r: 2.5, a: 0 },
+    { c: 5.5, r: 4.5, a: 0 },
+    { c: 9.5, r: 2.5, a: Math.PI },
+    { c: 10.5, r: 4.5, a: Math.PI }
+  ];
+  state.players = CREW_ROSTER.map((cr, i) => {
+    const pref = preferredSpots[i];
+    const safeTile = findNearestWalkableCell(Math.floor(pref.r), Math.floor(pref.c));
+    return {
+      name: cr.id,
+      role: cr.role,
+      x: GRID_X + (safeTile.c + 0.5) * TILE,
+      y: GRID_Y + (safeTile.r + 0.5) * TILE,
+      angle: pref.a,
+      color: cr.color,
+      visor: cr.visor,
+      holding: null,
+      walk: 0,
+      cd: 0,
+      dashCd: 0,
+      dashTimer: 0,
+      dashVx: 0,
+      dashVy: 0,
+      stuckTime: 0,
+      lastX: 0,
+      lastY: 0
+    };
+  });
 
   state.elapsedStage1 = 0;
   state.stage1Combo = 0;
   state.stage1ComboTimer = 0;
+  state.pinnedRecipeId = null;
   state.thrownItems = [];
   state.floorItems = [];
   state.stage = 'STAGE1';
@@ -103,8 +119,14 @@ export function initStage1() {
       maxTime: r.timeLimit
     });
   }
+  state.tutorial = {
+    active: !state.tutorial?.skipped,
+    step: 0,
+    paused: !state.tutorial?.skipped,
+    skipped: Boolean(state.tutorial?.skipped),
+    startShipped: state.shippedCount || 0
+  };
   renderTicketsHUD();
-  state.tutorial = { active: !state.tutorial?.skipped, step: 0, skipped: Boolean(state.tutorial?.skipped) };
   updateBottomHUD();
 }
 
@@ -260,10 +282,21 @@ export function handleStage1Interact(p) {
         state.score += pts;
         state.shippedCount++;
         state.shippedModules[rec.id]++;
+        if (state.pinnedRecipeId === rec.id) {
+          state.pinnedRecipeId = null;
+        }
         state.telemetry.power += rec.telemetry.power;
         state.telemetry.comms += rec.telemetry.comms;
         state.telemetry.science += rec.telemetry.science;
         state.telemetry.fuel = Math.min(125, state.telemetry.fuel + rec.telemetry.fuel);
+
+        const allFourBuilt = Object.values(state.shippedModules).every(cnt => cnt >= 1);
+        if (allFourBuilt && !state.missionChoices.fullStackBonus) {
+          state.missionChoices.fullStackBonus = true;
+          state.score += 150;
+          addFloatText(LOGICAL_W / 2, 160, '🚀 FULL 4-SEGMENT ROCKET INTEGRATED! +150⭐', '#fde047');
+          logBlackBox('STAGE 1A', 'All 4 core NASA segment modules integrated into payload fairing (+150⭐ bonus).', 'good');
+        }
 
         logBlackBox('STAGE 1A', `${p.name} shipped ${rec.title} (+${rec.massKg}kg, -$${rec.costM}M${coopBonus ? ', Co-Op Pass!' : ''}).`, 'good');
         showMissionToast(rec.title, rec.lesson);
@@ -381,124 +414,368 @@ export function handleStage1Interact(p) {
   }
 }
 
+function isWalkableCell(r, c) {
+  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
+  if (state.stations && state.stations.length > 0) {
+    return !state.stations.some(s => s.r === r && s.c === c);
+  }
+  return MAP_LAYOUT[r][c] === '.';
+}
+
+function findNearestWalkableCell(startR, startC) {
+  const sr = Math.max(0, Math.min(ROWS - 1, startR));
+  const sc = Math.max(0, Math.min(COLS - 1, startC));
+  if (isWalkableCell(sr, sc)) return { r: sr, c: sc };
+  const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const queue = [{ r: sr, c: sc }];
+  visited[sr][sc] = true;
+  const dirs = [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, { dr: 0, dc: -1 }, { dr: 0, dc: 1 }];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    for (const d of dirs) {
+      const nr = cur.r + d.dr;
+      const nc = cur.c + d.dc;
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || visited[nr][nc]) continue;
+      if (isWalkableCell(nr, nc)) return { r: nr, c: nc };
+      visited[nr][nc] = true;
+      queue.push({ r: nr, c: nc });
+    }
+  }
+  return { r: 3, c: 4 };
+}
+
+function pushOutOfStations(p, r = 14) {
+  p.x = Math.max(GRID_X + r, Math.min(GRID_X + COLS * TILE - r, p.x));
+  p.y = Math.max(GRID_Y + r, Math.min(GRID_Y + ROWS * TILE - r, p.y));
+
+  // If center landed inside an obstacle cell, move directly to the nearest walkable tile center
+  const curR = Math.max(0, Math.min(ROWS - 1, Math.floor((p.y - GRID_Y) / TILE)));
+  const curC = Math.max(0, Math.min(COLS - 1, Math.floor((p.x - GRID_X) / TILE)));
+  if (!isWalkableCell(curR, curC)) {
+    const free = findNearestWalkableCell(curR, curC);
+    p.x = GRID_X + (free.c + 0.5) * TILE;
+    p.y = GRID_Y + (free.r + 0.5) * TILE;
+    return;
+  }
+
+  // Otherwise resolve any hitbox overlap cleanly along minimum penetration axis
+  for (const s of state.stations) {
+    const left = s.x + 5 - r;
+    const right = s.x + TILE - 5 + r;
+    const top = s.y + 5 - r;
+    const bottom = s.y + TILE - 5 + r;
+    if (p.x > left && p.x < right && p.y > top && p.y < bottom) {
+      const candidates = [
+        { x: left, y: p.y, pen: p.x - left, nr: s.r, nc: s.c - 1 },
+        { x: right, y: p.y, pen: right - p.x, nr: s.r, nc: s.c + 1 },
+        { x: p.x, y: top, pen: p.y - top, nr: s.r - 1, nc: s.c },
+        { x: p.x, y: bottom, pen: bottom - p.y, nr: s.r + 1, nc: s.c }
+      ].filter(c => isWalkableCell(c.nr, c.nc) && c.x >= GRID_X + r && c.x <= GRID_X + COLS * TILE - r && c.y >= GRID_Y + r && c.y <= GRID_Y + ROWS * TILE - r);
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => a.pen - b.pen);
+        p.x = candidates[0].x;
+        p.y = candidates[0].y;
+      }
+    }
+  }
+}
+
 function moveStage1Player(p, vx, vy) {
   if (vx !== 0 || vy !== 0) {
     p.angle = Math.atan2(vy, vx);
     p.walk += 0.22;
   }
-  const r = 16;
+  const r = 14;
+  pushOutOfStations(p, r);
   const collides = (nx, ny) => {
     if (nx < GRID_X + r || nx > GRID_X + COLS * TILE - r) return true;
     if (ny < GRID_Y + r || ny > GRID_Y + ROWS * TILE - r) return true;
     for (const s of state.stations) {
-      if (nx + r > s.x + 4 && nx - r < s.x + TILE - 4 &&
-          ny + r > s.y + 4 && ny - r < s.y + TILE - 4) return true;
+      if (nx + r > s.x + 5 && nx - r < s.x + TILE - 5 &&
+          ny + r > s.y + 5 && ny - r < s.y + TILE - 5) return true;
     }
     return false;
   };
-  if (!collides(p.x + vx, p.y)) p.x += vx;
-  if (!collides(p.x, p.y + vy)) p.y += vy;
+  if (!collides(p.x + vx, p.y)) {
+    p.x += vx;
+  } else if (vx !== 0) {
+    const curR = Math.floor((p.y - GRID_Y) / TILE);
+    const centerY = GRID_Y + (curR + 0.5) * TILE;
+    const nudgeY = Math.sign(centerY - p.y) * Math.min(Math.abs(centerY - p.y), 2.8);
+    if (nudgeY !== 0 && !collides(p.x, p.y + nudgeY)) p.y += nudgeY;
+  }
+
+  if (!collides(p.x, p.y + vy)) {
+    p.y += vy;
+  } else if (vy !== 0) {
+    const curC = Math.floor((p.x - GRID_X) / TILE);
+    const centerX = GRID_X + (curC + 0.5) * TILE;
+    const nudgeX = Math.sign(centerX - p.x) * Math.min(Math.abs(centerX - p.x), 2.8);
+    if (nudgeX !== 0 && !collides(p.x + nudgeX, p.y)) p.x += nudgeX;
+  }
 }
 
-function updateStage1Bot(bot, orderIdx, dt) {
-  if (state.orders.length === 0) return;
-  const targetOrder = state.orders[Math.min(orderIdx, state.orders.length - 1)];
-  const needed = targetOrder.recipe.reqs;
-
-  const traySt = state.stations.find(s => s.item && s.item.kind === 'tray' &&
-    s.item.parts.every(pt => needed.includes(pt)) && s.item.parts.length < 2);
-  const fullTraySt = state.stations.find(s => s.item && s.item.kind === 'tray' &&
-    needed.every(req => s.item.parts.includes(req)));
-
-  let tx = null, ty = null, act = null;
-  if (bot.holding && bot.holding.kind === 'tray' && needed.every(req => bot.holding.parts.includes(req))) {
-    const conv = state.stations.find(s => s.type === '>' && s.r >= 1) || state.stations.find(s => s.type === '>');
-    tx = conv.x - 22;
-    ty = conv.y + 34;
-    act = 'interact';
-  } else if (bot.holding && bot.holding.kind === 'tray' && bot.holding.parts.length < 2) {
-    const emptyCounter = state.stations.find(s => s.type === '#' && !s.item && s.r >= 1 && s.r <= 5 && s.c >= 3 && s.c <= 10);
-    if (emptyCounter) {
-      tx = emptyCounter.x + 34;
-      ty = emptyCounter.y + 88;
-      act = 'interact';
-    }
-  } else if (!bot.holding && fullTraySt) {
-    tx = fullTraySt.x + 34; ty = fullTraySt.y + 88; act = 'interact';
-  } else if (bot.holding && bot.holding.kind === 'proc' && traySt) {
-    tx = traySt.x + 34; ty = traySt.y + 88; act = 'interact';
-  } else if (!bot.holding) {
-    const ready = state.stations.find(s => s.item && s.item.kind === 'proc' && needed.includes(s.item.id));
-    if (ready) {
-      tx = ready.x + 34; ty = ready.y + 88; act = 'interact';
-    } else if (!traySt && !fullTraySt) {
-      const rack = state.stations.find(s => s.type === 'T' && s.traysCount > 0);
-      if (rack) {
-        tx = rack.x + 34; ty = rack.y + 88; act = 'interact';
+function getStationStandTile(st, actor) {
+  const dirs = [
+    { dr: 1, dc: 0 },
+    { dr: 0, dc: 1 },
+    { dr: 0, dc: -1 },
+    { dr: -1, dc: 0 }
+  ];
+  const actorC = (actor.x - GRID_X) / TILE;
+  const actorR = (actor.y - GRID_Y) / TILE;
+  let best = null;
+  let bestDist = 9999;
+  for (const d of dirs) {
+    const nr = st.r + d.dr;
+    const nc = st.c + d.dc;
+    if (isWalkableCell(nr, nc)) {
+      const sameHalfBonus = (actorC < 7 && nc < 7) || (actorC >= 7 && nc >= 7) ? -2.5 : 0;
+      const dist = Math.hypot(nc + 0.5 - actorC, nr + 0.5 - actorR) + sameHalfBonus;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = { r: nr, c: nc, x: GRID_X + (nc + 0.5) * TILE, y: GRID_Y + (nr + 0.5) * TILE };
       }
     }
-    if (tx === null) {
-      const weld = state.stations.find(s => s.type === 'W' && s.item && s.item.kind === 'raw');
-      if (weld) {
-        tx = weld.x + 34; ty = weld.y + 88; act = 'weld';
+  }
+  return best || { r: 3, c: 4, x: GRID_X + 4.5 * TILE, y: GRID_Y + 3.5 * TILE };
+}
+
+function findFullPathBFS(startR, startC, goalR, goalC) {
+  const safeStart = isWalkableCell(startR, startC) ? { r: startR, c: startC } : findNearestWalkableCell(startR, startC);
+  if (safeStart.r === goalR && safeStart.c === goalC) return [safeStart];
+  const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const parent = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  const queue = [safeStart];
+  visited[safeStart.r][safeStart.c] = true;
+  const dirs = [
+    { dr: -1, dc: 0 },
+    { dr: 1, dc: 0 },
+    { dr: 0, dc: -1 },
+    { dr: 0, dc: 1 }
+  ];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (cur.r === goalR && cur.c === goalC) {
+      const path = [];
+      let p = cur;
+      while (p) {
+        path.unshift(p);
+        p = parent[p.r][p.c];
+      }
+      return path;
+    }
+    for (const d of dirs) {
+      const nr = cur.r + d.dr;
+      const nc = cur.c + d.dc;
+      if (!isWalkableCell(nr, nc) || visited[nr][nc]) continue;
+      visited[nr][nc] = true;
+      parent[nr][nc] = cur;
+      queue.push({ r: nr, c: nc });
+    }
+  }
+  return [safeStart, { r: goalR, c: goalC }];
+}
+
+function findNextStepBFS(startR, startC, goalR, goalC) {
+  const path = findFullPathBFS(startR, startC, goalR, goalC);
+  return path.length > 1 ? path[1] : path[0];
+}
+
+function updateStage1Bot(bot, botSlot, claimedStations, dt) {
+  if (state.orders.length === 0) return;
+
+  // Pick a target recipe: primary bot assists active target, others assist remaining unbuilt modules
+  const activeRec = getActiveTargetRecipe();
+  const unbuiltOrders = state.orders.filter(o => (state.shippedModules[o.recipe.id] || 0) === 0);
+  const chosenOrder = botSlot === 0
+    ? (state.orders.find(o => o.recipe.id === activeRec.id) || state.orders[0])
+    : (unbuiltOrders[botSlot % Math.max(1, unbuiltOrders.length)] || state.orders[botSlot % state.orders.length]);
+  const needed = chosenOrder.recipe.reqs;
+
+  const canClaim = s => s && !claimedStations.has(s);
+  const traySt = state.stations.find(s => canClaim(s) && s.item && s.item.kind === 'tray' &&
+    s.item.parts.every(pt => needed.includes(pt)) && s.item.parts.length < 2);
+  const fullTraySt = state.stations.find(s => canClaim(s) && s.item && s.item.kind === 'tray' &&
+    s.item.parts.length === 2);
+
+  let targetSt = null;
+  let act = null;
+
+  if (bot.holding && bot.holding.kind === 'extinguisher') {
+    const fireSt = state.stations.find(s => s.onFire);
+    if (fireSt) {
+      targetSt = fireSt;
+      act = 'extinguish';
+    } else {
+      targetSt = state.stations.find(s => s.type === 'F');
+      act = 'interact';
+    }
+  } else if (bot.holding && bot.holding.kind === 'tray' && bot.holding.parts.length === 2) {
+    targetSt = state.stations.find(s => canClaim(s) && s.type === '>' && s.r >= 1) || state.stations.find(s => s.type === '>');
+    act = 'interact';
+  } else if (bot.holding && bot.holding.kind === 'tray' && bot.holding.parts.length < 2) {
+    targetSt = state.stations.find(s => canClaim(s) && s.type === '#' && !s.item && s.c === 7 && s.r >= 1 && s.r <= 5);
+    act = 'interact';
+  } else if (bot.holding && bot.holding.kind === 'proc') {
+    if (bot.holding.id === 'burned') {
+      targetSt = state.stations.find(s => s.type === 'X');
+      act = 'interact';
+    } else {
+      const compatTray = state.stations.find(s => canClaim(s) && s.item && s.item.kind === 'tray' && canAcceptPartOnTray(s.item, bot.holding.id));
+      if (compatTray) {
+        targetSt = compatTray;
+        act = 'interact';
       } else {
-        const existing = traySt ? traySt.item.parts : [];
-        const miss = needed.find(req => !existing.includes(req));
-        const rawKey = Object.keys(RAW_ITEMS).find(k => RAW_ITEMS[k].result === miss);
-        if (rawKey) {
-          const crate = state.stations.find(s => s.type === 'CRATE' && s.crateItem === rawKey);
-          if (crate) { tx = crate.x + 88; ty = crate.y + 34; act = 'interact'; }
-        }
+        targetSt = state.stations.find(s => canClaim(s) && s.type === '#' && !s.item && s.c === 7 && s.r >= 1 && s.r <= 5);
+        act = 'interact';
       }
     }
   } else if (bot.holding && bot.holding.kind === 'raw') {
     const rawMeta = RAW_ITEMS[bot.holding.id];
     const bType = rawMeta.procType === 'weld' ? 'W' : rawMeta.procType === 'calibrate' ? 'A' : 'P';
-    const free = state.stations.find(s => s.type === bType && !s.item);
-    if (free) { tx = free.x + 34; ty = free.y + 88; act = 'interact'; }
-  }
-
-  // Keep bots navigating through center aisle openings (r=3 or r=6) when crossing c=7 split wall
-  if (tx !== null) {
-    const splitX = GRID_X + 7.5 * TILE;
-    if ((bot.x < splitX - 30 && tx > splitX + 30) || (bot.x > splitX + 30 && tx < splitX - 30)) {
-      const gateY = Math.abs(bot.y - (GRID_Y + 3.5 * TILE)) < Math.abs(bot.y - (GRID_Y + 6.5 * TILE))
-        ? GRID_Y + 3.5 * TILE
-        : GRID_Y + 6.5 * TILE;
-      if (Math.abs(bot.y - gateY) > 18) {
-        tx = bot.x < splitX ? splitX - 58 : splitX + 58;
-        ty = gateY;
-        act = null;
+    const freeBench = state.stations.find(s => canClaim(s) && s.type === bType && !s.item && !s.onFire);
+    if (freeBench) {
+      targetSt = freeBench;
+      act = 'interact';
+    } else {
+      const waitWeld = state.stations.find(s => canClaim(s) && s.type === 'W' && s.item && s.item.kind === 'raw');
+      if (waitWeld) {
+        targetSt = waitWeld;
+        act = 'weld';
       }
     }
-    const dx = tx - bot.x;
-    const dy = ty - bot.y;
-    const d = Math.hypot(dx, dy);
-    if (d > 14) {
-      moveStage1Player(bot, (dx / d) * 175 * dt, (dy / d) * 175 * dt);
+  } else if (!bot.holding) {
+    const fireSt = state.stations.find(s => s.onFire);
+    const extSt = state.stations.find(s => s.type === 'F' && s.hasExtinguisher);
+    if (fireSt && extSt && canClaim(extSt)) {
+      targetSt = extSt;
+      act = 'interact';
+    } else if (fullTraySt) {
+      targetSt = fullTraySt;
+      act = 'interact';
     } else {
-      let near = null, nd = 999;
-      for (const s of state.stations) {
-        const sd = Math.hypot((s.x + 34) - bot.x, (s.y + 34) - bot.y);
-        if (sd < nd) { nd = sd; near = s; }
+      const readyPartSt = state.stations.find(s => canClaim(s) && s.item && s.item.kind === 'proc' && needed.includes(s.item.id) &&
+        (!traySt || !traySt.item.parts.includes(s.item.id)));
+      if (readyPartSt && traySt) {
+        targetSt = readyPartSt;
+        act = 'interact';
+      } else if (!traySt && !fullTraySt) {
+        const rack = state.stations.find(s => canClaim(s) && s.type === 'T' && s.traysCount > 0);
+        if (rack) {
+          targetSt = rack;
+          act = 'interact';
+        }
       }
-      if (near) bot.angle = Math.atan2((near.y + 34) - bot.y, (near.x + 34) - bot.x);
+      if (!targetSt) {
+        const rawWeld = state.stations.find(s => canClaim(s) && s.type === 'W' && s.item && s.item.kind === 'raw');
+        if (rawWeld) {
+          targetSt = rawWeld;
+          act = 'weld';
+        } else {
+          const existing = traySt ? traySt.item.parts : [];
+          const inFlightProc = state.stations
+            .filter(s => s.item && (s.item.kind === 'proc' || s.item.kind === 'raw'))
+            .map(s => s.item.kind === 'raw' ? RAW_ITEMS[s.item.id]?.result : s.item.id);
+          const miss = needed.find(req => !existing.includes(req) && !inFlightProc.includes(req)) || needed[botSlot % needed.length];
+          const rawKey = Object.keys(RAW_ITEMS).find(k => RAW_ITEMS[k].result === miss);
+          if (rawKey) {
+            const crate = state.stations.find(s => canClaim(s) && s.type === 'CRATE' && s.crateItem === rawKey);
+            if (crate) {
+              targetSt = crate;
+              act = 'interact';
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (targetSt) {
+    claimedStations.add(targetSt);
+    const stand = getStationStandTile(targetSt, bot);
+    const distToGoal = Math.hypot(stand.x - bot.x, stand.y - bot.y);
+
+    if (distToGoal > 14) {
+      const curR = Math.max(0, Math.min(ROWS - 1, Math.floor((bot.y - GRID_Y) / TILE)));
+      const curC = Math.max(0, Math.min(COLS - 1, Math.floor((bot.x - GRID_X) / TILE)));
+      const nextCell = findNextStepBFS(curR, curC, stand.r, stand.c);
+      const wpX = (nextCell.r === stand.r && nextCell.c === stand.c) ? stand.x : GRID_X + (nextCell.c + 0.5) * TILE;
+      const wpY = (nextCell.r === stand.r && nextCell.c === stand.c) ? stand.y : GRID_Y + (nextCell.r + 0.5) * TILE;
+
+      let vx = wpX - bot.x;
+      let vy = wpY - bot.y;
+      // Align perpendicular offset toward current tile center before turning corners/doorways
+      const curCenterX = GRID_X + (curC + 0.5) * TILE;
+      const curCenterY = GRID_Y + (curR + 0.5) * TILE;
+      if (nextCell.r !== curR && Math.abs(bot.x - curCenterX) > 10) {
+        vx = (curCenterX - bot.x) * 1.6;
+      } else if (nextCell.c !== curC && Math.abs(bot.y - curCenterY) > 10) {
+        vy = (curCenterY - bot.y) * 1.6;
+      }
+      const len = Math.hypot(vx, vy) || 1;
+      vx /= len;
+      vy /= len;
+
+      // Soft repulsion from other crewmates so bots never stack on one pixel
+      for (const other of state.players) {
+        if (other === bot) continue;
+        const odx = bot.x - other.x;
+        const ody = bot.y - other.y;
+        const od = Math.hypot(odx, ody);
+        if (od > 0.1 && od < 26) {
+          vx += (odx / od) * 0.25;
+          vy += (ody / od) * 0.25;
+        }
+      }
+      const vLen = Math.hypot(vx, vy) || 1;
+      moveStage1Player(bot, (vx / vLen) * 185 * dt, (vy / vLen) * 185 * dt);
+
+      // Anti-stuck check
+      if (Math.hypot(bot.x - (bot.lastX || bot.x), bot.y - (bot.lastY || bot.y)) < 18 * dt) {
+        bot.stuckTime = (bot.stuckTime || 0) + dt;
+        if (bot.stuckTime > 0.45 && isWalkableCell(curR, curC)) {
+          bot.x += (GRID_X + (curC + 0.5) * TILE - bot.x) * 0.35;
+          bot.y += (GRID_Y + (curR + 0.5) * TILE - bot.y) * 0.35;
+          bot.stuckTime = 0;
+        }
+      } else {
+        bot.stuckTime = 0;
+      }
+      bot.lastX = bot.x;
+      bot.lastY = bot.y;
+    } else {
+      bot.angle = Math.atan2((targetSt.y + TILE / 2) - bot.y, (targetSt.x + TILE / 2) - bot.x);
       if (act === 'interact') {
         bot.cd = (bot.cd || 0) - dt;
         if (bot.cd <= 0) {
           handleStage1Interact(bot);
-          bot.cd = 0.4;
+          bot.cd = 0.38;
         }
-      } else if (act === 'weld' && near && near.type === 'W' && near.item) {
-        near.progress += dt * 0.55;
-        if (Math.random() < 0.25) {
-          state.hangarSparks.push({ x: near.x + 34, y: near.y + 18, vx: (Math.random() - 0.5) * 90, vy: -30 - Math.random() * 40, life: 0.35, color: '#38bdf8' });
-        }
-        if (near.progress >= 1) {
-          near.item = { kind: 'proc', id: RAW_ITEMS[near.item.id].result, lastBy: bot.name };
-          near.progress = 1;
-        }
+      } else if (act === 'weld' || act === 'extinguish') {
+        applyHoldWork(bot, dt);
       }
+    }
+  } else {
+    // Idle standby home positions out of the player's way
+    const homes = [
+      { c: 4.5, r: 5.5 },
+      { c: 9.5, r: 5.5 },
+      { c: 5.5, r: 2.5 },
+      { c: 10.5, r: 2.5 }
+    ];
+    const h = homes[botSlot % homes.length];
+    const hx = GRID_X + h.c * TILE;
+    const hy = GRID_Y + h.r * TILE;
+    const hd = Math.hypot(hx - bot.x, hy - bot.y);
+    if (hd > 18) {
+      const curR = Math.max(1, Math.min(ROWS - 2, Math.floor((bot.y - GRID_Y) / TILE)));
+      const curC = Math.max(1, Math.min(COLS - 2, Math.floor((bot.x - GRID_X) / TILE)));
+      const nextCell = findNextStepBFS(curR, curC, Math.floor(h.r), Math.floor(h.c));
+      const wpX = GRID_X + (nextCell.c + 0.5) * TILE;
+      const wpY = GRID_Y + (nextCell.r + 0.5) * TILE;
+      const dx = wpX - bot.x, dy = wpY - bot.y, d = Math.hypot(dx, dy) || 1;
+      moveStage1Player(bot, (dx / d) * 150 * dt, (dy / d) * 150 * dt);
     }
   }
 }
@@ -540,6 +817,16 @@ function applyHoldWork(p, dt) {
 }
 
 export function updateStage1(dt) {
+  const lead = state.players[state.activeCrewIndex] || state.players[0];
+  if (lead) pushOutOfStations(lead, 14);
+
+  // When paused on a Stage 1 Spotlight Tutorial step, hold timers & bots so the player can read the spotlight
+  if (state.tutorial?.active && state.tutorial?.paused) {
+    state.conveyorOffset = (state.conveyorOffset + dt * 24) % 24;
+    updateBottomHUD();
+    return;
+  }
+
   state.elapsedStage1 += dt;
   if (state.stage1ComboTimer > 0) {
     state.stage1ComboTimer -= dt;
@@ -567,7 +854,6 @@ export function updateStage1(dt) {
     }
   }
 
-  const lead = state.players[state.activeCrewIndex] || state.players[0];
   if (lead.dashTimer <= 0) {
     let mx = 0, my = 0;
     if (state.keys['KeyW'] || state.keys['ArrowUp']) my -= 1;
@@ -601,11 +887,16 @@ export function updateStage1(dt) {
     }
   }
 
-  if (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P') {
+  // During the guided walkthrough, let bots wait cleanly so they don't steal the player's first target parts
+  if (!state.tutorial?.active && (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P')) {
+    const claimedStations = new Set();
+    const leadFacing = getFacingStation(lead);
+    if (leadFacing) claimedStations.add(leadFacing);
+    let botSlot = 0;
     for (let i = 0; i < state.players.length; i++) {
       if (i === state.activeCrewIndex) continue;
       if (state.coopMode === 'LOCAL_2P' && i === 1) continue;
-      updateStage1Bot(state.players[i], i % 2, dt);
+      updateStage1Bot(state.players[i], botSlot++, claimedStations, dt);
     }
   }
 
@@ -695,56 +986,192 @@ export function updateStage1(dt) {
     if (sp.life <= 0) state.hangarSparks.splice(i, 1);
   }
 
-  // Interactive 5-Step Tutorial Progression
+  // Interactive 5-Step Spotlight Tutorial Progression
   if (state.tutorial?.active) {
     const tut = state.tutorial;
-    const anyCal = state.stations.some(s => s.type === 'A' && s.item && (s.item.id === 'optics' || s.item.id === 'cal_optics'));
-    const hasCalOptics = lead.holding?.id === 'cal_optics' || anyCal || state.stations.some(s => s.item?.kind === 'tray' && s.item.parts.includes('cal_optics'));
-    const hasSolderPcb = lead.holding?.id === 'weld_circuit' || state.stations.some(s => s.item?.id === 'weld_circuit' || (s.item?.kind === 'tray' && s.item.parts.includes('weld_circuit')));
-    const hasFullTray = lead.holding?.kind === 'tray' && lead.holding.parts.length === 2 || state.stations.some(s => s.item?.kind === 'tray' && s.item.parts.length === 2);
+    const calPlaced = state.stations.some(s => s.type === 'A' && s.item && (s.item.id === 'optics' || s.item.id === 'cal_optics'));
+    const hasCalOptics = lead.holding?.id === 'cal_optics' || isProcPartReadyInHangar('cal_optics');
+    const hasSolderPcb = lead.holding?.id === 'weld_circuit' || isProcPartReadyInHangar('weld_circuit');
+    const hasFullTray =
+      (lead.holding?.kind === 'tray' && lead.holding.parts.length === 2) ||
+      state.stations.some(s => s.item?.kind === 'tray' && s.item.parts.length === 2);
 
-    if (tut.step === 0 && (lead.holding?.id === 'optics' || hasCalOptics)) {
-      tut.step = 1; playTone(620, 'sine', 0.08, 0.09);
-    } else if (tut.step === 1 && hasCalOptics) {
-      tut.step = 2; playTone(660, 'sine', 0.08, 0.09);
+    const advanceTo = (nextStep) => {
+      tut.step = nextStep;
+      tut.paused = true;
+      playTone(620 + nextStep * 45, 'sine', 0.09, 0.09);
+    };
+
+    if (tut.step === 0 && (lead.holding?.id === 'optics' || calPlaced || hasCalOptics)) {
+      advanceTo(1);
+    } else if (tut.step === 1 && (calPlaced || hasCalOptics)) {
+      advanceTo(2);
     } else if (tut.step === 2 && hasSolderPcb) {
-      tut.step = 3; playTone(700, 'sine', 0.08, 0.09);
+      advanceTo(3);
     } else if (tut.step === 3 && hasFullTray) {
-      tut.step = 4; playTone(760, 'sine', 0.09, 0.1);
-    } else if (tut.step === 4 && state.shippedCount >= 1) {
+      advanceTo(4);
+    } else if (tut.step === 4 && state.shippedCount > (tut.startShipped || 0)) {
       tut.active = false;
+      tut.paused = false;
       tut.skipped = true;
       state.score += 50;
-      addFloatText(LOGICAL_W / 2, 120, 'TUTORIAL COMPLETE! +50⭐', '#4ade80');
-      showMissionToast('Ready to Engineer', 'Choose which modules fit your Rocket Mass & Budget caps, then click Launch Mission!');
+      addFloatText(LOGICAL_W / 2, 120, 'FIRST MODULE BUILT! +50⭐', '#4ade80');
+      showMissionToast('Guide Complete', 'Build any modules under your mass and budget caps, or click Launch Mission.');
     }
   }
 
   updateBottomHUD();
 }
 
-function getLeadGuidanceText(lead) {
-  if (!lead) return '1. Grab Raw Part ➔ 2. Bench ➔ 3. Pass/Plate Tray ➔ 4. Conveyor | [SHIFT] Dash • [F] Throw';
-  if (!lead.holding) {
-    return `${lead.name} (${lead.role}): Grab Raw Part, catch a Pass Counter part, or [SHIFT] Dash!`;
+function getTutorialStepInfo(lead) {
+  const step = state.tutorial?.step || 0;
+  const steps = [
+    {
+      title: 'Step 1 of 5: Pick up Optics',
+      text: 'Walk to the highlighted Optics crate and press SPACE to grab it.',
+      find: () => state.stations.find(s => s.crateItem === 'optics')
+    },
+    {
+      title: 'Step 2 of 5: Calibrate Optics',
+      text: 'Put Optics on a Purple CALIBRATE bench (SPACE). It calibrates automatically.',
+      find: () => state.stations.find(s => s.type === 'A' && !s.item) || state.stations.find(s => s.type === 'A')
+    },
+    {
+      title: 'Step 3 of 5: Weld a Circuit',
+      text: lead?.holding?.id === 'circuit'
+        ? 'Place Circuit on a Blue WELD bench (SPACE), then HOLD SPACE until finished.'
+        : state.stations.some(s => s.type === 'W' && s.item?.id === 'circuit')
+          ? 'Stand at the Blue WELD bench and HOLD SPACE until the Circuit finishes welding.'
+          : 'Grab a Circuit from the orange crate, place it on Blue WELD, and HOLD SPACE.',
+      find: () => lead?.holding?.id === 'circuit'
+        ? (state.stations.find(s => s.type === 'W' && !s.item) || state.stations.find(s => s.type === 'W'))
+        : (state.stations.find(s => s.type === 'W' && s.item?.id === 'circuit') || state.stations.find(s => s.crateItem === 'circuit'))
+    },
+    {
+      title: 'Step 4 of 5: Load Both onto a Tray',
+      text: 'Pick up each finished part and press SPACE on a Tray to pack them together.',
+      find: () => {
+        if (lead?.holding?.kind === 'proc') {
+          return state.stations.find(s => s.item?.kind === 'tray' && canAcceptPartOnTray(s.item, lead.holding.id))
+            || state.stations.find(s => s.type === 'T' && s.traysCount > 0);
+        }
+        return state.stations.find(s => s.item?.kind === 'proc' && (s.item.id === 'cal_optics' || s.item.id === 'weld_circuit'))
+          || state.stations.find(s => s.item?.kind === 'tray' && s.item.parts.length < 2)
+          || state.stations.find(s => s.type === 'A' && s.item?.id === 'optics');
+      }
+    },
+    {
+      title: 'Step 5 of 5: Send on Submit Belt',
+      text: lead?.holding?.kind === 'tray' && lead.holding.parts.length === 2
+        ? 'Walk to any SUBMIT belt on the right and press SPACE to load the rocket.'
+        : 'Pick up your 2-part READY tray and carry it to a right SUBMIT belt.',
+      find: () => (lead?.holding?.kind === 'tray' && lead.holding.parts.length === 2)
+        ? (state.stations.find(s => s.type === '>' && s.r >= 1) || state.stations.find(s => s.type === '>'))
+        : (state.stations.find(s => s.item?.kind === 'tray' && s.item.parts.length === 2) || state.stations.find(s => s.type === '>'))
+    }
+  ];
+  const cur = steps[Math.min(step, steps.length - 1)];
+  return { ...cur, targetSt: cur.find() };
+}
+
+function drawStage1Trail(ctx, actor, targetSt, bright = false) {
+  if (!actor || !targetSt) return;
+  const stand = getStationStandTile(targetSt, actor);
+  const startR = Math.max(0, Math.min(ROWS - 1, Math.floor((actor.y - GRID_Y) / TILE)));
+  const startC = Math.max(0, Math.min(COLS - 1, Math.floor((actor.x - GRID_X) / TILE)));
+  const cellPath = findFullPathBFS(startR, startC, stand.r, stand.c);
+
+  const pts = [{ x: actor.x, y: actor.y + 8 }];
+  for (let i = 1; i < cellPath.length; i++) {
+    pts.push({
+      x: GRID_X + (cellPath[i].c + 0.5) * TILE,
+      y: GRID_Y + (cellPath[i].r + 0.5) * TILE
+    });
   }
-  if (lead.holding.kind === 'extinguisher') {
-    return `${lead.name} holding CO2: Hold [SPACE] facing any 🔥 Fire to extinguish!`;
+  pts.push({
+    x: targetSt.x + TILE / 2,
+    y: targetSt.y + TILE / 2
+  });
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = bright ? 'rgba(253, 224, 71, 0.92)' : 'rgba(253, 224, 71, 0.36)';
+  ctx.lineWidth = bright ? 4 : 2.5;
+  ctx.setLineDash([8, 10]);
+  ctx.lineDashOffset = -(performance.now() * 0.045) % 18;
+  ctx.beginPath();
+  pts.forEach((pt, idx) => {
+    if (idx === 0) ctx.moveTo(pt.x, pt.y);
+    else ctx.lineTo(pt.x, pt.y);
+  });
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Small directional dots along intermediate waypoints
+  if (bright) {
+    ctx.fillStyle = '#fde047';
+    for (let i = 1; i < pts.length - 1; i++) {
+      ctx.beginPath();
+      ctx.arc(pts[i].x, pts[i].y, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
-  if (lead.holding.kind === 'raw') {
-    const rm = RAW_ITEMS[lead.holding.id];
-    const dest = rm.procType === 'weld' ? 'Blue WELD Bench' : rm.procType === 'calibrate' ? 'Purple CALIBRATE Rig' : 'Green CHARGE Station';
-    return `${lead.name} holding ${rm.name}: Place on ${dest} (or press [F] to Throw)!`;
+  ctx.restore();
+}
+
+function getNextTargetStation(lead, targetRec) {
+  if (!lead || !targetRec) return null;
+  const needed = targetRec.reqs;
+
+  const fireSt = state.stations.find(s => s.onFire);
+  if (fireSt) {
+    if (lead.holding?.kind === 'extinguisher') return fireSt;
+    return state.stations.find(s => s.type === 'F' && s.hasExtinguisher) || fireSt;
   }
-  if (lead.holding.kind === 'proc') {
-    if (lead.holding.id === 'burned') return `${lead.name} holding Scrap: Toss in Red SCRAP Bin (bottom-right)!`;
-    return `${lead.name} holding ${PROC_META[lead.holding.id].name}: Plate onto Tray or Pass/Throw [F] across Counter!`;
+
+  if (lead.holding) {
+    if (lead.holding.kind === 'tray' && lead.holding.parts.length === 2) {
+      return state.stations.find(s => s.type === '>' && s.r >= 1) || state.stations.find(s => s.type === '>');
+    }
+    if (lead.holding.kind === 'raw') {
+      const rm = RAW_ITEMS[lead.holding.id];
+      const bType = rm.procType === 'weld' ? 'W' : rm.procType === 'calibrate' ? 'A' : 'P';
+      return state.stations.find(s => s.type === bType && !s.item) || state.stations.find(s => s.type === bType);
+    }
+    if (lead.holding.kind === 'proc') {
+      if (lead.holding.id === 'burned') return state.stations.find(s => s.type === 'X');
+      return (
+        state.stations.find(s => s.item && s.item.kind === 'tray' && canAcceptPartOnTray(s.item, lead.holding.id)) ||
+        state.stations.find(s => s.type === 'T' && s.traysCount > 0)
+      );
+    }
+    if (lead.holding.kind === 'tray' && lead.holding.parts.length < 2) {
+      const miss = needed.find(r => !lead.holding.parts.includes(r));
+      const readyBench = state.stations.find(s => s.item && s.item.kind === 'proc' && s.item.id === miss);
+      if (readyBench) return readyBench;
+      return state.stations.find(s => s.type === '#' && !s.item && s.c === 7);
+    }
   }
-  if (lead.holding.kind === 'tray') {
-    if (lead.holding.parts.length < 2) return `${lead.name} holding Tray (${lead.holding.parts.length}/2): Plate matching parts onto this Tray!`;
-    return `${lead.name} Tray READY! Deliver to Right CONVEYOR (or click 🚀 Launch Mission anytime)!`;
+
+  const fullTray = state.stations.find(s => s.item && s.item.kind === 'tray' && needed.every(r => s.item.parts.includes(r)));
+  if (fullTray) return fullTray;
+
+  const partialTray = state.stations.find(s => s.item && s.item.kind === 'tray' && s.item.parts.every(pt => needed.includes(pt)) && s.item.parts.length < 2);
+  const readyProc = state.stations.find(s => s.item && s.item.kind === 'proc' && needed.includes(s.item.id) && (!partialTray || !partialTray.item.parts.includes(s.item.id)));
+  if (readyProc) return readyProc;
+
+  const activeWeld = state.stations.find(s => s.type === 'W' && s.item && s.item.kind === 'raw' && needed.includes(RAW_ITEMS[s.item.id]?.result));
+  if (activeWeld) return activeWeld;
+
+  const missReq = needed.find(r => !isProcPartReadyInHangar(r)) || needed[0];
+  const rawMeta = PROC_META[missReq];
+  if (rawMeta?.rawId) {
+    const activeBench = state.stations.find(s => (s.type === 'A' || s.type === 'P' || s.type === 'W') && s.item && s.item.id === rawMeta.rawId);
+    if (activeBench) return activeBench;
+    return state.stations.find(s => s.type === 'CRATE' && s.crateItem === rawMeta.rawId);
   }
-  return '';
+  return null;
 }
 
 export function drawStage1(ctx) {
@@ -772,16 +1199,19 @@ export function drawStage1(ctx) {
     }
   }
 
-  // Diegetic floor workflow hints + Pass Counter Split Zone
-  ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
-  ctx.font = 'bold 12px Fredoka, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('1. RAW CRATES & WELD ➔', GRID_X + 2.8 * TILE, GRID_Y + 6.45 * TILE);
-  ctx.fillText('↔ PASS COUNTER', GRID_X + 7.5 * TILE, GRID_Y + 3.45 * TILE);
-  ctx.fillText('2. CAL / CHARGE / TRAY ➔ SUBMIT', GRID_X + 11.2 * TILE, GRID_Y + 6.45 * TILE);
-
   const lead = state.players[state.activeCrewIndex] || state.players[0];
   const facing = lead ? getFacingStation(lead) : null;
+  const targetRec = getActiveTargetRecipe();
+  const nextTargetSt = state.stage === 'STAGE1' ? getNextTargetStation(lead, targetRec) : null;
+  const tutActive = state.stage === 'STAGE1' && Boolean(state.tutorial?.active);
+  const tutInfo = tutActive && lead ? getTutorialStepInfo(lead) : null;
+  const activeTargetSt = (tutActive && tutInfo?.targetSt) ? tutInfo.targetSt : nextTargetSt;
+
+  // Live BFS dotted floor path trail from active player to next target station
+  if (state.stage === 'STAGE1' && lead && activeTargetSt) {
+    drawStage1Trail(ctx, lead, activeTargetSt, tutActive);
+  }
+
   const renderables = [
     ...state.stations.map(s => ({ kind: 'station', y: s.y + TILE, obj: s })),
     ...state.floorItems.map(fi => ({ kind: 'floor', y: fi.y + 8, obj: fi })),
@@ -794,6 +1224,7 @@ export function drawStage1(ctx) {
     } else if (ent.kind === 'station') {
       const s = ent.obj;
       const isHi = (facing === s);
+      const isNextGoal = (activeTargetSt === s && !isHi);
 
       ctx.fillStyle = '#151b28';
       ctx.fillRect(s.x + 2, s.y + 10, TILE - 4, TILE - 6);
@@ -827,6 +1258,13 @@ export function drawStage1(ctx) {
         ctx.strokeStyle = '#fde047';
         ctx.lineWidth = 3;
         ctx.strokeRect(s.x + 1, s.y - 7, TILE - 2, TILE - 2);
+      } else if (isNextGoal) {
+        const pulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.007);
+        ctx.strokeStyle = `rgba(253, 224, 71, ${pulse})`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.roundRect(s.x + 1, s.y - 7, TILE - 2, TILE - 2, 10);
+        ctx.stroke();
       }
 
       if (lampCol) {
@@ -905,108 +1343,213 @@ export function drawStage1(ctx) {
     drawItemBadge(ctx, fd.x, fd.y, { kind: 'tray', parts: fd.parts });
   }
 
-  // Intuitive Active Guidance Banner + Tutorial Overlay + Combo Badge along top gantry
-  if (state.stage === 'STAGE1') {
-    if (state.tutorial?.active) {
-      const tutSteps = [
-        { title: 'TUTORIAL 1/5: Grab Raw Optics', text: 'Walk [WASD] to the flashing Optics Crate and press [SPACE] to pick it up.', find: s => s.crateItem === 'optics' },
-        { title: 'TUTORIAL 2/5: Calibrate Optics', text: 'Place Optics on the Purple CALIBRATE station ([SPACE]) — raw optics must be calibrated!', find: s => s.type === 'A' },
-        { title: 'TUTORIAL 3/5: Solder a Circuit', text: 'Grab Circuit -> put on Blue WELD bench & HOLD [SPACE] until welded!', find: s => lead.holding?.id === 'circuit' ? s.type === 'W' : s.crateItem === 'circuit' },
-        { title: 'TUTORIAL 4/5: Assemble Fairing Tray', text: 'Plate BOTH Cal. Optics & Solder PCB onto a Fairing Tray ([SPACE])!', find: s => s.item?.kind === 'tray' },
-        { title: 'TUTORIAL 5/5: Ship on Conveyor', text: 'Carry your completed Tray to the Right CONVEYOR ([SPACE]) to install it on the rocket!', find: s => s.type === '>' }
-      ];
-      const cur = tutSteps[state.tutorial.step] || tutSteps[0];
-      const targetSt = state.stations.find(cur.find);
-      if (targetSt) {
-        const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
-        const bob = Math.sin(performance.now() * 0.01) * 6;
-        ctx.save();
-        ctx.strokeStyle = `rgba(253, 224, 71, ${0.55 + pulse * 0.45})`;
-        ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.roundRect(targetSt.x - 4, targetSt.y - 4, TILE + 8, TILE + 8, 12); ctx.stroke();
-        ctx.fillStyle = '#fde047';
-        ctx.beginPath();
-        ctx.moveTo(targetSt.x + TILE / 2, targetSt.y - 10 + bob);
-        ctx.lineTo(targetSt.x + TILE / 2 - 9, targetSt.y - 24 + bob);
-        ctx.lineTo(targetSt.x + TILE / 2 + 9, targetSt.y - 24 + bob);
-        ctx.closePath(); ctx.fill();
-        ctx.restore();
+  // Single Compact Active Target Recipe Bar along Top Gantry
+  if (state.stage === 'STAGE1' && targetRec) {
+    const m1 = PROC_META[targetRec.reqs[0]] || {};
+    const m2 = PROC_META[targetRec.reqs[1]] || {};
+    const r1Raw = m1.rawName || m1.name || 'Part 1';
+    const r1Verb = m1.verb || 'Prep';
+    const r2Raw = m2.rawName || m2.name || 'Part 2';
+    const r2Verb = m2.verb || 'Prep';
+    const r1Done = isProcPartReadyInHangar(targetRec.reqs[0]);
+    const r2Done = isProcPartReadyInHangar(targetRec.reqs[1]);
+    const trayDone =
+      (lead?.holding?.kind === 'tray' && targetRec.reqs.every(r => lead.holding.parts.includes(r))) ||
+      state.stations.some(s => s.item?.kind === 'tray' && targetRec.reqs.every(r => s.item.parts.includes(r)));
+    const uniqueBuilt = Object.values(state.shippedModules || {}).filter(v => v > 0).length;
+
+    const barW = 952, barH = 34, barX = (LOGICAL_W - barW) / 2, barY = 8;
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+    ctx.strokeStyle = 'rgba(253, 224, 71, 0.55)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.roundRect(barX, barY, barW, barH, 14);
+    ctx.fill();
+    ctx.stroke();
+
+    // Target Title Pill on Left
+    ctx.fillStyle = '#ca8a04';
+    ctx.beginPath();
+    ctx.roundRect(barX + 6, barY + 5, 262, 24, 10);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = '700 11.5px "Plus Jakarta Sans", system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`🎯 TARGET (${uniqueBuilt}/4): ${targetRec.title}`, barX + 14, barY + 21);
+
+    // 3 Clear Step Pills: Part 1 -> Part 2 -> Tray & Submit
+    const steps = [
+      { label: `${r1Done ? '✓' : '1.'} ${r1Raw} ➔ ${r1Verb}`, done: r1Done },
+      { label: `${r2Done ? '✓' : '2.'} ${r2Raw} ➔ ${r2Verb}`, done: r2Done },
+      { label: `${trayDone ? '✓' : '3.'} Plate on Tray ➔ Submit`, done: trayDone }
+    ];
+
+    let sx = barX + 282;
+    steps.forEach((st, idx) => {
+      const pw = idx === 2 ? 210 : 206;
+      ctx.fillStyle = st.done ? 'rgba(22, 163, 74, 0.25)' : 'rgba(30, 41, 59, 0.9)';
+      ctx.strokeStyle = st.done ? '#4ade80' : 'rgba(148, 163, 184, 0.35)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.roundRect(sx, barY + 5, pw, 24, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = st.done ? '#86efac' : '#e2e8f0';
+      ctx.font = '600 11px "Plus Jakarta Sans", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(st.label, sx + pw / 2, barY + 21);
+
+      if (idx < 2) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '700 12px "JetBrains Mono", monospace';
+        ctx.fillText(idx === 0 ? '+' : '➔', sx + pw + 11, barY + 21);
       }
-
-      ctx.fillStyle = 'rgba(19, 27, 44, 0.95)';
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.roundRect(16, 8, 934, 34, 14); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#38bdf8'; ctx.font = '700 12px "Plus Jakarta Sans", system-ui, sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(cur.title, 30, 29);
-      ctx.fillStyle = '#eef2f8'; ctx.font = '600 12px "Plus Jakarta Sans", system-ui, sans-serif';
-      ctx.fillText(cur.text, 250, 29);
-
-      // Skip Tutorial clickable pill
-      ctx.fillStyle = '#24314e';
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.4)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.roundRect(964, 10, 140, 30, 15); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#cbd5e1'; ctx.font = '600 11.5px "Plus Jakarta Sans", system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('Skip Tutorial [Tab]', 1034, 29);
-    } else {
-      const guideText = getLeadGuidanceText(lead);
-      ctx.fillStyle = 'rgba(19, 27, 44, 0.92)';
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.roundRect(16, 8, 690, 32, 16); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#e0f2fe';
-      ctx.font = '600 12px "Plus Jakarta Sans", system-ui, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(guideText, 32, 28);
-
-      // Mission Readiness Forecast pill on right side of gantry
-      const pwrOk = state.telemetry.power >= 30;
-      const comOk = state.telemetry.comms >= 60;
-      const massOk = state.telemetry.mass <= state.telemetry.maxMass;
-      ctx.fillStyle = 'rgba(19, 27, 44, 0.92)';
-      ctx.strokeStyle = massOk ? 'rgba(74, 222, 128, 0.38)' : 'rgba(248, 113, 113, 0.6)';
-      ctx.beginPath(); ctx.roundRect(718, 8, 386, 32, 16); ctx.fill(); ctx.stroke();
-      ctx.font = '700 11.5px "Plus Jakarta Sans", system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = massOk ? '#4ade80' : '#f87171';
-      ctx.fillText(
-        `Mass ${massOk ? 'OK' : 'OVER!'}  •  Power ${pwrOk ? 'OK' : 'LOW'}  •  Comms ${comOk ? 'OK' : 'LOW'}`,
-        911,
-        28
-      );
-    }
-
-    if (state.stage1Combo > 1 && !state.tutorial?.active) {
-      ctx.fillStyle = '#f97316';
-      ctx.beginPath(); ctx.roundRect(LOGICAL_W - 146, 46, 126, 24, 12); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = '700 11.5px "Plus Jakarta Sans", system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`STREAK x${state.stage1Combo}`, LOGICAL_W - 83, 62);
-    }
+      sx += pw + 22;
+    });
+    ctx.restore();
   }
 
+  // Compact Floating Action Pill above Active Player (never obscures crate labels)
   if (facing && lead) {
     let hint = '';
-    if (facing.type === 'CRATE' && !lead.holding) hint = `[SPACE] Grab ${RAW_ITEMS[facing.crateItem].name}`;
-    else if (facing.type === 'W' && facing.item && facing.item.kind === 'raw') hint = `[HOLD SPACE] Welding ${Math.round(facing.progress * 100)}%`;
-    else if (facing.type === '>' && lead.holding && lead.holding.kind === 'tray' && lead.holding.parts.length === 2) hint = `[SPACE] Submit Module! 🚀`;
-    else if (lead.holding && facing.item && ((lead.holding.kind === 'tray' && facing.item.kind === 'proc') || (lead.holding.kind === 'proc' && facing.item.kind === 'tray'))) hint = `[SPACE] Plate onto Tray`;
+    if (facing.type === 'CRATE' && !lead.holding) hint = `[SPACE] ${RAW_ITEMS[facing.crateItem].name}`;
+    else if (facing.type === 'W' && facing.item && facing.item.kind === 'raw') hint = `[HOLD SPACE] Weld ${Math.round(facing.progress * 100)}%`;
+    else if (facing.type === '>' && lead.holding && lead.holding.kind === 'tray' && lead.holding.parts.length === 2) hint = `[SPACE] Submit 🚀`;
+    else if (lead.holding && facing.item && ((lead.holding.kind === 'tray' && facing.item.kind === 'proc') || (lead.holding.kind === 'proc' && facing.item.kind === 'tray'))) hint = `[SPACE] Plate Tray`;
     else if (!lead.holding && facing.item) hint = `[SPACE] Pick Up`;
     else if (lead.holding && !facing.item) hint = `[SPACE] Place`;
 
     if (hint) {
-      ctx.font = 'bold 11px Fredoka, sans-serif';
-      const tw = ctx.measureText(hint).width + 18;
-      const px = Math.max(8, Math.min(1120 - tw - 8, facing.x + TILE / 2 - tw / 2));
-      const py = Math.max(8, facing.y - 32);
+      ctx.font = '700 10.5px "Plus Jakarta Sans", system-ui, sans-serif';
+      const tw = ctx.measureText(hint).width + 16;
+      const px = Math.max(8, Math.min(LOGICAL_W - tw - 8, lead.x - tw / 2));
+      const py = Math.max(46, lead.y - 58);
       ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
       ctx.strokeStyle = '#fde047';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.roundRect(px, py, tw, 22, 8); ctx.fill(); ctx.stroke();
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.roundRect(px, py, tw, 20, 7); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#fde047';
       ctx.textAlign = 'center';
-      ctx.fillText(hint, px + tw / 2, py + 15);
+      ctx.fillText(hint, px + tw / 2, py + 14);
+    }
+  }
+
+  // Interactive 5-Step Spotlight Overlay & Active Guide Banner
+  state.tutorialBtnRects = {};
+  if (tutActive && tutInfo && lead) {
+    const tTarget = tutInfo.targetSt;
+    if (state.tutorial.paused) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(4, 8, 18, 0.72)';
+      ctx.beginPath();
+      ctx.rect(0, 0, LOGICAL_W, LOGICAL_H);
+      // Cut transparent circle around player
+      ctx.moveTo(lead.x + 44, lead.y - 4);
+      ctx.arc(lead.x, lead.y - 4, 44, 0, Math.PI * 2);
+      // Cut transparent circle around guided target station
+      if (tTarget) {
+        const tx = tTarget.x + TILE / 2;
+        const ty = tTarget.y + TILE / 2;
+        ctx.moveTo(tx + 54, ty);
+        ctx.arc(tx, ty, 54, 0, Math.PI * 2);
+      }
+      ctx.fill('evenodd');
+
+      // Pulsing spotlight outlines
+      const pulse = 0.6 + 0.4 * Math.sin(performance.now() * 0.008);
+      ctx.strokeStyle = `rgba(56, 189, 248, ${pulse})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(lead.x, lead.y - 4, 45, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (tTarget) {
+        const tx = tTarget.x + TILE / 2;
+        const ty = tTarget.y + TILE / 2;
+        ctx.strokeStyle = `rgba(253, 224, 71, ${pulse})`;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 55, 0, Math.PI * 2);
+        ctx.stroke();
+        drawStage1Trail(ctx, lead, tTarget, true);
+      }
+
+      // Callout Card positioned clear of target & player
+      const cardW = 540;
+      const cardH = 104;
+      const cardX = (LOGICAL_W - cardW) / 2;
+      const lowerOccupied = (tTarget && tTarget.r >= 5) || lead.y > LOGICAL_H - 180;
+      const cardY = lowerOccupied ? 58 : LOGICAL_H - 126;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.96)';
+      ctx.strokeStyle = '#fde047';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(cardX, cardY, cardW, cardH, 14);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#fde047';
+      ctx.font = '800 14px "Plus Jakarta Sans", system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(tutInfo.title, cardX + 18, cardY + 26);
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '500 13px "Plus Jakarta Sans", system-ui, sans-serif';
+      ctx.fillText(tutInfo.text, cardX + 18, cardY + 50);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '600 11.5px "Plus Jakarta Sans", system-ui, sans-serif';
+      ctx.fillText('Move (WASD), press SPACE, or click Continue to act.', cardX + 18, cardY + 84);
+
+      const contRect = { x: cardX + cardW - 224, y: cardY + 66, w: 100, h: 28 };
+      const skipRect = { x: cardX + cardW - 116, y: cardY + 66, w: 102, h: 28 };
+      state.tutorialBtnRects = { cont: contRect, skip: skipRect };
+
+      ctx.fillStyle = '#2563eb';
+      ctx.beginPath(); ctx.roundRect(contRect.x, contRect.y, contRect.w, contRect.h, 8); ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 12px "Plus Jakarta Sans", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Continue', contRect.x + contRect.w / 2, contRect.y + 18);
+
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.roundRect(skipRect.x, skipRect.y, skipRect.w, skipRect.h, 8); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText('Skip [Tab]', skipRect.x + skipRect.w / 2, skipRect.y + 18);
+      ctx.restore();
+    } else {
+      // Unpaused active step banner at bottom-center
+      ctx.save();
+      const bw = 840, bh = 34, bx = (LOGICAL_W - bw) / 2, by = LOGICAL_H - 42;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.strokeStyle = 'rgba(253, 224, 71, 0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill(); ctx.stroke();
+
+      ctx.fillStyle = '#fde047';
+      ctx.font = '700 11.5px "Plus Jakarta Sans", system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${tutInfo.title}: `, bx + 14, by + 21);
+      const titleW = ctx.measureText(`${tutInfo.title}: `).width;
+
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = '500 11.5px "Plus Jakarta Sans", system-ui, sans-serif';
+      ctx.fillText(tutInfo.text, bx + 14 + titleW, by + 21);
+
+      const skipRect = { x: bx + bw - 96, y: by + 5, w: 86, h: 24 };
+      state.tutorialBtnRects = { skip: skipRect };
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
+      ctx.beginPath(); ctx.roundRect(skipRect.x, skipRect.y, skipRect.w, skipRect.h, 6); ctx.fill();
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '700 10.5px "Plus Jakarta Sans", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Skip [Tab]', skipRect.x + skipRect.w / 2, skipRect.y + 16);
+      ctx.restore();
     }
   }
 }

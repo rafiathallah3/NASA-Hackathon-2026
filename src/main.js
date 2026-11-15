@@ -1,7 +1,7 @@
-import { LOGICAL_W, LOGICAL_H } from './config.js';
-import { state, resetRunState } from './state.js';
+import { LOGICAL_W, LOGICAL_H, RECIPES, SCIENCE_OBJECTIVES } from './config.js';
+import { state, resetRunState, auditScienceBaselineRequirements, logBlackBox } from './state.js';
 import { broadcastNet, registerNetStageHandler } from './net.js';
-import { selectActiveCrew, cycleCoopMode, showMenuModal, updateBottomHUD, updateClockHUD, showMissionToast, hideMissionToast } from './hud.js';
+import { selectActiveCrew, cycleCoopMode, showMenuModal, renderTicketsHUD, updateBottomHUD, updateClockHUD, showMissionToast, hideMissionToast } from './hud.js';
 import { startTransition, skipTransition, updateTransition, drawTransition } from './transitions.js';
 import { initStage1, buildStage1Map, handleStage1Interact, handleStage1Dash, handleStage1Throw, handleStage1CanvasClick, skipStage1Tutorial, updateStage1, drawStage1 } from './stages/stage1.js';
 import { startStage1B, handleStage1BSeparation, updateStage1B, drawStage1B } from './stages/stage1b.js';
@@ -66,10 +66,11 @@ function toStage2() {
 
 function toStage3A() {
   hideMissionToast();
+  const objLoc = (SCIENCE_OBJECTIVES?.[state.selectedObjective]?.targetLocation || 'SHACKLETON RIM').toUpperCase();
   startTransition({
     kind: 'LUNAR_UNDOCK',
     badge: 'LUNAR ORBIT RENDEZVOUS',
-    title: 'HLS LANDER UNDOCKING OVER SHACKLETON RIM',
+    title: `HLS LANDER UNDOCKING OVER ${objLoc}`,
     subtitle: 'Igniting descent engines for Point A landing pad approach...',
     duration: 2.2,
     onComplete: startStage3A
@@ -82,7 +83,7 @@ function toStage3B() {
     kind: 'ROVER_DEPLOY',
     badge: 'SURFACE OPERATIONS',
     title: 'DEPLOYING DUAL LTV LUNAR ROVERS',
-    subtitle: 'Point A secured — drive to Point B Crater, Seismic Array & Relay Dish!',
+    subtitle: 'Point A secured. Drive to Point B Crater, Seismic Array, and Relay Dish.',
     duration: 2.2,
     onComplete: startStage3B
   });
@@ -112,11 +113,76 @@ function toStage4() {
   });
 }
 
-function advanceStageManual(fromNet = false) {
-  if (!fromNet && state.stage === 'STAGE1' && state.shippedCount === 0 && !state._warnedEmptyLaunch) {
-    state._warnedEmptyLaunch = true;
-    showMissionToast('No Modules Built', 'Build at least 1 NASA module or click Launch Mission again to fly bare!');
+function openScienceAuditModal(audit) {
+  const modal = document.getElementById('modal');
+  const content = document.getElementById('modal-content');
+  if (!modal || !content) {
+    toStage1B();
     return;
+  }
+
+  const obj = SCIENCE_OBJECTIVES?.[state.selectedObjective] || {};
+  const missingTitles = (audit.missing || []).map(id => {
+    const rec = RECIPES.find(r => r.id === id);
+    return rec ? rec.title : id;
+  });
+
+  content.innerHTML = `
+    <div class="cml-review-header">
+      <span class="cml-warn-badge">NASA SYSTEMS REVIEW: CML-3 TRADE STUDY</span>
+    </div>
+    <h1>Baseline Science Requirements Incomplete</h1>
+    <p class="sub">
+      Selected goal <b>${obj.title || 'Lunar Science'}</b> requires all baseline payload modules for CML-4 Point Design sign-off.
+    </p>
+    <div class="config-panel" style="margin-bottom:16px;">
+      <h3>Missing Mandatory Module${missingTitles.length === 1 ? '' : 's'}</h3>
+      <ul class="audit-missing-list">
+        ${missingTitles.map(title => `<li>${title}</li>`).join('')}
+      </ul>
+      ${obj.failurePenalty ? `<p class="audit-penalty-note">${obj.failurePenalty}</p>` : ''}
+    </div>
+    <div class="modal-actions">
+      <button id="btn-audit-return" class="btn-secondary" type="button">Return to Hangar</button>
+      <button id="btn-audit-proceed" class="btn-play" type="button">Launch with Science Penalty</button>
+    </div>
+  `;
+
+  document.getElementById('btn-audit-return').addEventListener('click', () => {
+    modal.classList.add('hidden');
+  });
+
+  document.getElementById('btn-audit-proceed').addEventListener('click', () => {
+    logBlackBox(
+      'STAGE 1A',
+      `CML-3 Systems Review override for ${obj.title || state.selectedObjective}: launched without ${missingTitles.join(', ')}.`,
+      'warn'
+    );
+    modal.classList.add('hidden');
+    if (state.coopMode === 'NET_4P') {
+      broadcastNet({ type: 'STAGE_SYNC', action: 'ADVANCE', fromStage: state.stage });
+    }
+    toStage1B();
+  });
+
+  modal.classList.remove('hidden');
+}
+
+function advanceStageManual(fromNet = false) {
+  if (state.stage === 'STAGE1') {
+    const audit = auditScienceBaselineRequirements();
+    if (!fromNet && !audit.passed) {
+      openScienceAuditModal(audit);
+      return;
+    }
+    if (!fromNet && state.shippedCount === 0 && !state._warnedEmptyLaunch) {
+      state._warnedEmptyLaunch = true;
+      showMissionToast('No Modules Built', 'Build at least 1 NASA module or click Launch Mission again to fly bare!');
+      return;
+    }
+    if (audit.passed) {
+      logBlackBox('STAGE 1A', audit.auditText || 'CML-4 Point Design verified for baseline science requirements.', 'good');
+    }
   }
   if (!fromNet && state.coopMode === 'NET_4P') {
     broadcastNet({ type: 'STAGE_SYNC', action: 'ADVANCE', fromStage: state.stage });
@@ -137,7 +203,13 @@ function startGame(fromNet = false) {
   resetRunState();
   initStage1();
   if (!fromNet && state.coopMode === 'NET_4P') {
-    broadcastNet({ type: 'STAGE_SYNC', action: 'START', scenario: state.selectedScenario, vehicle: state.selectedVehicle });
+    broadcastNet({
+      type: 'STAGE_SYNC',
+      action: 'START',
+      scenario: state.selectedScenario,
+      vehicle: state.selectedVehicle,
+      objective: state.selectedObjective
+    });
   }
   state.lastTime = performance.now();
   requestAnimationFrame(loop);
@@ -156,6 +228,7 @@ registerNetStageHandler((msg) => {
   if (msg.action === 'START') {
     if (msg.scenario) state.selectedScenario = msg.scenario;
     if (msg.vehicle) state.selectedVehicle = msg.vehicle;
+    if (msg.objective) state.selectedObjective = msg.objective;
     startGame(true);
   } else if (msg.action === 'ADVANCE' && msg.fromStage === state.stage) {
     advanceStageManual(true);
@@ -177,6 +250,22 @@ document.getElementById('btn-guide').addEventListener('click', () => {
 document.getElementById('btn-close-guide').addEventListener('click', () => {
   document.getElementById('guide-modal').classList.add('hidden');
 });
+const replayGuideBtn = document.getElementById('btn-replay-guide');
+if (replayGuideBtn) {
+  replayGuideBtn.addEventListener('click', () => {
+    document.getElementById('guide-modal').classList.add('hidden');
+    if (state.stage === 'STAGE1') {
+      state.pinnedRecipeId = 'sensor_pod';
+      state.tutorial = { active: true, step: 0, paused: true, skipped: false, startShipped: state.shippedCount || 0 };
+      renderTicketsHUD();
+    } else {
+      resetRunState();
+      state.pinnedRecipeId = 'sensor_pod';
+      state.tutorial = { active: true, step: 0, paused: true, skipped: false, startShipped: 0 };
+      initStage1();
+    }
+  });
+}
 
 document.getElementById('btn-mute').addEventListener('click', (e) => {
   state.muted = !state.muted;
@@ -233,6 +322,17 @@ window.addEventListener('keydown', (e) => {
     handleStage1Throw(state.players[1]);
   }
 
+  // Unpause Stage 1 Spotlight Tutorial Step when player starts moving or pressing action
+  if (
+    state.stage === 'STAGE1' &&
+    state.tutorial?.active &&
+    state.tutorial?.paused &&
+    ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyE', 'Enter'].includes(e.code)
+  ) {
+    state.tutorial.paused = false;
+    if (['Space', 'KeyE', 'Enter'].includes(e.code)) return;
+  }
+
   if ((e.code === 'Space' || e.code === 'KeyE') && !e.repeat) {
     if (state.stage === 'TRANSITION') {
       skipTransition();
@@ -269,8 +369,11 @@ window.addEventListener('keydown', (e) => {
 
   if (e.code === 'Escape') {
     const guideModal = document.getElementById('guide-modal');
+    const mainModal = document.getElementById('modal');
     if (!guideModal.classList.contains('hidden')) {
       guideModal.classList.add('hidden');
+    } else if (state.stage === 'STAGE1' && mainModal && !mainModal.classList.contains('hidden')) {
+      mainModal.classList.add('hidden');
     } else if (state.stage === 'STAGE2' && state.activeMiniGame) {
       state.activeMiniGame = null;
     }
@@ -284,6 +387,7 @@ window.addEventListener('keyup', (e) => {
 function update(dt) {
   if (state.stage === 'MENU' || state.stage === 'STAGE5') return;
   if (!document.getElementById('guide-modal').classList.contains('hidden')) return;
+  if (!document.getElementById('modal').classList.contains('hidden')) return;
   if (state.dilemma) return;
 
   if (state.screenShake > 0) {
@@ -316,7 +420,7 @@ function update(dt) {
   else if (state.stage === 'STAGE4') updateStage4(dt, goToDebrief, () => {
     resetRunState();
     state.stage = 'MENU';
-    showMenuModal(startGame);
+    showMenuModal(() => startGame(false));
   });
 
   for (let i = state.lunarParticles.length - 1; i >= 0; i--) {

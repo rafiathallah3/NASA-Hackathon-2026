@@ -60,12 +60,16 @@ export function startStage2() {
   state.orbitState = {
     progress: 0,
     battery: startBatt,
+    shipIntegrity: 100,
     dataBuffer: 30,
     inEclipse: false,
     inGroundCone: false,
     inScanZone: false,
     eventTimer: 3.0,
     tasksCompleted: 0,
+    minTasksRequired: 3,
+    overtimeHold: 0,
+    alarmPulseCd: 0,
     arrivalReady: false,
     arrivalHold: 0,
     eclipseDilemmaShown: false
@@ -92,20 +96,70 @@ export function startStage2() {
 
   state.consoles = [
     { id: 'SPACE',  room: 'Reactor Bay', label: 'REACTOR WIRING',  sub: 'Match 4 Color Wires',    x: 245,  y: 195, color: '#f59e0b', alert: true,  needsWrench: false, botProg: 0 },
-    { id: 'USER',   room: 'Bridge',      label: 'METEOR TURRET',   sub: 'Clear 5 Space Rocks',    x: 940,  y: 335, color: '#0284c7', alert: true,  needsWrench: false, botProg: 0 },
+    { id: 'USER',   room: 'Bridge',      label: 'MCC-1 BURN',      sub: 'GMAT Trajectory Trim',   x: 940,  y: 335, color: '#0284c7', alert: true,  needsWrench: false, botProg: 0 },
     { id: 'CALIB',  room: 'Science Lab', label: 'DISTRIBUTOR',     sub: 'Sync 3 Timing Rings',    x: 1555, y: 205, color: '#a855f7', alert: false, needsWrench: false, botProg: 0 },
     { id: 'LAUNCH', room: 'Engine Room', label: 'HULL BREACH',     sub: 'Wrench + Torque Bolts',  x: 680,  y: 720, color: '#dc2626', alert: false, needsWrench: true,  botProg: 0 },
     { id: 'GROUND', room: 'Comms Bay',   label: 'KA-BAND DISH',    sub: 'Tune Downlink Carrier',  x: 1560, y: 710, color: '#10b981', alert: false, needsWrench: false, botProg: 0 }
   ];
 
+  state.mccResult = {
+    completed: false,
+    bPlaneMissKm: 120,
+    nominalCapture: false,
+    fuelPenaltyPct: 18,
+    propellantBurnedKg: 0
+  };
+  ensureMccPointerListeners();
+
   setStageBanner(
-    'STAGE 2 — ORBITAL CRUISER',
-    'Follow Red Waypoint Arrows Across 5 Ship Bays',
-    'Walk to flashing RED consoles (check Top-Left Checklist) and press [SPACE] or CLICK to clear alerts!',
-    `<kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> / Click Task &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Switch Crew &nbsp;•&nbsp; <kbd>ESC</kbd> Close`,
+    'STAGE 2: ORBITAL CRUISER',
+    'Clear Red Console Alerts Across 5 Ship Bays',
+    'Follow red arrows to flashing consoles (see top-left checklist) and press [SPACE] or CLICK.',
+    `<kbd>WASD</kbd> Move &nbsp;•&nbsp; <kbd>SPACE</kbd> / Click Task &nbsp;•&nbsp; <kbd>1</kbd>-<kbd>4</kbd> Crew &nbsp;•&nbsp; <kbd>ESC</kbd> Close`,
     { showTickets: false, showSkip: false, showNext: true }
   );
   updateBottomHUD();
+}
+
+let mccPointerBound = false;
+
+function getMccFireButtonRect(mx, my) {
+  return { x: mx - 110, y: my + 80, w: 220, h: 32 };
+}
+
+function isPointInRect(lx, ly, rect) {
+  return lx >= rect.x && lx <= rect.x + rect.w && ly >= rect.y && ly <= rect.y + rect.h;
+}
+
+function ensureMccPointerListeners() {
+  if (mccPointerBound || typeof window === 'undefined' || typeof document === 'undefined') return;
+  const canvas = document.getElementById('game');
+  if (!canvas) return;
+  mccPointerBound = true;
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state.stage !== 'STAGE2' || state.activeMiniGame?.type !== 'MCC_BURN') return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const lx = ((e.clientX - rect.left) / rect.width) * LOGICAL_W;
+    const ly = ((e.clientY - rect.top) / rect.height) * LOGICAL_H;
+    const btn = getMccFireButtonRect(LOGICAL_W / 2, LOGICAL_H / 2 + 12);
+    if (isPointInRect(lx, ly, btn)) {
+      state.activeMiniGame.buttonHeld = true;
+      state.activeMiniGame.holdStartMs = performance.now();
+    }
+  });
+
+  window.addEventListener('pointerup', () => {
+    const mg = state.activeMiniGame;
+    if (!mg || mg.type !== 'MCC_BURN' || !mg.buttonHeld) return;
+    const heldMs = performance.now() - (mg.holdStartMs || 0);
+    mg.buttonHeld = false;
+    if (heldMs > 200) {
+      mg.isBurning = false;
+      mg.suppressNextClick = true;
+    }
+  });
 }
 
 function shuffledIndices() {
@@ -134,21 +188,21 @@ function openConsoleMiniGame(c) {
       matched: [false, false, false, false]
     };
   } else if (c.id === 'USER') {
-    const rocks = Array.from({ length: 5 }, (_, i) => ({
-      x: (Math.random() - 0.5) * 260,
-      y: (Math.random() - 0.5) * 120,
-      vx: (Math.random() < 0.5 ? -1 : 1) * (40 + i * 10),
-      vy: (Math.random() < 0.5 ? -1 : 1) * (30 + i * 7),
-      r: 16 + (i % 2) * 4,
-      hit: false
-    }));
     state.activeMiniGame = {
-      type: 'ASTEROIDS',
+      type: 'MCC_BURN',
       console: c,
-      aimX: 0,
-      aimY: 0,
-      rocks,
-      cleared: 0
+      targetPitch: 34.5,
+      currentPitch: 12.0,
+      targetDeltaV: 45.0,
+      burnedDeltaV: 0,
+      bPlaneMissKm: 110,
+      captureThresholdKm: 25.0,
+      propellantUsed: 0,
+      isBurning: false,
+      buttonHeld: false,
+      holdStartMs: 0,
+      suppressNextClick: false,
+      completed: false
     };
   } else if (c.id === 'CALIB') {
     state.activeMiniGame = {
@@ -189,7 +243,7 @@ export function toggleBreaker(idx) {
   }
 }
 
-function completeConsoleTask(c, msg, pts) {
+function completeConsoleTask(c, msg, pts, opts = {}) {
   c.alert = false;
   c.botProg = 0;
   const lead = state.ctrlPlayers[state.activeCrewIndex] || state.ctrlPlayers[0];
@@ -200,14 +254,74 @@ function completeConsoleTask(c, msg, pts) {
   state.score += pts;
   state.telemetry.science += 25;
   state.orbitState.tasksCompleted++;
-  if (c.id === 'SPACE') state.orbitState.battery = Math.min(100, state.orbitState.battery + 18);
+  state.orbitState.shipIntegrity = Math.min(100, (state.orbitState.shipIntegrity ?? 100) + 10);
+  state.orbitState.battery = Math.min(100, state.orbitState.battery + (c.id === 'SPACE' ? 18 : 8));
   if (c.id === 'GROUND') state.orbitState.dataBuffer = Math.max(0, state.orbitState.dataBuffer - 40);
-  addFloatText(c.x, c.y - 45, msg, '#4ade80');
-  showMissionToast(c.label, `${c.room} nominal — bus telemetry stabilized.`);
-  logBlackBox('STAGE 2', `${lead.name} completed ${c.label} in ${c.room}.`, 'good');
+  addFloatText(c.x, c.y - 45, msg, opts.floatColor || '#4ade80');
+  showMissionToast(c.label, opts.toastDetail || `${c.room} cleared. Bus power stabilized.`);
+  logBlackBox('STAGE 2', opts.blackBoxText || `${lead.name} completed ${c.label} in ${c.room}.`, opts.blackBoxKind || 'good');
   playSuccessChord();
   state.activeMiniGame = null;
   updateBottomHUD();
+}
+
+function completeMccBurn(mg) {
+  if (mg.completed) return;
+  mg.completed = true;
+  mg.isBurning = false;
+  mg.buttonHeld = false;
+
+  const missKm = Math.round(mg.bPlaneMissKm);
+  const propKg = Number(mg.propellantUsed.toFixed(1));
+  let nominalCapture = false;
+  let fuelPenaltyPct = 18;
+  let pts = 0;
+  let floatMsg = '';
+  let floatColor = '#fde047';
+  let toastDetail = '';
+  let blackBoxKind = 'warn';
+
+  if (missKm <= mg.captureThresholdKm) {
+    nominalCapture = true;
+    fuelPenaltyPct = 0;
+    pts = 120;
+    floatMsg = `MCC-1 NOMINAL (${missKm} km)! +120⭐`;
+    floatColor = '#4ade80';
+    toastDetail = `B-Plane miss ${missKm} km. Lunar capture corridor locked (0% descent fuel penalty).`;
+    blackBoxKind = 'good';
+  } else if (missKm <= 75) {
+    nominalCapture = false;
+    fuelPenaltyPct = 8;
+    pts = 60;
+    floatMsg = `MCC-1 MARGINAL (${missKm} km) +60⭐`;
+    floatColor = '#fbbf24';
+    toastDetail = `B-Plane miss ${missKm} km. +8% descent fuel penalty in Stage 3A.`;
+    blackBoxKind = 'warn';
+  } else {
+    nominalCapture = false;
+    fuelPenaltyPct = 18;
+    pts = 0;
+    floatMsg = `MCC-1 OFF-CORRIDOR (${missKm} km)`;
+    floatColor = '#f87171';
+    toastDetail = `B-Plane miss ${missKm} km (>75 km). +18% descent fuel penalty in Stage 3A.`;
+    blackBoxKind = 'warn';
+  }
+
+  state.mccResult = {
+    completed: true,
+    bPlaneMissKm: missKm,
+    nominalCapture,
+    fuelPenaltyPct,
+    propellantBurnedKg: propKg
+  };
+
+  const statusTag = nominalCapture ? 'NOMINAL' : (fuelPenaltyPct === 8 ? 'MARGINAL +8% fuel' : 'OFF-CORRIDOR +18% fuel');
+  completeConsoleTask(mg.console, floatMsg, pts, {
+    floatColor,
+    toastDetail,
+    blackBoxText: `MCC-1 trajectory burn complete: B-Plane miss ${missKm} km (${statusTag}, ${propKg} kg propellant used).`,
+    blackBoxKind
+  });
 }
 
 function triggerDistributorHit(mg) {
@@ -237,17 +351,10 @@ export function handleStage2Interact() {
     const mg = state.activeMiniGame;
     if (mg.type === 'DISTRIBUTOR') {
       triggerDistributorHit(mg);
-    } else if (mg.type === 'ASTEROIDS') {
-      const target = mg.rocks.find(r => !r.hit && Math.hypot(mg.aimX - r.x, mg.aimY - r.y) <= r.r + 18);
-      if (target) {
-        target.hit = true;
-        mg.cleared++;
-        playTone(620, 'square', 0.07, 0.1);
-        if (mg.cleared >= mg.rocks.length) {
-          completeConsoleTask(mg.console, 'METEOROIDS CLEARED! +100⭐', 100);
-        }
-      } else {
-        playTone(210, 'sine', 0.05, 0.06);
+    } else if (mg.type === 'MCC_BURN') {
+      if (!mg.completed) {
+        mg.isBurning = !mg.isBurning;
+        playTone(mg.isBurning ? 320 : 210, 'triangle', 0.08, 0.09);
       }
     } else if (mg.type === 'WIRES') {
       const nextUnmatched = mg.matched.findIndex(m => !m);
@@ -351,17 +458,15 @@ export function handleStage2CanvasClick(lx, ly) {
     if (lx >= mx - 210 && lx <= mx + 210 && ly >= my - 140 && ly <= my + 140) {
       triggerDistributorHit(mg);
     }
-  } else if (mg.type === 'ASTEROIDS') {
-    const relX = lx - mx;
-    const relY = ly - (my + 10);
-    const target = mg.rocks.find(r => !r.hit && Math.hypot(relX - r.x, relY - r.y) <= r.r + 16);
-    if (target) {
-      target.hit = true;
-      mg.cleared++;
-      playTone(620, 'square', 0.07, 0.1);
-      if (mg.cleared >= mg.rocks.length) {
-        completeConsoleTask(mg.console, 'METEOROIDS CLEARED! +100⭐', 100);
-      }
+  } else if (mg.type === 'MCC_BURN') {
+    if (mg.suppressNextClick) {
+      mg.suppressNextClick = false;
+      return;
+    }
+    const fireBtn = getMccFireButtonRect(mx, my);
+    if (!mg.completed && isPointInRect(lx, ly, fireBtn)) {
+      mg.isBurning = !mg.isBurning;
+      playTone(mg.isBurning ? 320 : 210, 'triangle', 0.08, 0.09);
     }
   } else if (mg.type === 'LAUNCH') {
     mg.boltsTightened++;
@@ -385,28 +490,49 @@ function moveCtrlPlayer(p, dx, dy) {
   if (dy !== 0 && !blocked(p.x, p.y + dy)) p.y += dy;
 }
 
+function getShipRoomId(x, y) {
+  if (y >= 430 && y <= 530) return 'HALLWAY';
+  if (y < 430) {
+    if (x < 610) return 'REACTOR';
+    if (x < 1270) return 'BRIDGE';
+    return 'SCI_LAB';
+  }
+  return x < 910 ? 'ENGINE' : 'COMMS';
+}
+
+const ROOM_SPINE_DOOR_X = {
+  REACTOR: 350,
+  BRIDGE: 940,
+  SCI_LAB: 1540,
+  ENGINE: 430,
+  COMMS: 1370
+};
+
 function steerShipBot(b, tx, ty, dt) {
-  // Use Spine Corridor (y = 480) when traversing between different rooms
-  let wx = tx, wy = ty;
-  const inSameBand = Math.abs(b.y - ty) < 150 && !(b.y < 430 && ty < 430 && Math.abs(b.x - tx) > 540);
-  if (!inSameBand && Math.abs(b.y - 480) > 40) {
-    // Route through nearest doorway to spine (x=350, 940, 1540 top; x=430, 1370 bottom)
-    const doorsX = b.y < 430 ? [350, 940, 1540] : [430, 1370];
-    let bestDoor = doorsX[0];
-    for (const ddx of doorsX) {
-      if (Math.abs(ddx - b.x) < Math.abs(bestDoor - b.x)) bestDoor = ddx;
-    }
-    wx = bestDoor;
-    wy = 480;
-  } else if (Math.abs(b.y - 480) <= 55 && Math.abs(ty - 480) > 65) {
-    const targetDoorsX = ty < 430 ? [350, 940, 1540] : [430, 1370];
-    let bestDoor = targetDoorsX[0];
-    for (const ddx of targetDoorsX) {
-      if (Math.abs(ddx - tx) < Math.abs(bestDoor - tx)) bestDoor = ddx;
-    }
-    if (Math.abs(b.x - bestDoor) > 36) {
-      wx = bestDoor;
-      wy = 480;
+  const botRoom = getShipRoomId(b.x, b.y);
+  const targetRoom = getShipRoomId(tx, ty);
+  let wx = tx;
+  let wy = ty;
+
+  if (botRoom !== targetRoom) {
+    if (botRoom !== 'HALLWAY') {
+      const exitDoorX = ROOM_SPINE_DOOR_X[botRoom] || 940;
+      if (Math.abs(b.x - exitDoorX) > 24) {
+        wx = exitDoorX;
+        wy = b.y < 430 ? Math.min(b.y, 385) : Math.max(b.y, 575);
+      } else {
+        wx = exitDoorX;
+        wy = 480;
+      }
+    } else {
+      const enterDoorX = ROOM_SPINE_DOOR_X[targetRoom] || tx;
+      if (Math.abs(b.x - enterDoorX) > 24) {
+        wx = enterDoorX;
+        wy = 480;
+      } else {
+        wx = tx;
+        wy = ty;
+      }
     }
   }
 
@@ -416,7 +542,7 @@ function steerShipBot(b, tx, ty, dt) {
   if (d > 10) {
     b.angle = Math.atan2(dy, dx);
     b.walk += 0.2;
-    moveCtrlPlayer(b, (dx / d) * 205 * dt, (dy / d) * 205 * dt);
+    moveCtrlPlayer(b, (dx / d) * 210 * dt, (dy / d) * 210 * dt);
   }
   return Math.hypot(tx - b.x, ty - b.y);
 }
@@ -424,16 +550,40 @@ function steerShipBot(b, tx, ty, dt) {
 export function updateStage2(dt, onNextStage) {
   const scen = getScenario();
   const os = state.orbitState;
+  const activeAlertCount = state.consoles.filter(c => c.alert).length;
+  const quotaMet = os.tasksCompleted >= (os.minTasksRequired || 3) && activeAlertCount < 3;
 
   if (state.stageTimer <= 0) {
     state.stageTimer = 0;
     os.arrivalReady = true;
     if (state.activeMiniGame) {
       os.arrivalHold = 0;
+    } else if (!quotaMet && os.overtimeHold < 10) {
+      os.overtimeHold += dt;
+      os.arrivalHold = 0;
+      if (activeAlertCount === 0) {
+        const calm = state.consoles.filter(c => !c.alert && !(c.id === 'USER' && state.mccResult?.completed));
+        if (calm.length > 0) calm[Math.floor(Math.random() * calm.length)].alert = true;
+      }
     } else {
       os.arrivalHold += dt;
       if (os.arrivalHold >= 2.6) {
-        logBlackBox('STAGE 2', `Translunar cruise complete (${os.tasksCompleted} tasks, ${Math.round(os.battery)}% bus battery).`, 'info');
+        if (!state.mccResult?.completed) {
+          state.mccResult = {
+            completed: false,
+            bPlaneMissKm: state.mccResult?.bPlaneMissKm ?? 120,
+            nominalCapture: false,
+            fuelPenaltyPct: 18,
+            propellantBurnedKg: state.mccResult?.propellantBurnedKg ?? 0
+          };
+          logBlackBox('STAGE 2', 'MCC-1 burn uncompleted before Lunar Orbit Insertion (+18% Stage 3A descent fuel penalty).', 'warn');
+        }
+        if (!quotaMet) {
+          state.telemetry.fuel = Math.max(35, state.telemetry.fuel - 10);
+          logBlackBox('STAGE 2', `Unresolved ship alerts at Lunar Orbit Insertion cost -10% descent propellant.`, 'warn');
+        } else {
+          logBlackBox('STAGE 2', `Translunar cruise complete (${os.tasksCompleted} tasks, ${Math.round(os.battery)}% bus battery, ${Math.round(os.shipIntegrity)}% hull).`, 'good');
+        }
         onNextStage();
         return;
       }
@@ -486,10 +636,39 @@ export function updateStage2(dt, onNextStage) {
     return;
   }
 
-  const powerGen = os.inEclipse
+  const alertDrain = activeAlertCount * 0.9;
+  const powerGen = (os.inEclipse
     ? (-3.2 * scen.eclipseDrainMul)
-    : (2.2 + state.shippedModules.power_pack * 1.4);
-  os.battery = Math.max(10, Math.min(100, os.battery + powerGen * dt));
+    : (2.2 + state.shippedModules.power_pack * 1.4)) - alertDrain;
+  os.battery = Math.max(0, Math.min(100, os.battery + powerGen * dt));
+
+  if (activeAlertCount >= 2) {
+    os.shipIntegrity = Math.max(0, (os.shipIntegrity ?? 100) - (activeAlertCount - 1) * 1.65 * dt);
+  } else if (activeAlertCount === 0 && (os.shipIntegrity ?? 100) < 100) {
+    os.shipIntegrity = Math.min(100, (os.shipIntegrity ?? 100) + 0.6 * dt);
+  }
+
+  if (activeAlertCount >= 3 || os.battery < 22 || (os.shipIntegrity ?? 100) < 35) {
+    os.alarmPulseCd = (os.alarmPulseCd || 0) - dt;
+    if (os.alarmPulseCd <= 0) {
+      os.alarmPulseCd = 1.9;
+      playTone(195, 'sawtooth', 0.14, 0.08);
+    }
+  }
+
+  if (os.battery <= 0 || (os.shipIntegrity ?? 100) <= 0) {
+    os.battery = Math.max(35, os.battery);
+    os.shipIntegrity = Math.max(55, os.shipIntegrity ?? 55);
+    state.score = Math.max(0, state.score - 60);
+    state.telemetry.fuel = Math.max(30, state.telemetry.fuel - 8);
+    let cleared = 0;
+    for (const c of state.consoles) {
+      if (c.alert && cleared < 2) { c.alert = false; c.botProg = 0; cleared++; }
+    }
+    state.screenShake = 0.25;
+    showMissionToast('Auxiliary Bus Reboot', 'Critical alert overload forced backup power reset (-60⭐, -8% fuel)!');
+    logBlackBox('STAGE 2', 'Critical alert overload triggered Emergency Bus Reboot (-8% descent fuel).', 'warn');
+  }
 
   if (os.inScanZone && os.dataBuffer < 98) {
     os.dataBuffer = Math.min(100, os.dataBuffer + (4.5 + state.shippedModules.sensor_pod * 1.5) * dt);
@@ -508,7 +687,7 @@ export function updateStage2(dt, onNextStage) {
       if (os.inEclipse) state.consoles.find(c => c.id === 'SPACE').alert = true;
       else if (os.dataBuffer > 55) state.consoles.find(c => c.id === 'GROUND').alert = true;
       else {
-        const calm = state.consoles.filter(c => !c.alert);
+        const calm = state.consoles.filter(c => !c.alert && !(c.id === 'USER' && state.mccResult?.completed));
         if (calm.length > 0) calm[Math.floor(Math.random() * calm.length)].alert = true;
       }
     }
@@ -517,19 +696,26 @@ export function updateStage2(dt, onNextStage) {
   // Active Among Us Mini-Game Update
   if (state.activeMiniGame) {
     const mg = state.activeMiniGame;
-    if (mg.type === 'ASTEROIDS') {
-      if (state.keys['KeyW'] || state.keys['ArrowUp']) mg.aimY -= 200 * dt;
-      if (state.keys['KeyS'] || state.keys['ArrowDown']) mg.aimY += 200 * dt;
-      if (state.keys['KeyA'] || state.keys['ArrowLeft']) mg.aimX -= 200 * dt;
-      if (state.keys['KeyD'] || state.keys['ArrowRight']) mg.aimX += 200 * dt;
-      mg.aimX = Math.max(-165, Math.min(165, mg.aimX));
-      mg.aimY = Math.max(-80, Math.min(80, mg.aimY));
-      for (const r of mg.rocks) {
-        if (r.hit) continue;
-        r.x += r.vx * dt;
-        r.y += r.vy * dt;
-        if (Math.abs(r.x) > 155) r.vx *= -1;
-        if (Math.abs(r.y) > 72) r.vy *= -1;
+    if (mg.type === 'MCC_BURN' && !mg.completed) {
+      if (state.keys['KeyA'] || state.keys['ArrowLeft']) mg.currentPitch -= 28 * dt;
+      if (state.keys['KeyD'] || state.keys['ArrowRight']) mg.currentPitch += 28 * dt;
+      mg.currentPitch = Math.max(-30, Math.min(80, mg.currentPitch));
+
+      const keyBurn = Boolean(state.keys['KeyW'] || state.keys['ArrowUp']);
+      const burning = mg.isBurning || keyBurn || mg.buttonHeld;
+      if (burning) {
+        const pitchError = Math.abs(mg.currentPitch - mg.targetPitch);
+        const burnEfficiency = Math.max(0.25, 1.0 - pitchError / 40.0);
+        const dV = 14.0 * burnEfficiency * dt;
+        const correction = dV * 3.4;
+
+        mg.burnedDeltaV = Math.min(mg.targetDeltaV, mg.burnedDeltaV + 14.0 * dt);
+        mg.propellantUsed += 0.85 * dt;
+        mg.bPlaneMissKm = Math.max(0, mg.bPlaneMissKm - correction);
+
+        if (mg.bPlaneMissKm <= 0 || mg.burnedDeltaV >= mg.targetDeltaV) {
+          completeMccBurn(mg);
+        }
       }
     } else if (mg.type === 'DISTRIBUTOR') {
       for (let i = mg.ringIndex; i < 3; i++) {
@@ -586,23 +772,31 @@ export function updateStage2(dt, onNextStage) {
   state.stage2Cam.x += (targetCamX - state.stage2Cam.x) * Math.min(1, dt * 7);
   state.stage2Cam.y += (targetCamY - state.stage2Cam.y) * Math.min(1, dt * 7);
 
-  // AI Crewmates roam rooms to assist consoles
+  // AI Crewmates roam rooms to assist consoles without stacking (skip MCC-1 Bridge console)
   if (state.coopMode === '4P_AI' || state.coopMode === 'LOCAL_2P') {
-    const alerting = state.consoles.filter(c => c.alert && !c.needsWrench && (!state.activeMiniGame || state.activeMiniGame.console !== c));
+    const alerting = state.consoles.filter(c => c.alert && !c.needsWrench && c.id !== 'USER' && (!state.activeMiniGame || state.activeMiniGame.console !== c));
+    const homeConsoles = ['LAUNCH', 'SPACE', 'CALIB', 'GROUND'];
+    let alertIdx = 0;
     for (let i = 0; i < state.ctrlPlayers.length; i++) {
       if (i === state.activeCrewIndex) continue;
       if (state.coopMode === 'LOCAL_2P' && i === 1) continue;
       const b = state.ctrlPlayers[i];
-      const targetC = alerting[i % Math.max(1, alerting.length)];
+      const targetC = alerting.length > 0
+        ? alerting[alertIdx++ % alerting.length]
+        : state.consoles.find(c => c.id === homeConsoles[i % homeConsoles.length]);
       if (targetC) {
-        const dist = steerShipBot(b, targetC.x, targetC.y + 44, dt);
-        if (dist <= 32) {
+        const standX = targetC.x + ((i % 2 === 0 ? -1 : 1) * 18);
+        const standY = targetC.y + 46;
+        const dist = steerShipBot(b, standX, standY, dt);
+        if (targetC.alert && !targetC.needsWrench && targetC.id !== 'USER' && dist <= 36) {
           targetC.botProg += dt * 0.26;
           if (targetC.botProg >= 1) {
             targetC.alert = false;
             targetC.botProg = 0;
             state.score += 45;
             os.tasksCompleted++;
+            os.shipIntegrity = Math.min(100, (os.shipIntegrity ?? 100) + 6);
+            os.battery = Math.min(100, os.battery + 6);
             addFloatText(targetC.x, targetC.y - 38, `${b.name} RESOLVED! +45⭐`, '#fbbf24');
           }
         }
@@ -754,7 +948,7 @@ export function drawStage2(ctx) {
         ? '🔧 GRAB WRENCH IN ENGINE FIRST!'
         : inRange
           ? '🟢 PRESS [SPACE] OR CLICK NOW!'
-          : '⚠️ ALERT — GO HERE';
+          : '⚠️ ALERT: GO HERE';
       ctx.fillText(promptTxt, c.x, c.y - 48);
     }
   }
@@ -767,20 +961,40 @@ export function drawStage2(ctx) {
 
   ctx.restore();
 
-  // Top-Left Ship Task Checklist Card (screen space)
+  // Top-Left Ship Task Checklist Card + Red Emergency Lighting Pulse (screen space)
   const alertList = state.consoles.filter(c => c.alert);
-  const cardH = 38 + Math.max(1, Math.min(3, alertList.length)) * 22 + 12;
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-  ctx.strokeStyle = alertList.length > 0 ? '#ef4444' : '#22c55e';
+  const os = state.orbitState;
+  const minQuota = os.minTasksRequired || 3;
+  const quotaDone = os.tasksCompleted >= minQuota;
+  const redAlert = alertList.length >= 3 || os.battery < 25 || (os.shipIntegrity ?? 100) < 35;
+
+  if (redAlert) {
+    const alarmAlpha = 0.1 + 0.12 * (0.5 + 0.5 * Math.sin(performance.now() * 0.012));
+    ctx.save();
+    ctx.fillStyle = `rgba(220, 38, 38, ${alarmAlpha})`;
+    ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+    ctx.strokeStyle = `rgba(239, 68, 68, ${0.45 + alarmAlpha * 2})`;
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, LOGICAL_W - 8, LOGICAL_H - 8);
+    ctx.restore();
+  }
+
+  const cardH = 56 + Math.max(1, Math.min(3, alertList.length)) * 22 + 12;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+  ctx.strokeStyle = redAlert ? '#ef4444' : alertList.length > 0 ? '#f59e0b' : '#22c55e';
   ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.roundRect(14, 14, 290, cardH, 12); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = alertList.length > 0 ? '#fca5a5' : '#4ade80';
+  ctx.beginPath(); ctx.roundRect(14, 14, 304, cardH, 12); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = redAlert ? '#fca5a5' : alertList.length > 0 ? '#fde047' : '#4ade80';
   ctx.font = 'bold 12px Fredoka, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(`SHIP TASKS (${state.orbitState.tasksCompleted} DONE) • ${alertList.length} ALERT${alertList.length === 1 ? '' : 'S'}`, 26, 35);
+  ctx.fillText(`SHIP QUOTA: ${os.tasksCompleted}/${minQuota} ${quotaDone ? '✅' : '⏳'} • ${alertList.length} ALERT${alertList.length === 1 ? '' : 'S'}`, 26, 34);
+  ctx.fillStyle = (os.shipIntegrity ?? 100) < 45 ? '#f87171' : '#94a3b8';
+  ctx.font = 'bold 11px Fredoka, sans-serif';
+  ctx.fillText(`🛡️ Hull Integrity: ${Math.round(os.shipIntegrity ?? 100)}% • 🔋 Bus: ${Math.round(os.battery)}%`, 26, 52);
+
   if (alertList.length === 0) {
     ctx.fillStyle = '#cbd5e1'; ctx.font = '11.5px Fredoka, sans-serif';
-    ctx.fillText('✅ All bays nominal — patrol or standby!', 26, 58);
+    ctx.fillText('✅ All bays clear. Patrol or stand by.', 26, 74);
   } else {
     alertList.slice(0, 3).forEach((c, idx) => {
       const needW = c.needsWrench && (!activeCrew || !activeCrew.hasWrench);
@@ -788,7 +1002,7 @@ export function drawStage2(ctx) {
       const line = needW
         ? `${idx + 1}. Engine Tool Rack 🔧 → ${c.label}`
         : `${idx + 1}. ${c.room}: ${c.label}`;
-      ctx.fillText(line, 26, 58 + idx * 22);
+      ctx.fillText(line, 26, 74 + idx * 22);
     });
   }
 
@@ -934,7 +1148,7 @@ export function drawStage2(ctx) {
       ctx.fillStyle = inHitWindow ? '#4ade80' : '#fde047';
       ctx.font = 'bold 12.5px Fredoka, sans-serif';
       ctx.fillText(
-        inHitWindow ? '🟢 IN GREEN ZONE — PRESS [SPACE] / CLICK NOW!' : 'Wait for the orange dot to cross the GREEN wedge!',
+        inHitWindow ? '🟢 IN GREEN ZONE: PRESS [SPACE] OR CLICK!' : 'Wait for the orange dot to cross the GREEN wedge!',
         mx,
         my - 91
       );
@@ -956,29 +1170,110 @@ export function drawStage2(ctx) {
         ctx.fillStyle = mg.locked[i] ? '#4ade80' : '#f97316';
         ctx.beginPath(); ctx.arc(nx, ny, 8, 0, Math.PI * 2); ctx.fill();
       }
-    } else if (mg.type === 'ASTEROIDS') {
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka, sans-serif';
-      ctx.fillText(`BRIDGE DEFENSE: CLEAR METEOROIDS (${mg.cleared}/${mg.rocks.length})`, mx, my - 110);
-      ctx.fillStyle = '#091122';
-      ctx.strokeStyle = '#0284c7';
-      ctx.lineWidth = 2;
-      ctx.fillRect(mx - 175, my - 82, 350, 178);
-      ctx.strokeRect(mx - 175, my - 82, 350, 178);
+    } else if (mg.type === 'MCC_BURN') {
+      const pitchError = Math.abs(mg.currentPitch - mg.targetPitch);
+      const burnEfficiency = Math.max(0.25, 1.0 - pitchError / 40.0);
+      const burning = !mg.completed && (mg.isBurning || Boolean(state.keys['KeyW'] || state.keys['ArrowUp']) || mg.buttonHeld);
+      const inCorridor = mg.bPlaneMissKm <= mg.captureThresholdKm;
+      const marginalCorridor = mg.bPlaneMissKm <= 75;
 
-      for (const r of mg.rocks) {
-        if (r.hit) continue;
-        ctx.fillStyle = '#64748b'; ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(mx + r.x, my + 10 + r.y, r.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        ctx.strokeStyle = 'rgba(239, 68, 68, 0.65)'; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.arc(mx + r.x, my + 10 + r.y, r.r + 5, 0, Math.PI * 2); ctx.stroke();
-      }
-      ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(mx + mg.aimX, my + 10 + mg.aimY, 15, 0, Math.PI * 2);
-      ctx.moveTo(mx + mg.aimX - 20, my + 10 + mg.aimY); ctx.lineTo(mx + mg.aimX + 20, my + 10 + mg.aimY);
-      ctx.moveTo(mx + mg.aimX, my + 10 + mg.aimY - 20); ctx.lineTo(mx + mg.aimX, my + 10 + mg.aimY + 20);
+      ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 14px Fredoka, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('GMAT TRAJECTORY TRIM: MCC-1 BURN', mx - 10, my - 116);
+
+      // Left B-Plane Plot inside 440x290 panel
+      const plotX = mx - 204, plotY = my - 96, plotW = 204, plotH = 166;
+      ctx.fillStyle = '#091122';
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(plotX, plotY, plotW, plotH, 8); ctx.fill(); ctx.stroke();
+
+      const targetX = plotX + 46;
+      const targetY = plotY + 90;
+      const offsetScale = 1.15;
+      const corridorR = mg.captureThresholdKm * offsetScale;
+
+      ctx.fillStyle = 'rgba(34, 197, 94, 0.16)';
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(targetX, targetY, corridorR, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(plotX + 8, targetY); ctx.lineTo(plotX + plotW - 8, targetY);
+      ctx.moveTo(targetX, plotY + 24); ctx.lineTo(targetX, plotY + plotH - 8);
       ctx.stroke();
-      ctx.fillStyle = '#fde047'; ctx.font = 'bold 12px Fredoka, sans-serif';
-      ctx.fillText('CLICK each Asteroid OR aim [WASD] + [SPACE]!', mx, my + 118);
+
+      ctx.fillStyle = '#4ade80'; ctx.font = 'bold 10px Fredoka, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('LUNAR B-PLANE CORRIDOR (±25 km)', plotX + plotW / 2, plotY + 15);
+
+      const curX = Math.max(plotX + 10, Math.min(plotX + plotW - 10, targetX + mg.bPlaneMissKm * offsetScale));
+      const curY = Math.max(plotY + 26, Math.min(plotY + plotH - 10, targetY - (mg.currentPitch - mg.targetPitch) * 1.6));
+
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(targetX, targetY); ctx.lineTo(curX, curY); ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (burning) {
+        ctx.fillStyle = 'rgba(251, 146, 60, 0.35)';
+        ctx.beginPath(); ctx.arc(curX, curY, 12, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = inCorridor ? '#22c55e' : marginalCorridor ? '#f59e0b' : '#ef4444';
+      ctx.beginPath(); ctx.arc(curX, curY, 6.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 1.5; ctx.stroke();
+
+      // Right Telemetry Readouts & Delta-V Progress Bar
+      const rx = mx + 12;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 12px Fredoka, sans-serif';
+      ctx.fillText(`Target Pitch: ${mg.targetPitch.toFixed(1)}°`, rx, my - 80);
+
+      ctx.fillStyle = pitchError <= 3.0 ? '#4ade80' : pitchError <= 10.0 ? '#fbbf24' : '#f87171';
+      ctx.fillText(`Current Pitch: ${mg.currentPitch.toFixed(1)}°`, rx, my - 59);
+
+      ctx.fillStyle = burnEfficiency >= 0.85 ? '#4ade80' : '#fbbf24';
+      ctx.fillText(`Align Eff: ${Math.round(burnEfficiency * 100)}%`, rx, my - 38);
+
+      ctx.fillStyle = inCorridor ? '#4ade80' : marginalCorridor ? '#fbbf24' : '#f87171';
+      ctx.fillText(`B-Plane Miss: ${mg.bPlaneMissKm.toFixed(1)} km`, rx, my - 15);
+
+      const barW = 194, barH = 20, barY = my + 4;
+      const dvPct = Math.min(1, mg.burnedDeltaV / mg.targetDeltaV);
+      ctx.fillStyle = '#1e293b';
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(rx, barY, barW, barH, 6); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = inCorridor ? '#22c55e' : '#38bdf8';
+      if (dvPct > 0) {
+        ctx.beginPath(); ctx.roundRect(rx, barY, Math.max(8, barW * dvPct), barH, 6); ctx.fill();
+      }
+      ctx.fillStyle = '#ffffff'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(`ΔV: ${mg.burnedDeltaV.toFixed(1)} / ${mg.targetDeltaV.toFixed(1)} m/s`, rx + barW / 2, barY + 14);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 11.5px Fredoka, sans-serif';
+      ctx.fillText(`Propellant: ${mg.propellantUsed.toFixed(1)} kg`, rx, my + 42);
+
+      ctx.fillStyle = burning ? '#fb923c' : pitchError <= 3.0 ? '#4ade80' : '#fde047';
+      ctx.fillText(
+        burning ? 'STATUS: ENGINE FIRING' : pitchError <= 3.0 ? 'STATUS: PITCH LOCKED' : 'TRIM PITCH [A/D] FIRST',
+        rx,
+        my + 62
+      );
+
+      // Clickable FIRE THRUSTER Button
+      const fireBtn = getMccFireButtonRect(mx, my);
+      ctx.fillStyle = burning ? '#ea580c' : '#0284c7';
+      ctx.strokeStyle = burning ? '#fde047' : '#38bdf8';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.roundRect(fireBtn.x, fireBtn.y, fireBtn.w, fireBtn.h, 9); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#ffffff'; ctx.font = 'bold 13px Fredoka, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(burning ? '>>> FIRING THRUSTER <<<' : '🔥 FIRE THRUSTER', mx, fireBtn.y + 21);
+
+      ctx.fillStyle = '#cbd5e1'; ctx.font = 'bold 11px Fredoka, sans-serif';
+      ctx.fillText('[A/D] Trim Pitch  •  Hold [W] / Click or [SPACE] Fire', mx, my + 130);
     } else if (mg.type === 'GROUND') {
       const waveSynced = Math.abs(mg.playerFreq - mg.targetFreq) < 0.045;
       ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka, sans-serif';
@@ -1006,7 +1301,7 @@ export function drawStage2(ctx) {
       ctx.fillText(`SYNC: ${Math.round(mg.holdTime * 100)}%`, mx, my + 94);
     } else if (mg.type === 'LAUNCH') {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Fredoka, sans-serif';
-      ctx.fillText('WRENCH BOLT TORQUE — TAP [SPACE] OR CLICK!', mx, my - 102);
+      ctx.fillText('WRENCH BOLT TORQUE: TAP [SPACE] OR CLICK!', mx, my - 102);
       ctx.fillStyle = '#fde047'; ctx.font = 'bold 42px Fredoka, sans-serif';
       ctx.fillText(`🔧 ${mg.boltsTightened} / ${mg.boltsNeeded}`, mx, my + 8);
       ctx.fillStyle = '#1e293b'; ctx.fillRect(mx - 130, my + 60, 260, 16);
@@ -1014,26 +1309,37 @@ export function drawStage2(ctx) {
     }
   }
 
-  // Smooth Lunar Orbit Arrival notice (never interrupts active task)
+  // Smooth Lunar Orbit Arrival notice (never interrupts active task, holds if quota not met)
   if (state.orbitState.arrivalReady) {
+    const quotaMet = os.tasksCompleted >= minQuota && alertList.length < 3;
+    const overtimeLeft = Math.max(1, Math.ceil(10 - (os.overtimeHold || 0)));
     const secs = Math.max(1, Math.ceil(2.6 - state.orbitState.arrivalHold));
     const msg = state.activeMiniGame
-      ? '🛸 LUNAR ORBIT READY — Finish active task to begin descent'
-      : `🌙 ENTERING LUNAR ORBIT IN ${secs}s...`;
+      ? '🛸 LUNAR ORBIT READY: Finish active task to begin descent'
+      : (!quotaMet && (os.overtimeHold || 0) < 10)
+        ? `⚠️ ORBIT INSERTION HOLD: Finish Quota (${os.tasksCompleted}/${minQuota}) & Clear Alerts (${overtimeLeft}s)`
+        : `🌙 ENTERING LUNAR ORBIT IN ${secs}s...`;
+    const isHold = !state.activeMiniGame && !quotaMet && (os.overtimeHold || 0) < 10;
     ctx.save();
-    ctx.fillStyle = state.activeMiniGame ? 'rgba(19, 27, 44, 0.94)' : 'rgba(6, 78, 59, 0.94)';
-    ctx.strokeStyle = state.activeMiniGame ? '#38bdf8' : '#4ade80';
+    ctx.fillStyle = isHold ? 'rgba(127, 29, 29, 0.94)' : state.activeMiniGame ? 'rgba(19, 27, 44, 0.94)' : 'rgba(6, 78, 59, 0.94)';
+    ctx.strokeStyle = isHold ? '#ef4444' : state.activeMiniGame ? '#38bdf8' : '#4ade80';
     ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 210, 14, 420, 36, 18); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 255, 14, 510, 36, 18); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#eef2f8';
-    ctx.font = '700 12.5px "Plus Jakarta Sans", system-ui, sans-serif';
+    ctx.font = '700 12px "Plus Jakarta Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(msg, LOGICAL_W / 2, 36);
     ctx.restore();
   }
 
   // Always-visible High-Contrast Bottom Control Strip
-  if (state.activeMiniGame) {
+  if (state.activeMiniGame?.type === 'MCC_BURN') {
+    drawCanvasControlBar(ctx, LOGICAL_W, [
+      { key: 'A / D', label: 'Trim Pitch' },
+      { key: 'W / SPACE / CLICK', label: 'Fire Thruster' },
+      { key: 'ESC', label: 'Close Panel' }
+    ]);
+  } else if (state.activeMiniGame) {
     drawCanvasControlBar(ctx, LOGICAL_W, [
       { key: 'SPACE / CLICK', label: 'Interact Task' },
       { key: 'WASD', label: 'Aim / Tune' },

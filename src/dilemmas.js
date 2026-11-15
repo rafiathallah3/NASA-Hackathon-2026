@@ -37,7 +37,7 @@ export function triggerDilemma(config, onChoose) {
       modal.classList.add('hidden');
       state.dilemma = null;
       playTone(540 + idx * 90, 'triangle', 0.14, 0.11);
-      logBlackBox(config.stageTag, `Decision: ${picked.label} — ${picked.trade}`, idx === 0 ? 'info' : 'good');
+      logBlackBox(config.stageTag, `Decision: ${picked.label}: ${picked.trade}`, idx === 0 ? 'info' : 'good');
       if (onChoose) onChoose(idx);
       updateBottomHUD();
     });

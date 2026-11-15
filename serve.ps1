@@ -30,6 +30,9 @@ try {
     if (Test-Path $FilePath -PathType Leaf) {
       $Ext = [System.IO.Path]::GetExtension($FilePath).ToLowerInvariant()
       $Context.Response.ContentType = if ($MimeTypes.ContainsKey($Ext)) { $MimeTypes[$Ext] } else { "application/octet-stream" }
+      $Context.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+      $Context.Response.Headers["Pragma"] = "no-cache"
+      $Context.Response.Headers["Expires"] = "0"
       $Bytes = [System.IO.File]::ReadAllBytes($FilePath)
       $Context.Response.ContentLength64 = $Bytes.Length
       $Context.Response.OutputStream.Write($Bytes, 0, $Bytes.Length)

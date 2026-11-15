@@ -15,18 +15,29 @@ export function startStage4EarthReturn() {
   state.floatingTexts = [];
 
   const corridorBonus = Math.min(0.12, (state.shippedModules.comms_relay + state.shippedModules.power_pack) * 0.03);
+  const teiBonus = state.missionChoices?.teiQuality === 'PRECISION' ? 0.06 : state.missionChoices?.teiQuality === 'LATE' ? -0.04 : 0;
+  const overMass = (state.telemetry?.mass || 0) > (state.telemetry?.maxMass || Infinity);
+  const massHeatMul = overMass ? 1.15 : 1.0;
+  const mccOffNominal = Boolean(state.mccResult && !state.mccResult.nominalCapture && state.mccResult.bPlaneMissKm > 25);
+  const mccCorridorPenalty = mccOffNominal ? -0.025 : 0;
+  const baseCorridorHalfWidth = Math.max(0.18, 0.25 + corridorBonus + teiBonus);
+  const corridorHalfWidth = mccOffNominal
+    ? Math.max(0.16, baseCorridorHalfWidth + mccCorridorPenalty)
+    : baseCorridorHalfWidth;
+
   state.reentry = {
     phase: 'PLASMA', // 'PLASMA' -> 'CHUTES' -> 'SPLASHED'
     altitude: 120,
     pitchAngle: 0,
     rollBank: 0,
-    corridorHalfWidth: 0.25 + corridorBonus,
+    corridorHalfWidth,
     heat: 20,
     peakHeat: 20,
     coolantCharge: 1.0,
     aiVentsLeft: 1,
     drogueDeployed: false,
     chutesDeployed: false,
+    chuteTimingBonus: false,
     chuteScale: 0,
     capsuleX: 520,
     capsuleY: 135,
@@ -41,15 +52,32 @@ export function startStage4EarthReturn() {
     aborted: false,
     abortReason: '',
     inputTouched: false,
-    heatRateMul: 1.0,
+    heatRateMul: 1.0 * massHeatMul,
+    massHeatMul,
+    sampleVaultTempC: -80.0,
+    peakVaultTempC: -80.0,
+    samplePurity: 100,
+    gLoad: 1.0,
+    peakG: 1.0,
+    mach: 32.0,
+    blackoutActive: false,
+    vaultThawWarned: false,
+    plasmaElapsed: 0,
     grade: 'Nominal'
   };
 
+  if (overMass) {
+    logBlackBox('STAGE 4', `Over-mass spacecraft (${state.telemetry.mass}/${state.telemetry.maxMass} kg) increased baseline entry heating by +15%.`, 'warn');
+  }
+  if (mccOffNominal) {
+    logBlackBox('STAGE 4', `Off-nominal MCC-1 (${Math.round(state.mccResult.bPlaneMissKm)} km B-plane miss) narrowed Earth entry corridor.`, 'warn');
+  }
+
   setStageBanner(
-    'STAGE 4 — 4P EARTH RETURN',
-    'Step 1: Skip-Reentry • Step 2: Triple Chutes • Step 3: Carrier Recovery',
-    'Phase 1: [W/S] Keep Needle in GREEN, [A/D] Roll Cool, [SPACE] Vent Cryo | Phase 2: [SPACE] Chutes, [J/L] Carrier',
-    `<kbd>W</kbd>/<kbd>S</kbd> Entry Angle &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Roll/Steer &nbsp;•&nbsp; <kbd>SPACE</kbd> Cryo Vent / Chutes &nbsp;•&nbsp; <kbd>J</kbd>/<kbd>L</kbd> P4 Carrier`,
+    'STAGE 4: EARTH RETURN',
+    'Step 1: Atmospheric Entry • Step 2: Triple Chutes • Step 3: Carrier Recovery',
+    'Phase 1: [W/S] Keep needle in green, [A/D] roll cool, [SPACE] vent cryo | Phase 2: [SPACE] chutes, [J/L] move carrier',
+    `<kbd>W</kbd>/<kbd>S</kbd> Entry Angle &nbsp;•&nbsp; <kbd>A</kbd>/<kbd>D</kbd> Roll/Steer &nbsp;•&nbsp; <kbd>SPACE</kbd> Cryo Vent / Chutes &nbsp;•&nbsp; <kbd>J</kbd>/<kbd>L</kbd> Carrier`,
     { showTickets: false, showSkip: false, showNext: true }
   );
   playTone(260, 'triangle', 0.3, 0.12);
@@ -65,26 +93,27 @@ export function startStage4EarthReturn() {
       {
         label: 'Shallow Skip-Entry (Low Thermal Load)',
         accent: '#4ade80',
-        trade: 'Uses atmospheric lift bounce to reduce heatshield heating rate by 25% (0.75x heat).',
-        lesson: 'Skip-entry splits deceleration across two atmospheric dips to keep temperatures lower.'
+        trade: 'Uses atmospheric lift bounce to reduce heatshield heating rate by 25% (0.75x heat), with longer vault heat soak.',
+        lesson: 'Skip-entry splits deceleration across two atmospheric dips to lower peak heat and G-load, but lengthens thermal soak.'
       },
       {
         label: 'Steep Ballistic Entry (Fast Direct)',
         accent: '#fde047',
-        trade: '+120⭐ Mission Speed bonus, but +35% Plasma heat rate — keep [W/S] centered and vent Cryo!',
-        lesson: 'Steeper flight path angles peak deceleration G-loads and shockwave heating.'
+        trade: '+120⭐ Speed bonus, +35% Plasma heat rate & higher G-load, shorter soak. Watch Cryo Vent!',
+        lesson: 'Steeper flight path angles spike deceleration G-loads and shockwave heating with shorter atmospheric dwell time.'
       }
     ]
   }, (idx) => {
+    const baseMassMul = state.reentry.massHeatMul || 1.0;
     if (idx === 0) {
-      state.reentry.heatRateMul = 0.75;
+      state.reentry.heatRateMul = 0.75 * baseMassMul;
       state.missionChoices.reentry = 'Shallow Skip';
-      showMissionToast('Shallow Skip Selected', 'Plasma heating rate reduced by 25%.');
+      showMissionToast('Shallow Skip Selected', 'Plasma heating rate reduced by 25%. Watch vault soak!');
     } else {
       state.score += 120;
-      state.reentry.heatRateMul = 1.35;
+      state.reentry.heatRateMul = 1.35 * baseMassMul;
       state.missionChoices.reentry = 'Direct Ballistic';
-      showMissionToast('Ballistic Entry (+120⭐)', 'Peak heating elevated — monitor P2 Cryo Vent!');
+      showMissionToast('Ballistic Entry (+120⭐)', 'Peak heating & G-load are higher. Watch Cryo Vent!');
     }
   });
 }
@@ -100,10 +129,18 @@ export function handleStage4DeployChutes() {
   if (r.phase === 'CHUTES' && !r.chutesDeployed) {
     r.chutesDeployed = true;
     state.screenShake = 0.18;
-    state.score += 95;
-    addFloatText(r.capsuleX, r.capsuleY - 55, 'TRIPLE MAIN CHUTES DEPLOYED! +95⭐', '#4ade80');
-    logBlackBox('STAGE 4', 'Triple NASA main parachutes deployed cleanly.', 'good');
-    playTone(520, 'triangle', 0.2, 0.14);
+    if (r.altitude >= 8 && r.altitude <= 18) {
+      r.chuteTimingBonus = true;
+      state.score += 135;
+      addFloatText(r.capsuleX, r.capsuleY - 55, '🎯 TEXTBOOK ALTITUDE CHUTES (8-18km)! +135⭐', '#4ade80');
+      logBlackBox('STAGE 4', 'Triple main parachutes deployed inside optimal 8-18 km altitude window (+135⭐, stabilized drift).', 'good');
+      playSuccessChord();
+    } else {
+      state.score += 85;
+      addFloatText(r.capsuleX, r.capsuleY - 55, 'TRIPLE MAIN CHUTES DEPLOYED! +85⭐', '#38bdf8');
+      logBlackBox('STAGE 4', 'Triple NASA main parachutes deployed cleanly.', 'good');
+      playTone(520, 'triangle', 0.2, 0.14);
+    }
   }
 }
 
@@ -115,8 +152,9 @@ export function handleStage4CoolantPurge() {
     if (r.coolantCharge >= 0.99) {
       r.coolantCharge = 0;
       r.heat = Math.max(10, r.heat - 22);
+      r.sampleVaultTempC = Math.max(-80, (r.sampleVaultTempC ?? -80) - 14);
       state.score += 20;
-      addFloatText(r.capsuleX, 205, '❄️ CRYO HEATSHIELD VENTED! (-22% HEAT)', '#38bdf8');
+      addFloatText(r.capsuleX, 205, '❄️ CRYO VENTED! (-22% HEAT, -14°C VAULT)', '#38bdf8');
       playTone(560, 'sine', 0.12, 0.11);
     } else {
       addFloatText(r.capsuleX, 205, `Cryo Charging ${Math.round(r.coolantCharge * 100)}%...`, '#94a3b8');
@@ -211,22 +249,69 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
     r.rollBank += (rollInput * 0.45 - r.rollBank) * Math.min(1, dt * 6);
     const rollCooling = Math.abs(rollInput) > 0 ? 2.5 : 0;
 
-    // Smooth descent pace
+    // Smooth descent pace (Shallow Skip lingers longer; Direct Ballistic plunges faster)
     const paceMul = state.stageTimer < 22 ? 1.55 : 1.0;
+    const isBallistic = state.missionChoices?.reentry === 'Direct Ballistic';
+    const isSkip = state.missionChoices?.reentry === 'Shallow Skip';
+    const profileDescentMul = isBallistic ? 1.25 : isSkip ? 0.78 : 1.0;
     const heatMul = r.heatRateMul || 1.0;
     const inCorridor = Math.abs(r.pitchAngle) <= r.corridorHalfWidth;
     if (inCorridor) {
-      r.altitude -= 6.6 * paceMul * dt;
+      r.altitude -= 6.6 * paceMul * profileDescentMul * dt;
       r.heat = Math.max(15, Math.min(82, r.heat + (2.5 * heatMul - rollCooling) * dt));
       state.score += Math.round(dt * 22);
     } else if (r.pitchAngle < -r.corridorHalfWidth) {
-      r.altitude -= 8.4 * paceMul * dt;
+      r.altitude -= 8.4 * paceMul * profileDescentMul * dt;
       r.heat = Math.min(100, r.heat + (16.5 * heatMul - rollCooling) * dt);
     } else {
-      r.altitude -= 3.8 * paceMul * dt;
+      r.altitude -= 3.8 * paceMul * profileDescentMul * dt;
       r.heat = Math.max(10, r.heat - (2.8 + rollCooling) * dt);
     }
     r.peakHeat = Math.max(r.peakHeat, r.heat);
+
+    // Aerothermodynamic Mach, dynamic G-load, and DSN ionization blackout
+    const altClamped = Math.max(24, Math.min(120, r.altitude));
+    const altFrac = (altClamped - 24) / 96;
+    r.mach = 1.5 + altFrac * 30.5;
+    r.blackoutActive = r.altitude >= 35 && r.altitude <= 85;
+
+    const reentryProgress = 1 - altFrac;
+    const decelCurve = Math.sin(Math.pow(reentryProgress, 0.85) * Math.PI);
+    const profilePeakG = isBallistic ? 6.6 : isSkip ? 3.1 : 4.4;
+    let pitchGAdj = 1.0;
+    let steepSpikeG = 0;
+    if (r.pitchAngle < -r.corridorHalfWidth) {
+      const excess = Math.min(1, (-r.corridorHalfWidth - r.pitchAngle) / 0.45);
+      pitchGAdj = 1.25;
+      steepSpikeG = 1.6 + excess * 2.4;
+    } else if (r.pitchAngle > r.corridorHalfWidth) {
+      pitchGAdj = 0.65;
+    }
+    const targetG = 1.0 + decelCurve * (profilePeakG * pitchGAdj + Math.max(0, r.heat - 50) * 0.025) + steepSpikeG * (0.35 + 0.65 * decelCurve);
+    r.gLoad += (targetG - r.gLoad) * Math.min(1, dt * 4.5);
+    r.peakG = Math.max(r.peakG, r.gLoad);
+
+    // Sample Vault thermal soak: rises faster at high shield heat and longer dwell time
+    r.plasmaElapsed = (r.plasmaElapsed || 0) + dt;
+    const dwellFactor = 1 + r.plasmaElapsed * 0.045;
+    const vaultHeatRate = (1.5 + Math.max(0, r.heat - 15) * 0.068) * dwellFactor;
+    r.sampleVaultTempC = Math.min(60, r.sampleVaultTempC + vaultHeatRate * dt);
+    r.peakVaultTempC = Math.max(r.peakVaultTempC, r.sampleVaultTempC);
+
+    // Non-lethal Sample Vault thawing rule
+    if (state.sampleCollected) {
+      if (r.sampleVaultTempC >= 0) {
+        r.samplePurity = Math.min(r.samplePurity, 45);
+        if (!r.vaultThawWarned) {
+          r.vaultThawWarned = true;
+          showMissionToast('Sample Vault Thawing', 'Sample Vault Thawing: Cryo sample purity reduced!');
+          logBlackBox('STAGE 4', 'Sample Vault reached >= 0C during reentry: cryo sample purity reduced to 45%.', 'warn');
+          playTone(220, 'sawtooth', 0.22, 0.11);
+        }
+      } else if (r.sampleVaultTempC >= -20) {
+        r.samplePurity = Math.min(r.samplePurity, 75);
+      }
+    }
 
     // Coolant recharge; limited 1-time P2 emergency assist if actively flown
     r.coolantCharge = Math.min(1.0, r.coolantCharge + dt * 0.24);
@@ -234,6 +319,7 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
       r.aiVentsLeft--;
       r.coolantCharge = 0;
       r.heat = Math.max(12, r.heat - 20);
+      r.sampleVaultTempC = Math.max(-80, r.sampleVaultTempC - 14);
       addFloatText(r.capsuleX, 205, '❄️ P2 EMERGENCY CRYO VENT!', '#38bdf8');
       playTone(540, 'sine', 0.1, 0.08);
     }
@@ -241,8 +327,8 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
     if (r.heat >= 100) {
       r.heat = 100;
       triggerStage4GameOver(
-        'Heatshield Burnup — Game Over',
-        'Thermal shield hit 100% during skip-reentry! Hold [W/S] inside the green corridor and press [SPACE] to vent cryo.',
+        'Heatshield Burnup: Game Over',
+        'Thermal shield hit 100% during reentry. Hold [W/S] inside the green corridor and press [SPACE] to vent cryo.',
         onBackToMenu
       );
       return;
@@ -265,6 +351,8 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
       r.phase = 'CHUTES';
       r.drogueDeployed = true;
       r.altitude = 24;
+      r.mach = 1.5;
+      r.blackoutActive = false;
       r.capsuleX = 430;
       r.capsuleY = 120;
       addFloatText(LOGICAL_W / 2, 175, 'DROGUE CHUTES OPEN! PRESS [SPACE] FOR MAIN CHUTES!', '#38bdf8');
@@ -301,7 +389,8 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
       r.altitude -= 3.2 * dt;
     }
 
-    r.windForce = Math.sin(performance.now() * 0.0017) * 44;
+    const windAmp = r.chuteTimingBonus ? 26 : 44;
+    r.windForce = Math.sin(performance.now() * 0.0017) * windAmp;
     r.capsuleX += r.windForce * dt;
     if (!p4Steer) {
       if (state.keys['KeyA'] || state.keys['ArrowLeft']) r.capsuleX -= 185 * dt;
@@ -315,8 +404,8 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
       r.altitude = 0;
       if (!r.chutesDeployed) {
         triggerStage4GameOver(
-          'Hard Splashdown Failure — Game Over',
-          'Main parachutes were not deployed before ocean impact! Press [SPACE] during Phase 2 descent to open Triple Main Chutes.',
+          'Hard Splashdown: Game Over',
+          'Main parachutes were not opened before splashdown. Press [SPACE] during descent to open Triple Main Chutes.',
           onBackToMenu
         );
         return;
@@ -326,21 +415,22 @@ export function updateStage4(dt, onNextStage, onBackToMenu) {
       state.screenShake = 0.25;
       const distToShip = Math.abs(r.capsuleX - r.shipX);
 
+      const perfSummary = `peak ${(r.peakG ?? 1).toFixed(1)}G, peak heat ${Math.round(r.peakHeat)}%, vault ${(r.peakVaultTempC ?? -80).toFixed(1)}°C, purity ${r.samplePurity ?? 100}%`;
       if (distToShip <= 85) {
         r.grade = 'BULLSEYE 4P CARRIER RECOVERY (+250⭐)';
         state.score += 250;
         addFloatText(r.capsuleX, 455, 'BULLSEYE CARRIER SPLASHDOWN! +250⭐', '#4ade80');
-        logBlackBox('STAGE 4', `Bullseye carrier splashdown (${Math.round(distToShip)}m offset, peak heat ${Math.round(r.peakHeat)}%).`, 'good');
+        logBlackBox('STAGE 4', `Bullseye carrier splashdown (${Math.round(distToShip)}m offset, ${perfSummary}).`, 'good');
       } else if (distToShip <= 175) {
         r.grade = 'SAFE OCEAN SPLASHDOWN (+160⭐)';
         state.score += 160;
         addFloatText(r.capsuleX, 455, 'SAFE OCEAN SPLASHDOWN! +160⭐', '#38bdf8');
-        logBlackBox('STAGE 4', `Safe ocean splashdown (${Math.round(distToShip)}m from carrier).`, 'good');
+        logBlackBox('STAGE 4', `Safe ocean splashdown (${Math.round(distToShip)}m from carrier, ${perfSummary}).`, 'good');
       } else {
-        r.grade = 'DISTANT SPLASHDOWN — HELO RECOVERY (+90⭐)';
+        r.grade = 'DISTANT SPLASHDOWN: HELO RECOVERY (+90⭐)';
         state.score += 90;
-        addFloatText(r.capsuleX, 455, 'SPLASHDOWN — RESCUE HELO INBOUND! +90⭐', '#fbbf24');
-        logBlackBox('STAGE 4', `Distant splashdown (${Math.round(distToShip)}m from carrier).`, 'warn');
+        addFloatText(r.capsuleX, 455, 'SPLASHDOWN: RESCUE HELO INBOUND! +90⭐', '#fbbf24');
+        logBlackBox('STAGE 4', `Distant splashdown (${Math.round(distToShip)}m from carrier, ${perfSummary}).`, 'warn');
       }
       showMissionToast('Splashdown Complete', r.grade);
 
@@ -502,11 +592,64 @@ export function drawStage4(ctx) {
     ctx.fillStyle = '#fff'; ctx.font = 'bold 10.5px Fredoka, sans-serif';
     ctx.fillText(r.coolantCharge >= 0.99 ? '❄️ [SPACE] VENT READY' : `❄️ CRYO ${Math.round(r.coolantCharge * 100)}%`, hx - 80, hy + hh - 20);
 
+    // Compact Aerothermodynamic & Sample Vault Readout Card (clear of gauges & capsule)
+    const vaultTemp = r.sampleVaultTempC ?? -80.0;
+    const vaultColor = vaultTemp >= 0 ? '#ef4444' : vaultTemp >= -20 ? '#fbbf24' : '#38bdf8';
+    const cardX = 180, cardY = 124, cardW = 196, cardH = state.sampleCollected ? 114 : 94;
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.roundRect(cardX, cardY, cardW, cardH, 10); ctx.fill(); ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px Fredoka, sans-serif';
+    ctx.fillText('AEROTHERM TELEMETRY', cardX + 12, cardY + 18);
+    ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 12px Fredoka, sans-serif';
+    ctx.fillText(`Mach ${(r.mach ?? 32.0).toFixed(1)}`, cardX + 12, cardY + 38);
+    const gColor = (r.gLoad ?? 1.0) >= 7.5 ? '#ef4444' : (r.gLoad ?? 1.0) >= 5.0 ? '#fbbf24' : '#4ade80';
+    ctx.fillStyle = gColor;
+    ctx.textAlign = 'right';
+    ctx.fillText(`${(r.gLoad ?? 1.0).toFixed(1)} G (Pk ${(r.peakG ?? 1.0).toFixed(1)})`, cardX + cardW - 12, cardY + 38);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#cbd5e1'; ctx.font = 'bold 11px Fredoka, sans-serif';
+    ctx.fillText('Sample Vault', cardX + 12, cardY + 60);
+    ctx.fillStyle = vaultColor; ctx.font = 'bold 12.5px Fredoka, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${vaultTemp.toFixed(1)}°C`, cardX + cardW - 12, cardY + 60);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#94a3b8'; ctx.font = '10.5px Fredoka, sans-serif';
+    const profileLabel = state.missionChoices?.reentry || 'Standard Entry';
+    ctx.fillText(`Profile: ${profileLabel}`, cardX + 12, cardY + 80);
+
+    if (state.sampleCollected) {
+      const purity = r.samplePurity ?? 100;
+      ctx.fillStyle = purity >= 100 ? '#4ade80' : purity >= 75 ? '#fbbf24' : '#ef4444';
+      ctx.font = 'bold 11px Fredoka, sans-serif';
+      ctx.fillText(`Cryo Sample Purity: ${purity}%`, cardX + 12, cardY + 100);
+    }
+    ctx.restore();
+
+    // Subtle pulsing DSN Ionization Blackout badge (35-85 km altitude)
+    if (r.blackoutActive) {
+      ctx.save();
+      const pulse = 0.65 + 0.35 * Math.sin(performance.now() * 0.008);
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = 'rgba(127, 29, 29, 0.88)';
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 126, 414, 252, 28, 8); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#fecaca'; ctx.font = 'bold 11.5px Fredoka, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('📡 DSN IONIZATION BLACKOUT', LOGICAL_W / 2, 432);
+      ctx.restore();
+    }
+
     if (Math.abs(r.pitchAngle) > r.corridorHalfWidth) {
       ctx.fillStyle = r.pitchAngle < 0 ? '#dc2626' : '#d97706';
       ctx.beginPath(); ctx.roundRect(LOGICAL_W / 2 - 190, 78, 380, 36, 12); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = 'bold 15px Fredoka, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(r.pitchAngle < 0 ? '⚠️ TOO STEEP — PRESS [W]!' : '⚠️ TOO SHALLOW — PRESS [S]!', LOGICAL_W / 2, 101);
+      ctx.fillText(r.pitchAngle < 0 ? '⚠️ TOO STEEP: PRESS [W]!' : '⚠️ TOO SHALLOW: PRESS [S]!', LOGICAL_W / 2, 101);
     }
   } else {
     // Daylight Ocean Recovery Sky
@@ -546,8 +689,42 @@ export function drawStage4(ctx) {
     }
     ctx.stroke();
 
-    // NASA Recovery Carrier Ship
+    // NASA Recovery Carrier Ship & Visual Landing Zone Beacon
     const sx = r.shipX, sy = 516 + Math.sin(r.wavePhase * 0.8) * 3;
+    const distToShip = Math.abs(r.capsuleX - sx);
+    const inBullseye = distToShip <= 85;
+
+    // Carrier Landing Zone Beacon on the Ocean Surface
+    ctx.save();
+    ctx.strokeStyle = inBullseye ? 'rgba(74, 222, 128, 0.9)' : 'rgba(56, 189, 248, 0.7)';
+    ctx.fillStyle = inBullseye ? 'rgba(34, 197, 94, 0.18)' : 'rgba(56, 189, 248, 0.1)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.ellipse(sx, 514, 85, 11, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Vertical Recovery Corridor Guide Lines
+    ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = inBullseye ? 'rgba(74, 222, 128, 0.55)' : 'rgba(253, 224, 71, 0.38)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(sx - 85, 510); ctx.lineTo(sx - 85, 220);
+    ctx.moveTo(sx + 85, 510); ctx.lineTo(sx + 85, 220);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Live Horizontal Offset Badge above Carrier
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
+    ctx.strokeStyle = inBullseye ? '#4ade80' : '#fbbf24';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.roundRect(sx - 78, 456, 156, 22, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = inBullseye ? '#4ade80' : '#fde047';
+    ctx.font = 'bold 10px Fredoka, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(inBullseye ? `🎯 BULLSEYE LOCK (${Math.round(distToShip)}m)` : `📡 CARRIER OFFSET: ${Math.round(distToShip)}m`, sx, 471);
+    ctx.restore();
+
     ctx.save();
     ctx.translate(sx, sy);
     ctx.fillStyle = '#334155'; ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.5;
@@ -561,6 +738,31 @@ export function drawStage4(ctx) {
     ctx.fillStyle = '#e0f2fe'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('P4 NASA RECOVERY CARRIER', 0, 34);
     ctx.restore();
+
+    // Left-side Parachute Altitude & Deployment Window Gauge (24km -> 0km)
+    const ax = 76, ay = 120, aw = 34, ah = 340;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(ax, ay, aw, ah, 9); ctx.fill(); ctx.stroke();
+
+    // Optimal Main Chute Deployment Band (18 km down to 8 km out of 24 km)
+    const optTopY = ay + ((24 - 18) / 24) * ah;
+    const optBotY = ay + ((24 - 8) / 24) * ah;
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.36)';
+    ctx.fillRect(ax + 3, optTopY, aw - 6, optBotY - optTopY);
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(ax + 3, optTopY, aw - 6, optBotY - optTopY);
+
+    const altMarkerY = ay + ((24 - Math.max(0, Math.min(24, r.altitude))) / 24) * ah;
+    ctx.fillStyle = (r.altitude >= 8 && r.altitude <= 18) ? '#4ade80' : '#fde047';
+    ctx.fillRect(ax - 6, altMarkerY - 4, aw + 12, 8);
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Fredoka, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('CHUTE ALT', ax + aw / 2, ay - 10);
+    ctx.fillStyle = '#4ade80'; ctx.font = 'bold 9.5px Fredoka, sans-serif';
+    ctx.fillText('8-18km OPT', ax + aw / 2, ay + ah + 15);
 
     const cx = r.capsuleX, cy = r.capsuleY;
     // Drogue / Triple Main Parachutes (visible during descent)
